@@ -65,7 +65,27 @@ class Store:
   if not ext:raise ValueError('不支持的图片格式')
   folder=self.folder/'products'/t['sku']/'images';folder.mkdir(parents=True,exist_ok=True)
   path=folder/(t['name']+'_'+t['id']+'.'+ext);path.write_bytes(data)
-  t.update(state='review',file=str(path),sha256=hashlib.sha256(data).hexdigest());self.save();return {'saved':str(path),'state':'review'}
+  t.update(state='saved' if t.get('auto_batch') else 'review',file=str(path),sha256=hashlib.sha256(data).hexdigest());self.save()
+  if t.get('auto_batch'):
+   group=[x for x in self.tasks if x['sku']==t['sku']]
+   if len(group)==8 and all(x['state']=='saved' for x in group):
+    threading.Thread(target=self.render_video,args=(t['sku'],),daemon=True).start()
+  return {'saved':str(path),'state':t['state']}
+ def render_video(self,sku):
+  from video import make_video
+  with self.lock:group=sorted([dict(x) for x in self.tasks if x['sku']==sku],key=lambda x:x['name'])
+  try:
+   output=make_video([x['file'] for x in group],self.folder/'products'/sku/'video'/'product_8s.mp4')
+   with self.lock:
+    for x in self.tasks:
+     if x['sku']==sku:x.update(video=output,message='8张图片及8秒视频已完成，待上架前审核')
+    self.save()
+  except Exception as e:
+   with self.lock:
+    for x in self.tasks:
+     if x['sku']==sku:x['message']='图片已保存，视频合成失败：'+str(e)[:160]
+    self.save()
+
 
 def server(store,token,port=8765):
  class Handler(BaseHTTPRequestHandler):
@@ -87,7 +107,10 @@ def server(store,token,port=8765):
     if not 0<n<29*1024*1024:raise ValueError('请求大小无效')
     body=json.loads(self.rfile.read(n))
     with store.lock:
-     if self.path=='/claim':value=store.claim()
+     if self.path=='/poll':
+      active=any(t['state'] in ('claimed','sending','waiting','needs_attention','review') for t in store.tasks)
+      value={'ready':not active and any(t['state']=='queued' and t.get('auto_batch') for t in store.tasks)}
+     elif self.path=='/claim':value=store.claim()
      elif self.path=='/result':value=store.result(body['task_id'],body['image_b64'])
      elif self.path=='/event':
       t=store.find(body['task_id']);state=body['state']
@@ -102,7 +125,7 @@ def main():
  import tkinter as tk
  from tkinter import ttk,messagebox,filedialog
  store=Store(DATA);token=secrets.token_urlsafe(32);http=server(store,token);threading.Thread(target=http.serve_forever,daemon=True).start()
- win=tk.Tk();win.title('Ozon Edge 本地服务 v0.3.1');win.geometry('850x700')
+ win=tk.Tk();win.title('Ozon Edge 本地服务 v0.4');win.geometry('850x700')
  ttk.Label(win,text='本地服务已启动。将配对码粘贴至 Edge 扩展；可在下方选择原图，扩展将附加到当前ChatGPT对话。').pack(pady=8)
  code=ttk.Entry(win,width=65);code.insert(0,token);code.pack()
  ttk.Label(win,text='SKU（不含空格）').pack();sku=ttk.Entry(win,width=60);sku.pack()
@@ -116,10 +139,14 @@ def main():
  ttk.Button(win,text='选择商品原图（可多选）',command=choose).pack(pady=5)
  def create():
   try:
-   with store.lock:store.create(sku.get().strip(),facts.get('1.0','end').strip(),references)
-   messagebox.showinfo('已创建','8张任务已排队；在目标ChatGPT标签中点击扩展执行下一张。')
+   with store.lock:
+    store.create(sku.get().strip(),facts.get('1.0','end').strip(),references)
+    for task in store.tasks:
+     if task['sku']==sku.get().strip():task['auto_batch']=True
+    store.save()
+   messagebox.showinfo('已创建','8张任务已排队；已启用自动批次的扩展会开始执行。完成后自动合成8秒视频。')
   except Exception as e:messagebox.showerror('未创建',str(e))
- ttk.Button(win,text='创建8张任务',command=create).pack(pady=6)
+ ttk.Button(win,text='创建并自动制作8图＋8秒视频',command=create).pack(pady=6)
  view=tk.Listbox(win,height=12);view.pack(fill='both',expand=True,padx=15)
  visible=[]
  def refresh():
