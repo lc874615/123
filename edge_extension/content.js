@@ -1,11 +1,17 @@
 (()=>{if(window.__ozonLocalInstalled)return;window.__ozonLocalInstalled=true;let stop=false,running=false;
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function tell(task,state,message){const r=await chrome.runtime.sendMessage({kind:'event',task_id:task.id,state,message});if(r?.error)throw Error(r.error);}
+function findEditor(){
+ const selectors=['#prompt-textarea','[contenteditable="true"][data-lexical-editor="true"]','[contenteditable="true"].ProseMirror','[role="textbox"][contenteditable="true"]','textarea[placeholder]'];
+ for(const sel of selectors){const found=[...document.querySelectorAll(sel)].filter(e=>e.getClientRects().length&&!e.disabled&&e.getAttribute('aria-hidden')!=='true');if(found.length===1)return found[0];}
+ return null;
+}
+function preflight(){const e=findEditor();return {ready:!!e&&!document.querySelector('[data-testid="stop-button"]'),url:location.origin+location.pathname,message:e?'输入框已识别':'未找到可见输入框。请在普通ChatGPT文字对话中刷新页面，点击输入区后重试；不能在图片查看器或其他应用中执行。'};}
 async function run(task){
  if(running)throw Error('本页正在执行任务');running=true;stop=false;
  try{
   if(location.origin!=='https://chatgpt.com')throw Error('请返回 ChatGPT 对话');
-  const editor=document.querySelector('#prompt-textarea');if(!editor)throw Error('未找到输入框，请人工登录或处理验证');
+  let editor=findEditor();if(!editor)throw Error(preflight().message);
   if(document.querySelector('[data-testid="stop-button"]'))throw Error('上一条回复仍在生成');
   if(editor.textContent.trim()||editor.value?.trim())throw Error('输入框已有内容，请先人工处理，避免覆盖');
   if(task.references?.length){
@@ -23,11 +29,12 @@ async function run(task){
    if(document.querySelector('[role="alert"]')?.textContent?.match(/fail|error|失败|错误/i))throw Error('网页报告上传异常；未发送任务');
   }
   const before=document.querySelectorAll('[data-message-author-role="assistant"]').length;
+  editor=findEditor();if(!editor)throw Error('上传后输入框变化，请刷新对话；未发送');
   editor.focus();
   if(editor instanceof HTMLTextAreaElement){Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(editor,task.prompt);editor.dispatchEvent(new Event('input',{bubbles:true}));}
   else{document.execCommand('insertText',false,task.prompt);editor.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:task.prompt}));}
   await sleep(800);
-  const send=document.querySelector('[data-testid="send-button"]');if(!send||send.disabled)throw Error('发送按钮不可用，请检查上传、验证或额度；未发送');
+  const send=document.querySelector('[data-testid="send-button"],button[aria-label="Send prompt"],button[aria-label="发送提示"],button[aria-label="发送消息"]');if(!send||send.disabled)throw Error('发送按钮不可用，请检查上传、验证或额度；未发送');
   await tell(task,'sending','即将发送，异常时不会自动重发');send.click();await tell(task,'waiting','已点击发送，等待新回复生成图片');
   const deadline=Date.now()+10*60*1000;
   while(Date.now()<deadline){
@@ -49,4 +56,4 @@ async function run(task){
   throw Error('等待超时，请检查验证、限额或网页变化；不会重发');
  }catch(e){await tell(task,'needs_attention',e.message).catch(()=>{});}finally{running=false;}
 }
-chrome.runtime.onMessage.addListener((m,sender,reply)=>{if(m.kind==='stop'){stop=true;reply({ok:true});}if(m.kind==='start'){run(m.task);reply({ok:true});}return false;});})();
+chrome.runtime.onMessage.addListener((m,sender,reply)=>{if(m.kind==='preflight'){reply(preflight());return false;}if(m.kind==='stop'){stop=true;reply({ok:true});}if(m.kind==='start'){run(m.task);reply({ok:true});}return false;});})();

@@ -40,4 +40,8 @@ class Tests(unittest.TestCase):
   self.s.path.write_text(self.s.path.read_text(encoding='utf-8'),encoding='utf-8-sig')
   restored=Store(self.tmp.name)
   self.assertEqual(len(restored.tasks),8)
+ def test_retry_requires_exception_state(self):
+  t=self.s.claim()
+  with self.assertRaises(ValueError):self.s.retry(t['id'])
+  self.s.find(t['id'])['state']='needs_attention';self.s.retry(t['id']);self.assertEqual(self.s.claim()['id'],t['id'])
 if __name__=='__main__':unittest.main()

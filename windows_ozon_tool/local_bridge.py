@@ -47,6 +47,11 @@ class Store:
   t=next((t for t in self.tasks if t['id']==tid),None)
   if not t:raise ValueError('任务不存在')
   return t
+ def retry(self,tid):
+  t=self.find(tid)
+  if t['state']!='needs_attention':raise ValueError('仅可恢复异常任务')
+  if any(x['state'] in ('claimed','sending','waiting') for x in self.tasks):raise ValueError('还有执行中的任务，请先暂停')
+  t.update(state='queued',message='用户确认网页未发送后重新排队');self.save()
  def result(self,tid,encoded):
   t=self.find(tid)
   if t['state'] not in ('claimed','sending','waiting'):raise ValueError('任务不接受图片')
@@ -134,6 +139,15 @@ def main():
    if t['state']!='review':messagebox.showinfo('提示','仅可确认已保存并待审核的图片。异常请先在网页处理。');return
    t['state']='approved';store.save()
  ttk.Button(win,text='所选图片已人工检查，允许下一张',command=approve).pack(pady=6)
+ def retry():
+  sel=view.curselection()
+  if not sel:return
+  if not messagebox.askyesno('检查网页后恢复','请先在扩展中暂停并刷新ChatGPT。确认此任务没有发送、没有生成结果，才重新排队。是否确认？'):return
+  try:
+   with store.lock:store.retry(visible[sel[0]]['id'])
+  except Exception as e:messagebox.showerror('未恢复',str(e))
+ ttk.Button(win,text='所选异常任务未发送，重新排队',command=retry).pack(pady=4)
+
  ttk.Label(win,text='遇到 needs_attention：停止自动任务，先人工检查网页；不自动重发。图片在本工具 data/products 下。').pack()
  refresh()
  def close():http.shutdown();win.destroy()
