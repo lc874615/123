@@ -8,6 +8,20 @@ async function run(task){
   const editor=document.querySelector('#prompt-textarea');if(!editor)throw Error('未找到输入框，请人工登录或处理验证');
   if(document.querySelector('[data-testid="stop-button"]'))throw Error('上一条回复仍在生成');
   if(editor.textContent.trim()||editor.value?.trim())throw Error('输入框已有内容，请先人工处理，避免覆盖');
+  if(task.references?.length){
+   let input=[...document.querySelectorAll('input[type="file"]')].find(x=>!x.accept||x.accept.includes('image')||x.accept.includes('*'));
+   if(!input){const attach=document.querySelector('button[data-testid="composer-plus-btn"], button[aria-label*="Attach"], button[aria-label*="添加"]');if(attach){attach.click();await sleep(500);input=[...document.querySelectorAll('input[type="file"]')].find(x=>!x.accept||x.accept.includes('image')||x.accept.includes('*'));}}
+   if(!input)throw Error('未找到原图上传控件，请在ChatGPT手动上传；未发送任务');
+   if(task.references.length>1&&!input.multiple)throw Error('当前上传控件不支持多图，请在网页手动上传；未发送任务');
+   const transfer=new DataTransfer();
+   for(const r of task.references){const bytes=Uint8Array.from(atob(r.base64),c=>c.charCodeAt(0));transfer.items.add(new File([bytes],r.name,{type:r.mime}));}
+   input.files=transfer.files;input.dispatchEvent(new Event('change',{bubbles:true}));
+   await tell(task,'waiting','原图已交给网页上传；请等待附件完成');
+   await sleep(3000);
+   const uploadDeadline=Date.now()+90000;
+   while(document.querySelector('[role="progressbar"],button[aria-label*="Cancel upload"],button[aria-label*="取消上传"]')){if(stop||Date.now()>uploadDeadline)throw Error('原图上传未完成，请检查网页；未发送任务');await sleep(1000);}
+   if(document.querySelector('[role="alert"]')?.textContent?.match(/fail|error|失败|错误/i))throw Error('网页报告上传异常；未发送任务');
+  }
   const before=document.querySelectorAll('[data-message-author-role="assistant"]').length;
   editor.focus();
   if(editor instanceof HTMLTextAreaElement){Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(editor,task.prompt);editor.dispatchEvent(new Event('input',{bubbles:true}));}

@@ -18,4 +18,12 @@ class Tests(unittest.TestCase):
   t=self.s.claim()
   with self.assertRaises(Exception):self.s.result(t['id'],base64.b64encode(b'<html>bad</html>').decode())
   with self.assertRaises(ValueError):self.s.create('../x','x')
+ def test_reference_copy_and_transfer(self):
+  b=io.BytesIO();Image.new('RGB',(600,700)).save(b,format='PNG');ref=Path(self.tmp.name)/'source.png';ref.write_bytes(b.getvalue())
+  other=Store(Path(self.tmp.name)/'new');other.create('REF','generic',[ref]);ref.unlink();task=other.claim()
+  self.assertEqual(base64.b64decode(task['references'][0]['base64']),b.getvalue())
+ def test_invalid_reference_creates_no_tasks(self):
+  other=Store(Path(self.tmp.name)/'bad');ref=Path(self.tmp.name)/'bad.png';ref.write_bytes(b'not an image')
+  with self.assertRaises(Exception):other.create('BAD','generic',[ref])
+  self.assertEqual(other.tasks,[])
 if __name__=='__main__':unittest.main()

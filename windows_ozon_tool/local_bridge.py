@@ -14,18 +14,35 @@ class Store:
   self.save()
  def save(self):
   temp=self.path.with_suffix('.tmp');temp.write_text(json.dumps(self.tasks,ensure_ascii=False,indent=2),encoding='utf-8');temp.replace(self.path)
- def create(self,sku,facts):
+ def create(self,sku,facts,references=None):
   if not re.fullmatch(r'[\w-]{1,80}',sku):raise ValueError('SKU仅允许字母、数字、下划线和连字符')
   if not facts.strip() or len(facts)>20000:raise ValueError('商品资料为空或过长')
   if any(t['sku']==sku for t in self.tasks):raise ValueError('SKU已经存在，避免重复建立任务')
+  refs=[]
+  if references:
+   if len(references)>8:raise ValueError('最多选择8张原图')
+   prepared=[]
+   for ref in references:
+    raw=Path(ref).read_bytes()
+    if len(raw)>3*1024*1024:raise ValueError('单张原图限3MB，请压缩后选择')
+    with Image.open(io.BytesIO(raw)) as im:
+     im.verify();fmt=im.format
+    mime={'PNG':'image/png','JPEG':'image/jpeg','WEBP':'image/webp'}.get(fmt)
+    if not mime:raise ValueError('只支持PNG、JPG、WEBP原图')
+    prepared.append((raw,mime))
+   folder=self.folder/'products'/sku/'references';folder.mkdir(parents=True,exist_ok=True)
+   for i,(raw,mime) in enumerate(prepared):
+    ext={'image/png':'png','image/jpeg':'jpg','image/webp':'webp'}[mime]
+    path=folder/f'{i+1:02d}.{ext}';path.write_bytes(raw)
+    refs.append({'path':str(path),'name':path.name,'mime':mime})
   for name,brief in TASKS:
-   self.tasks.append({'id':secrets.token_hex(16),'sku':sku,'name':name,'state':'queued','prompt':'根据本对话已上传原图制作一张独立Ozon商品图，3:4竖版，自然俄文。保持外观一致，禁止虚构属性、数量或尺寸。包装尺寸不得作为商品尺寸。任务：'+brief+'。商品事实：'+facts})
+   self.tasks.append({'id':secrets.token_hex(16),'sku':sku,'name':name,'state':'queued','references':refs,'prompt':'根据本对话已上传原图制作一张独立Ozon商品图，3:4竖版，自然俄文。保持外观一致，禁止虚构属性、数量或尺寸。包装尺寸不得作为商品尺寸。任务：'+brief+'。商品事实：'+facts})
   self.save()
  def claim(self):
   if any(t['state'] in ('claimed','sending','waiting','needs_attention','review') for t in self.tasks):raise ValueError('请先审核上一任务或处理异常，不能继续发送')
   t=next((t for t in self.tasks if t['state']=='queued'),None)
   if not t:raise ValueError('没有排队任务，请在本地窗口创建商品')
-  t['state']='claimed';self.save();return dict(t)
+  t['state']='claimed';self.save();result=dict(t);result['references']=[{'name':r['name'],'mime':r['mime'],'base64':base64.b64encode(Path(r['path']).read_bytes()).decode()} for r in t.get('references',[])];return result
  def find(self,tid):
   t=next((t for t in self.tasks if t['id']==tid),None)
   if not t:raise ValueError('任务不存在')
@@ -78,16 +95,23 @@ def server(store,token,port=8765):
 
 def main():
  import tkinter as tk
- from tkinter import ttk,messagebox
+ from tkinter import ttk,messagebox,filedialog
  store=Store(DATA);token=secrets.token_urlsafe(32);http=server(store,token);threading.Thread(target=http.serve_forever,daemon=True).start()
- win=tk.Tk();win.title('Ozon Edge 本地服务 v0.3');win.geometry('850x700')
- ttk.Label(win,text='本地服务已启动。将配对码粘贴至 Edge 扩展；原始商品图在 ChatGPT 对话中人工上传。').pack(pady=8)
+ win=tk.Tk();win.title('Ozon Edge 本地服务 v0.3.1');win.geometry('850x700')
+ ttk.Label(win,text='本地服务已启动。将配对码粘贴至 Edge 扩展；可在下方选择原图，扩展将附加到当前ChatGPT对话。').pack(pady=8)
  code=ttk.Entry(win,width=65);code.insert(0,token);code.pack()
  ttk.Label(win,text='SKU（不含空格）').pack();sku=ttk.Entry(win,width=60);sku.pack()
  ttk.Label(win,text='商品事实：销售数量、尺寸、材质、成本；未知项目留空').pack();facts=tk.Text(win,height=7);facts.pack(fill='x',padx=15)
+ references=[]
+ ref_label=ttk.Label(win,text='尚未选择原图（也可在ChatGPT网页手动上传）');ref_label.pack()
+ def choose():
+  nonlocal references
+  selected=list(filedialog.askopenfilenames(title='选择商品原图',filetypes=[('Images','*.png *.jpg *.jpeg *.webp')]))
+  if selected:references=selected;ref_label.configure(text=f'已选择 {len(references)} 张：'+', '.join(Path(x).name for x in references))
+ ttk.Button(win,text='选择商品原图（可多选）',command=choose).pack(pady=5)
  def create():
   try:
-   with store.lock:store.create(sku.get().strip(),facts.get('1.0','end').strip())
+   with store.lock:store.create(sku.get().strip(),facts.get('1.0','end').strip(),references)
    messagebox.showinfo('已创建','8张任务已排队；在目标ChatGPT标签中点击扩展执行下一张。')
   except Exception as e:messagebox.showerror('未创建',str(e))
  ttk.Button(win,text='创建8张任务',command=create).pack(pady=6)
