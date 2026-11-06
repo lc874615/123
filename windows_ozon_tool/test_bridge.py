@@ -26,4 +26,18 @@ class Tests(unittest.TestCase):
   other=Store(Path(self.tmp.name)/'bad');ref=Path(self.tmp.name)/'bad.png';ref.write_bytes(b'not an image')
   with self.assertRaises(Exception):other.create('BAD','generic',[ref])
   self.assertEqual(other.tasks,[])
+ def test_utf8_restart_under_windows_gbk_default(self):
+  from unittest.mock import patch
+  original=Path.read_text
+  def windows_read(path,encoding=None,errors=None,**kwargs):
+   return original(path,encoding=encoding or 'gbk',errors=errors,**kwargs)
+  self.s.tasks[0]['message']='中文任务：黑色椅子，等待处理'
+  self.s.save()
+  with patch.object(Path,'read_text',windows_read):
+   restored=Store(self.tmp.name)
+  self.assertEqual(restored.tasks[0]['message'],'中文任务：黑色椅子，等待处理')
+ def test_utf8_bom_task_file(self):
+  self.s.path.write_text(self.s.path.read_text(encoding='utf-8'),encoding='utf-8-sig')
+  restored=Store(self.tmp.name)
+  self.assertEqual(len(restored.tasks),8)
 if __name__=='__main__':unittest.main()
