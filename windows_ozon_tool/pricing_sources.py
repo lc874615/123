@@ -7,6 +7,13 @@ from pricing_core import D,OglTier,CommissionBand
 OFFICIAL_COMMISSION_URL='https://cdn.ozone.ru/s3/ozon-disk-api/global-education/ru/commissions/ozon-fees/comissions/Tarifs_CN_01_12_2025_1761720496.xlsx'
 OFFICIAL_COMMISSION_PAGE='https://global-help.ozon.com/zh/commissions/ozon-fees/commissions/?region=CHN'
 
+def excel_loader():
+ try:
+  from openpyxl import load_workbook
+  return load_workbook
+ except ImportError as exc:
+  raise ValueError('当前运行环境缺少Excel读取依赖openpyxl。请关闭工具，双击本目录“修复依赖.bat”，完成后用start_edge.bat重新启动；无需删除data或重建任务。') from exc
+
 def bounds(formula,cell,unit,initial_low,initial_high):
  low,high=D(initial_low),D(initial_high)
  for op,number in re.findall(re.escape(cell)+r'\s*(<=|>=|<|>)\s*([0-9.]+)',formula):
@@ -18,7 +25,7 @@ def bounds(formula,cell,unit,initial_low,initial_high):
  return low,high
 
 def import_ogl(path,service='Economy'):
- from openpyxl import load_workbook
+ load_workbook=excel_loader()
  path=Path(path);book=load_workbook(path,data_only=False,read_only=True)
  try:
   if '1111' not in book.sheetnames or 'OGL渠道计算' not in book.sheetnames:raise ValueError('OGL表结构无法识别，需要包含1111及OGL渠道计算工作表')
@@ -69,7 +76,7 @@ def tiers(config,labels=False):
  return [OglTier(**(row['_labels'] if labels else {k:v for k,v in row.items() if k!='_labels'})) for row in config['tiers']]
 
 def import_commissions(path):
- from openpyxl import load_workbook
+ load_workbook=excel_loader()
  path=Path(path);book=load_workbook(path,data_only=True,read_only=True)
  try:
   sheet=book['Full ChinaHK'];header=next(sheet.iter_rows(min_row=2,max_row=2,values_only=True))
