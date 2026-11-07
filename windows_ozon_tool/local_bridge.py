@@ -12,6 +12,7 @@ class Store:
   self.folder=Path(folder);self.folder.mkdir(parents=True,exist_ok=True);self.lock=threading.Lock();self.path=self.folder/'tasks.json';self.tasks=json.loads(self.path.read_text(encoding='utf-8-sig')) if self.path.exists() else []
   for t in self.tasks:
    if t['state'] in ('claimed','sending','waiting'):t['state']='needs_attention';t['message']='服务重启，请检查网页后人工处理'
+   if t.get('copy_state')=='running':t['copy_state']='needs_attention';t['message']='文案任务被重启中断，请保存网页现有结果'
   self.save()
  def save(self):
   temp=self.path.with_suffix('.tmp');temp.write_text(json.dumps(self.tasks,ensure_ascii=False,indent=2),encoding='utf-8');temp.replace(self.path)
@@ -74,7 +75,7 @@ class Store:
   if len(received)==8:
    (folder.parent/'image_manifest.json').write_text(json.dumps(received,ensure_ascii=False,indent=2),encoding='utf-8')
    threading.Thread(target=self.render_video,args=(task['sku'],),daemon=True).start()
-  return {'saved_count':len(received)}
+  return {'saved_count':len(received),'complete':task['state']=='saved'}
  def claim(self):
   if any(t['state'] in ('claimed','sending','waiting','needs_attention','review') for t in self.tasks):raise ValueError('请先审核上一任务或处理异常，不能继续发送')
   t=next((t for t in self.tasks if t['state']=='queued'),None)
@@ -121,7 +122,7 @@ class Store:
   self.tasks=[t for t in self.tasks if t['id']!=tid];self.save()
  def next_copy(self):
   for task in self.tasks:
-   if task.get('set_mode') and task.get('video') and not task.get('copy_state'):
+   if task.get('set_mode') and task['state']=='saved' and task.get('video') and not task.get('copy_state'):
     from listing_bundle import prepare
     folder=self.folder/'products'/task['sku']
     if not (folder/'listing_bundle.json').exists():prepare(folder,task)
@@ -174,7 +175,7 @@ def server(store,token,port=8765):
     body=json.loads(self.rfile.read(n))
     with store.lock:
      if self.path=='/poll':
-      active=any(t['state'] in ('claimed','sending','waiting','needs_attention','review') for t in store.tasks)
+      active=any(t['state'] in ('claimed','sending','waiting','needs_attention','review') or t.get('copy_state') in ('running','needs_attention') for t in store.tasks)
       copy_task=store.next_copy() if not active else None
       value={'ready':not active and any(t['state']=='queued' and t.get('auto_batch') for t in store.tasks),'copy_sku':copy_task['sku'] if copy_task else None}
      elif self.path=='/copy-task':
@@ -218,7 +219,7 @@ def main():
  import tkinter as tk
  from tkinter import ttk,messagebox,filedialog
  store=Store(DATA);token=secrets.token_urlsafe(32);http=server(store,token);threading.Thread(target=http.serve_forever,daemon=True).start()
- root=tk.Tk();root.title('Ozon Edge 本地服务 v0.9.3');root.geometry('1120x850')
+ root=tk.Tk();root.title('Ozon Edge 本地服务 v0.10');root.geometry('1120x850')
  shell=ttk.Frame(root);shell.pack(fill='both',expand=True);shell.rowconfigure(0,weight=1);shell.columnconfigure(0,weight=1)
  canvas=tk.Canvas(shell,highlightthickness=0);canvas.grid(row=0,column=0,sticky='nsew')
  outer_scroll=ttk.Scrollbar(shell,orient='vertical',command=canvas.yview);outer_scroll.grid(row=0,column=1,sticky='ns');canvas.configure(yscrollcommand=outer_scroll.set)
