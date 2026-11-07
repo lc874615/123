@@ -85,7 +85,13 @@ def refresh_assets(folder):
    image.update({k:v for k,v in old.items() if k=='https_url' or k.startswith('hosting_')})
   else:changed=True
   images.append(image)
- data['images']=images;data['video']={'local_file':'video/product_8s.mp4','exists':(folder/'video'/'product_8s.mp4').exists(),'https_url':None}
+ old_video=data.get('video') or {};video_path=folder/'video'/'product_8s.mp4'
+ video={'local_file':'video/product_8s.mp4','exists':video_path.exists(),'https_url':None}
+ if not changed and video_path.is_file() and old_video.get('sha256')==hashlib.sha256(video_path.read_bytes()).hexdigest():video.update(old_video)
+ elif data.get('video_hosting'):
+  data['video_hosting']={'state':'waiting','message':'视频已更新，等待重新托管'}
+  if '视频HTTPS链接待校验' not in data.get('blockers',[]):data.setdefault('blockers',[]).append('视频HTTPS链接待校验')
+ data['images']=images;data['video']=video
  if changed and data.get('hosting'):
   count=sum(bool(r.get('https_url')) and r.get('hosting_sha256')==r['sha256'] for r in images)
   data['hosting']={**data['hosting'],'state':'pending','verified_images':count,'message':'生成图已更新，等待自动补齐新图片链接'}

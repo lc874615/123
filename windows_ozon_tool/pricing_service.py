@@ -99,7 +99,8 @@ class PricingService:
     with self.lock:bundle=read(path)
     if not isinstance(bundle,dict):raise ValueError('商品草稿必须是JSON对象')
     inputs={k:bundle.get(k) for k in ('variant_parameters','category','category_match_status')}
-    fingerprint=hashlib.sha256(json.dumps([inputs,configs,mapping,source_error],sort_keys=True,default=str).encode()).hexdigest()
+    fingerprint_inputs={**inputs,'category':{k:v for k,v in (bundle.get('category') or {}).items() if k!='attributes_revalidation_required'}}
+    fingerprint=hashlib.sha256(json.dumps([fingerprint_inputs,configs,mapping,source_error],sort_keys=True,default=str).encode()).hexdigest()
     if bundle.get('pricing_fingerprint')==fingerprint:continue
     try:
      if source_error:raise ValueError('定价来源未就绪：'+source_error)

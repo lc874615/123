@@ -109,6 +109,13 @@ class PricingTests(unittest.TestCase):
   with tempfile.TemporaryDirectory() as tmp:
    mapping={'123':{'type_name':'test','source_row':3,'commission_sha256':'old'}}
    with self.assertRaisesRegex(ValueError,'佣金表已更新'):PricingService(tmp).quote(self.bundle(),self.configs(),mapping)
+ def test_attribute_review_flag_does_not_reset_confirmed_price(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   service=PricingService(tmp)
+   for name,value in self.configs().items():write(service.root/(name+'.json'),value)
+   path=Path(tmp)/'products'/'ITEM'/'listing_bundle.json';write(path,self.bundle());service.calculate_all();data=read(path)
+   data['pricing_confirmed_fingerprint']=data['pricing_fingerprint'];data['category']['attributes_revalidation_required']=False;write(path,data);service.calculate_all()
+   self.assertEqual(read(path)['pricing_confirmed_fingerprint'],data['pricing_fingerprint'])
  def test_no_unverified_commission_fallback(self):
   with tempfile.TemporaryDirectory() as tmp:
    bundle=self.bundle();bundle['category']['name']='unknown'

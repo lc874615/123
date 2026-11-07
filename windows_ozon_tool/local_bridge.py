@@ -267,7 +267,7 @@ class Store:
      row['category_match_status']=latest.get('category_match_status','未开始')
      row['pricing_status']=latest.get('pricing_status','未开始')
      row['price_confirmed']=bool(latest.get('pricing_confirmed_fingerprint') and latest.get('pricing_confirmed_fingerprint')==latest.get('pricing_fingerprint'))
-     hosted=latest.get('hosting') or {};row['hosting_state']=hosted.get('state','not_configured');row['hosting_verified_images']=hosted.get('verified_images',0)
+     hosted=latest.get('hosting') or {};row['hosting_state']=hosted.get('state','not_configured');row['hosting_verified_images']=hosted.get('verified_images',0);row['video_hosting_state']=(latest.get('video_hosting') or {}).get('state','not_started');row['video_url_set']=bool((latest.get('video') or {}).get('https_url'))
     except (OSError,ValueError,TypeError):pass
    if row['copy_complete']:
     try:
@@ -419,7 +419,7 @@ def main():
  import tkinter as tk
  from tkinter import ttk,messagebox,filedialog
  store=Store(DATA);token=secrets.token_urlsafe(32);http=server(store,token);threading.Thread(target=http.serve_forever,daemon=True).start()
- root=tk.Tk();root.title('Ozon Edge 本地服务 v0.27');root.geometry('1120x850')
+ root=tk.Tk();root.title('Ozon Edge 本地服务 v0.28');root.geometry('1120x850')
  shell=ttk.Frame(root);shell.pack(fill='both',expand=True);shell.rowconfigure(0,weight=1);shell.columnconfigure(0,weight=1)
  canvas=tk.Canvas(shell,highlightthickness=0);canvas.grid(row=0,column=0,sticky='nsew')
  outer_scroll=ttk.Scrollbar(shell,orient='vertical',command=canvas.yview);outer_scroll.grid(row=0,column=1,sticky='ns');canvas.configure(yscrollcommand=outer_scroll.set)
@@ -445,6 +445,8 @@ def main():
  connection=ttk.Label(win,text='等待扩展连接：请保存配对码并绑定ChatGPT标签');connection.pack(pady=4)
  grid=VariantGrid(win,base)
  from pricing_service import PricingService,read as read_pricing
+ from ozon_connection import restore as restore_ozon
+ restore_ozon(DATA)
  pricing=PricingService(DATA,store.lock);pricing_stop=threading.Event()
  threading.Thread(target=pricing.worker,args=(pricing_stop,),daemon=True).start()
  pricing_label=ttk.Label(win,text='自动售价：等待导入定价来源');pricing_label.pack(pady=3)
@@ -454,10 +456,16 @@ def main():
  hosting=HostingService(DATA,store.lock,active_skus=hosting_skus)
  threading.Thread(target=hosting.worker,args=(pricing_stop,),daemon=True).start()
  hosting_label=ttk.Label(win,text='图片托管：首次需连接腾讯云COS存储桶');hosting_label.pack(pady=3)
+ from video_hosting import VideoHostingService
+ video_hosting=VideoHostingService(hosting);threading.Thread(target=video_hosting.worker,args=(pricing_stop,),daemon=True).start()
+ video_label=ttk.Label(win,text='视频托管：等待8秒MP4与图片链接');video_label.pack(pady=3)
+ from attribute_service import AttributeService
+ attributes=AttributeService(DATA,store.lock,active_skus=hosting_skus)
+ threading.Thread(target=attributes.worker,args=(pricing_stop,),daemon=True).start()
  def hosting_settings():
   import os,webbrowser
   dialog=tk.Toplevel(root);dialog.title('腾讯云COS图片托管');dialog.geometry('780x650')
-  ttk.Label(dialog,text='COS免费存储额度不覆盖请求和外网下载，使用时可能计费。\n仅上传清单中的8张生成原图，主图固定01，共用详情图只上传一次。').pack(padx=12,pady=10)
+  ttk.Label(dialog,text='COS免费存储额度不覆盖请求和外网下载，使用时可能计费。\n托管8张生成原图和本地8秒MP4，主图固定01，共用详情图只上传一次。').pack(padx=12,pady=10)
   ttk.Button(dialog,text='打开腾讯云COS控制台',command=lambda:webbrowser.open('https://console.cloud.tencent.com/cos/bucket')).pack(pady=4)
   try:config,credentials=hosting.settings()
   except (OSError,ValueError):config={};credentials={}
@@ -466,15 +474,15 @@ def main():
    ttk.Label(dialog,text=label).pack();ttk.Entry(dialog,textvariable=variable,width=65,show='*' if masked else '').pack(pady=2)
   remember=tk.BooleanVar(value=os.name=='nt')
   ttk.Checkbutton(dialog,text='在当前Windows账户加密记住密钥（重启后继续自动上传）',variable=remember,state='normal' if os.name=='nt' else 'disabled').pack(pady=6)
-  ttk.Label(dialog,text='存储桶需设为公有读私有写，允许匿名、空Referer读取上架图片。\n使用拥有该目录PutObject权限的子账号密钥；程序不创建桶或修改权限。\n只上传生成图片，不开CDN、全球加速或图片处理服务。').pack(pady=6)
+  ttk.Label(dialog,text='存储桶需设为公有读私有写，允许匿名、空Referer读取上架图片。\n使用拥有该目录PutObject权限的子账号密钥；程序不创建桶或修改权限。\n只上传生成图和MP4，不开CDN、全球加速或媒体处理服务。').pack(pady=6)
   state=ttk.Label(dialog,text=hosting.status,wraplength=690);state.pack(pady=6)
   def save_hosting():
    try:
-    hosting.configure(region.get(),bucket.get(),key.get(),secret.get(),remember.get());state.configure(text='配置已保存，正在后台上传并校验已有及后续生成图片…')
+    hosting.configure(region.get(),bucket.get(),key.get(),secret.get(),remember.get());video_hosting.wake.set();state.configure(text='配置已保存，正在后台上传并校验已有及后续生成图片…')
    except Exception as e:messagebox.showerror('托管设置未保存',str(e),parent=dialog)
   ttk.Button(dialog,text='保存并自动上传已有及后续生成图片',command=save_hosting).pack(pady=4)
   def switch(enabled):
-   try:hosting.set_enabled(enabled)
+   try:hosting.set_enabled(enabled);video_hosting.retry_at.clear();video_hosting.wake.set()
    except ValueError as e:messagebox.showerror('托管状态',str(e),parent=dialog)
   buttons=ttk.Frame(dialog);buttons.pack(pady=3)
   ttk.Button(buttons,text='暂停上传（保留已有链接）',command=lambda:switch(False)).pack(side='left',padx=5)
@@ -563,7 +571,7 @@ def main():
  ttk.Label(win,text='每个变体：01固定为独立主图；02—08沿用首变体的7张详情图').pack(pady=3)
  ttk.Button(win,text='创建全部变体并自动处理',command=create).pack(pady=6)
  view=ttk.Treeview(win,columns=('sku','progress','price','hosting','status'),show='headings',height=8,selectmode='browse')
- for key,label,width in [('sku','变体货号',180),('progress','进度',140),('price','售价估算（元）',140),('hosting','图片链接',110),('status','状态',460)]:view.heading(key,text=label,anchor='center');view.column(key,width=width,stretch=key=='status',anchor='center')
+ for key,label,width in [('sku','变体货号',180),('progress','进度',140),('price','售价估算（元）',140),('hosting','图片 / 视频链接',185),('status','状态',460)]:view.heading(key,text=label,anchor='center');view.column(key,width=width,stretch=key=='status',anchor='center')
  view.pack(fill='both',expand=True,padx=15)
  visible=[]
  def selected():
@@ -581,6 +589,7 @@ def main():
   except (OSError,ValueError,KeyError):pass
   pricing_label.configure(text='自动售价：'+pricing.status+fx_note)
   hosting_label.configure(text='图片托管：'+hosting.status)
+  video_label.configure(text='视频托管：'+video_hosting.status)
   for item in view.get_children():view.delete(item)
   for task in visible:
    if task['state']=='queued':task['message']=reason
@@ -588,7 +597,7 @@ def main():
    path=DATA/'products'/task['sku']/'listing_bundle.json'
    try:
     bundle=read_pricing(path);price=bundle.get('price_cny') or '待补充'
-    host_state=bundle.get('hosting') or {};hosted=str(host_state.get('verified_images',0))+'/8' if host_state.get('state')=='done' else str(host_state.get('verified_images',0))+'/8 · 待处理'
+    host_state=bundle.get('hosting') or {};hosted=str(host_state.get('verified_images',0))+'/8图 · '+('视频✓' if (bundle.get('video_hosting') or {}).get('state')=='done' else '视频待处理')
    except (OSError,ValueError):pass
    sku,progress,status=task_view(task)
    view.insert('', 'end',iid=task['id'],values=(sku,progress,price,hosted,status))
@@ -663,7 +672,7 @@ def main():
      latest=read_pricing(path)
      if not latest.get('auto_pricing'):raise ValueError('当前没有可确认的自动估算')
      if not latest.get('category',{}).get('confirmed'):raise ValueError('请先确认商品类目，再确认售价')
-     latest['pricing_confirmed_fingerprint']=latest['pricing_fingerprint']
+     latest['pricing_confirmed_fingerprint']=latest['pricing_fingerprint'];latest['pricing_confirmed_price']=latest['price_cny']
      latest['blockers']=[b for b in latest.get('blockers',[]) if b!='售价估算待确认']
      latest['pricing_status']='售价已确认'
      from pricing_service import write as write_pricing
@@ -733,22 +742,53 @@ def main():
    if os.name=='nt':os.startfile(str(target.parent))
   except Exception as e:messagebox.showerror('未准备',str(e))
  ttk.Button(win,text='准备所选商品上架草稿并打开文件夹',command=listing).pack(pady=4)
+ def listing_editor():
+  task=selected()
+  if not task:return
+  folder=DATA/'products'/task['sku'];path=folder/'listing_bundle.json'
+  if not path.exists():messagebox.showinfo('等待草稿','请先等待素材和文案完成');return
+  from category_match import group_key
+  from listing_editor import open_editor
+  with store.lock:
+   current=read_pricing(path)
+   if not isinstance(current,dict):messagebox.showerror('草稿无效','当前草稿不是JSON对象，请检查本地文件；原文件保留。');return
+   key=group_key(current);folders=[]
+   for item in store.tasks:
+    target=DATA/'products'/item['sku']/'listing_bundle.json'
+    if item.get('set_mode') and item['state']!='cancelled' and target.exists():
+     try:candidate=read_pricing(target)
+     except (OSError,ValueError):continue
+     if isinstance(candidate,dict) and group_key(candidate)==key:folders.append(target.parent)
+  open_editor(root,folder,attributes,folders,lambda:category_editor(task),lambda:pricing_details(task),connect_category)
+ ttk.Button(win,text='上架草稿 / 必填属性 / 整组提交预览',command=listing_editor).pack(pady=4)
+ def retry_video():
+  task=selected()
+  if not task:return
+  if len(task.get('received_images',[]))!=8:messagebox.showinfo('等待图片','8张图片完整后才能重新合成视频');return
+  threading.Thread(target=store.render_video,args=(task['sku'],),daemon=True).start()
+  video_hosting.retry_at.clear();video_hosting.wake.set()
+ ttk.Button(win,text='重新合成所选变体8秒视频并自动托管',command=retry_video).pack(pady=4)
  def connect_category():
   import os
   dialog=tk.Toplevel(root);dialog.title('连接Ozon API与类目匹配')
-  ttk.Label(dialog,text='填写卖家后台的Client-Id和Api-Key，用于读取官方类目树。\n仅在本次运行保留，不写入商品文件，不提交商品。').pack(padx=12,pady=8)
+  ttk.Label(dialog,text='填写卖家后台的Client-Id和Api-Key，用于读取官方类目树。\n可选择Windows加密记住；不写入商品文件，不提交商品。').pack(padx=12,pady=8)
   client=tk.StringVar(value=os.environ.get('OZON_CLIENT_ID',''));key=tk.StringVar(value=os.environ.get('OZON_API_KEY',''))
   ttk.Label(dialog,text='Client-Id').pack();ttk.Entry(dialog,textvariable=client,width=55).pack()
   ttk.Label(dialog,text='Api-Key').pack();ttk.Entry(dialog,textvariable=key,show='*',width=55).pack()
+  remember_api=tk.BooleanVar(value=os.name=='nt')
+  ttk.Checkbutton(dialog,text='在当前Windows用户加密记住Ozon API，重启后自动连接',variable=remember_api,state='normal' if os.name=='nt' else 'disabled').pack(pady=5)
   status=ttk.Label(dialog,text='已有类目和已确认的手动修改将保留');status.pack(pady=6)
   def connect():
    if not client.get().strip() or not key.get().strip():messagebox.showerror('未连接','请填写Client-Id和Api-Key',parent=dialog);return
-   os.environ['OZON_CLIENT_ID']=client.get().strip();os.environ['OZON_API_KEY']=key.get().strip()
+   try:
+    from ozon_connection import save as save_ozon
+    save_ozon(DATA,client.get(),key.get(),remember_api.get())
+   except (OSError,ValueError) as exc:messagebox.showerror('API连接未保存',str(exc),parent=dialog);return
    button.configure(state='disabled');status.configure(text='正在补查所有未匹配商品组，请稍候…')
    def work():
     try:
      from category_match import repair_groups
-     repair_groups(DATA/'products',store.lock);pricing.calculate_all()
+     repair_groups(DATA/'products',store.lock);pricing.calculate_all();attributes.retry_at.clear();attributes.wake.set()
      root.after(0,lambda:status.configure(text='补查完成；请打开类目窗口确认。失败原因显示在各商品类目状态中。'))
     except Exception:root.after(0,lambda:status.configure(text='匹配未完成，请检查连接后重试；已有素材保留。'))
     finally:root.after(0,lambda:button.configure(state='normal'))
@@ -794,6 +834,6 @@ def main():
 
  ttk.Label(win,text='遇到 needs_attention：停止自动任务，先人工检查网页；不自动重发。图片在本工具 data/products 下。').pack()
  refresh()
- def close():pricing_stop.set();hosting.wake.set();http.shutdown();root.destroy()
+ def close():pricing_stop.set();hosting.wake.set();video_hosting.wake.set();attributes.wake.set();http.shutdown();root.destroy()
  root.protocol('WM_DELETE_WINDOW',close);root.mainloop()
 if __name__=='__main__':main()

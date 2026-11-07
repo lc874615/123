@@ -30,17 +30,19 @@ class CosHost:
   validate_settings(config,credentials);self.config=dict(config);self.credentials=dict(credentials)
   self.hostname=config['bucket']+'.cos.'+config['region']+'.myqcloud.com'
   self.base='https://'+self.hostname;self.opener=urllib.request.build_opener(NoRedirect())
- def verify(self,url,digest,size):
+ def verify(self,url,digest,size):return self._verify(url,digest,size,'image/',LIMIT)
+ def verify_video(self,url,digest,size):return self._verify(url,digest,size,'video/',100*1024*1024)
+ def _verify(self,url,digest,size,mime_prefix,limit):
   parsed=urllib.parse.urlsplit(url)
   if parsed.scheme!='https' or parsed.hostname!=self.hostname or parsed.port not in (None,443) or parsed.username or parsed.password or parsed.query or parsed.fragment or not parsed.path.startswith('/'+self.config['prefix']+'/'):raise HostingError('公开链接不是当前COS存储桶的固定HTTPS原图地址')
-  request=urllib.request.Request(url,headers={'User-Agent':'OzonLocalHosting/0.27','Accept':'image/*'})
+  request=urllib.request.Request(url,headers={'User-Agent':'OzonLocalHosting/0.28','Accept':mime_prefix+'*'})
   try:
    with self.opener.open(request,timeout=30) as response:
-    raw=response.read(LIMIT+1)
-    if not response.headers.get('Content-Type','').lower().startswith('image/'):raise HostingError('COS公开链接未返回图片，请检查对象Content-Type')
-  except urllib.error.HTTPError as exc:raise HostingError('COS原图匿名读取失败（HTTP '+str(exc.code)+'），请检查公有读私有写权限、防盗链空Referer和账户状态；未回填链接') from None
-  except (urllib.error.URLError,TimeoutError,OSError):raise HostingError('COS原图公开读取超时或网络不可达，稍后自动重试') from None
-  if len(raw)!=size or len(raw)>LIMIT or not hmac.compare_digest(hashlib.sha256(raw).hexdigest(),digest):raise HostingError('COS远端图片与本地原图不一致，未回填链接')
+    raw=response.read(limit+1)
+    if not response.headers.get('Content-Type','').lower().startswith(mime_prefix):raise HostingError('COS公开链接未返回预期媒体，请检查对象Content-Type')
+  except urllib.error.HTTPError as exc:raise HostingError('COS媒体匿名读取失败（HTTP '+str(exc.code)+'），请检查公有读私有写权限、防盗链空Referer和账户状态；未回填链接') from None
+  except (urllib.error.URLError,TimeoutError,OSError):raise HostingError('COS媒体公开读取超时或网络不可达，稍后自动重试') from None
+  if len(raw)!=size or len(raw)>limit or not hmac.compare_digest(hashlib.sha256(raw).hexdigest(),digest):raise HostingError('COS远端媒体与本地文件不一致，未回填链接')
   return True
  def upload(self,raw,digest):
   if len(raw)>LIMIT:raise HostingError('单张图片超过20MB，请检查生成图文件')
@@ -49,7 +51,14 @@ class CosHost:
    fmt=image.format;image.verify()
   extension,mime={'JPEG':('jpg','image/jpeg'),'PNG':('png','image/png'),'WEBP':('webp','image/webp')}.get(fmt,(None,None))
   if not extension:raise HostingError('托管仅支持JPG、PNG、WEBP图片')
-  key=self.config['prefix']+'/'+digest+'.'+extension;path='/'+key;url=self.base+path
+  return self._put(raw,digest,self.config['prefix']+'/'+digest+'.'+extension,mime,False)
+ def upload_video(self,raw,digest):
+  from video_inspect import inspect_mp4
+  inspect_mp4(raw)
+  if hashlib.sha256(raw).hexdigest()!=digest:raise HostingError('待上传视频校验值变化')
+  return self._put(raw,digest,self.config['prefix']+'/videos/'+digest+'.mp4','video/mp4',True)
+ def _put(self,raw,digest,key,mime,video):
+  path='/'+key;url=self.base+path
   headers={'Host':self.hostname,'Content-Type':mime,'Content-Length':str(len(raw)),'Content-MD5':base64.b64encode(hashlib.md5(raw).digest()).decode(),'x-cos-storage-class':'STANDARD','x-cos-forbid-overwrite':'true','Cache-Control':'public, max-age=31536000, immutable'}
   headers['Authorization']=authorization('PUT',path,headers,self.credentials['secret_id'],self.credentials['secret_key'])
   request=urllib.request.Request(url,data=raw,headers=headers,method='PUT')
@@ -61,5 +70,5 @@ class CosHost:
     raise HostingError(reason+'（HTTP '+str(exc.code)+'）') from None
    # A previous attempt may have succeeded. Verify the immutable object rather than overwrite.
   except (urllib.error.URLError,TimeoutError,OSError):raise HostingError('COS上传超时或网络不可达，保留已完成进度，稍后重试') from None
-  self.verify(url,digest,len(raw))
+  (self.verify_video if video else self.verify)(url,digest,len(raw))
   return {'https_url':url,'object_key':key,'provider':'tencent_cos','sha256':digest,'size':len(raw),'verified_at':time.time()}

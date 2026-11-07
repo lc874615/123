@@ -1,0 +1,171 @@
+"""Read-only live Ozon category schemas and evidence-backed local attributes."""
+import hashlib,json,os,threading,time,urllib.error,urllib.request
+from pathlib import Path
+from decimal import Decimal
+from pricing_service import read,write
+
+API='https://api-seller.ozon.ru'
+def field_key(field):return str(field.get('attribute_complex_id') or 0)+':'+str(field['id'])
+def category_key(bundle):
+ category=bundle.get('category') or {}
+ if not category.get('description_category_id') or not category.get('type_id'):raise ValueError('请先匹配并确认上架类目')
+ return (int(category['description_category_id']),int(category['type_id']))
+def source_fingerprint(bundle):
+ values={k:v for k,v in (bundle.get('variant_parameters') or {}).items() if k not in ('cost','margin','stock')}
+ copy=bundle.get('copy') or {}
+ return hashlib.sha256(json.dumps([values,{k:copy.get(k) for k in ('title_ru','description_ru','tags_ru')},bundle.get('model'),bundle.get('brand')],sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+def review_hash(state):
+ return hashlib.sha256(json.dumps([state.get('schema_hash'),state.get('source_fingerprint'),state.get('values')],sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+def api(path,body):
+ if not os.environ.get('OZON_CLIENT_ID') or not os.environ.get('OZON_API_KEY'):raise ValueError('请先在本地连接Ozon API，才能读取真实必填属性')
+ req=urllib.request.Request(API+path,data=json.dumps(body).encode(),headers={'Content-Type':'application/json','Client-Id':os.environ['OZON_CLIENT_ID'],'Api-Key':os.environ['OZON_API_KEY']})
+ try:
+  with urllib.request.urlopen(req,timeout=25) as response:value=json.load(response)
+ except urllib.error.HTTPError as exc:raise ValueError('Ozon属性接口返回HTTP '+str(exc.code)+'，请检查API权限和类目') from None
+ except (OSError,ValueError):raise ValueError('Ozon属性读取失败，请检查网络后重试') from None
+ if not isinstance(value,dict) or not isinstance(value.get('result'),list):raise ValueError('Ozon属性响应格式异常')
+ return value
+
+def suggested_value(field,bundle):
+ """Only declared facts; dictionary values still require an exact official match."""
+ name=(field.get('name_ru') or field.get('name','')).lower().strip();identifier=int(field['id']);p=bundle.get('variant_parameters') or {};copy=bundle.get('copy') or {}
+ if identifier==85 or name in ('бренд','品牌'):return 'Нет бренда'
+ if identifier==9048 or name in ('название модели','модель','型号','型号名称'):return bundle.get('model')
+ if identifier==4191 or name in ('аннотация','описание товара','商品描述','简介'):return copy.get('description_ru')
+ if identifier==22390 or name in ('хэштеги','хештеги','标签','主题标签'):
+  tags=copy.get('tags_ru') or [];return tags if field.get('is_collection') else ' '.join(tags)
+ if name in ('страна-изготовитель','страна производства','生产国','原产国','产地'):return {'中国':'Китай'}.get(p.get('origin'),p.get('origin'))
+ if name in ('цвет товара','цвет','颜色','商品颜色'):return {'金色':'золотой','红色':'красный','灰色':'серый','浅灰色':'светло-серый','黑色':'черный','白色':'белый','蓝色':'синий','绿色':'зеленый','米色':'бежевый'}.get(p.get('color'),p.get('color'))
+ if name in ('материал','основной материал','主体材质','主要材质'):return {'聚丙烯':'Полипропилен','纸板':'Картон','金属':'Металл','塑料':'Пластик'}.get(p.get('material'),p.get('material'))
+ if name in ('материал подкладки','内衬材质'):return {'纸板':'Картон','聚丙烯':'Полипропилен'}.get(p.get('accessory_material'),p.get('accessory_material'))
+ if name in ('количество предметов в комплекте','количество в упаковке','套装件数','包装件数'):return p.get('quantity')
+ if name in ('размер','规格','размер изделия'):return p.get('size')
+ for key,words in [('length',('длина, см','商品长(cm)')),('width',('ширина, см','商品宽(cm)')),('height',('высота, см','商品高(cm)'))]:
+  if name in words:return p.get(key)
+ return None
+
+def validate_values(field,values):
+ if not isinstance(values,list) or not values:raise ValueError('属性值不能为空')
+ maximum=int(field.get('max_value_count') or (100 if field.get('is_collection') else 1))
+ if len(values)>maximum or (not field.get('is_collection') and len(values)>1):raise ValueError('属性值数量超过该字段允许范围')
+ for row in values:
+  if field.get('dictionary_id'):
+   if not isinstance(row.get('dictionary_value_id'),int) or row['dictionary_value_id']<=0:raise ValueError('请从官方字典选项中选择，不可手填字典ID')
+  else:
+   value=row.get('value')
+   if not isinstance(value,str) or not value.strip():raise ValueError('属性值不能为空')
+   if len(value)>20000:raise ValueError('属性值过长')
+   kind=str(field.get('type','')).casefold()
+   if kind in ('boolean','bool') and value.casefold() not in ('true','false'):raise ValueError('布尔属性请填true或false')
+   if kind in ('decimal','integer','number','float','int','double'):
+    try:number=Decimal(value)
+    except Exception:raise ValueError('此属性要求数值') from None
+    if not number.is_finite() or (kind in ('integer','int') and number!=number.to_integral_value()):raise ValueError('此属性要求有效数值')
+ return values
+
+class AttributeService:
+ def __init__(self,data,lock=None,caller=api,active_skus=None):
+  self.data=Path(data);self.root=self.data/'attributes';self.root.mkdir(parents=True,exist_ok=True);self.lock=lock or threading.Lock();self.io_lock=threading.RLock();self.caller=caller;self.active_skus=active_skus;self.status='等待类目确认后读取必填属性';self.wake=threading.Event();self.retry_at={}
+ def dictionary(self,bundle,field,query='',last_value_id=0):
+  category,type_id=category_key(bundle);base={'attribute_id':field['id'],'description_category_id':category,'type_id':type_id}
+  with self.io_lock:
+   if query:
+    if len(query.strip())<2:raise ValueError('官方字典关键词至少2个字符')
+    response=self.caller('/v1/description-category/attribute/values/search',{**base,'value':query.strip(),'limit':100})
+   else:response=self.caller('/v1/description-category/attribute/values',{**base,'language':'ZH_HANS','last_value_id':last_value_id,'limit':200})
+   path=self.root/(f'{category}-{type_id}-{field["id"]}.json');known=read(path) if path.exists() else {}
+   for row in response['result']:
+    if isinstance(row.get('id'),int) and row['id']>0:known[str(row['id'])]=row
+   write(path,known);return response
+ def refresh(self,path):
+  path=Path(path)
+  with self.lock:bundle=read(path)
+  category,type_id=category_key(bundle)
+  if not (bundle.get('category') or {}).get('confirmed'):raise ValueError('类目仍待确认，请先确认或修改类目')
+  with self.io_lock:
+   base={'description_category_id':category,'type_id':type_id}
+   zh=self.caller('/v1/description-category/attribute',{**base,'language':'ZH_HANS'})['result'];ru=self.caller('/v1/description-category/attribute',{**base,'language':'RU'})['result'];russian={field_key(f):f for f in ru}
+   fields=[{**f,'name_ru':russian.get(field_key(f),{}).get('name',f.get('name',''))} for f in zh]
+   if not fields:raise ValueError('该类目未返回属性，暂不视为校验通过')
+   digest=hashlib.sha256(json.dumps([category,type_id,fields],ensure_ascii=False,sort_keys=True).encode()).hexdigest()
+   old=bundle.get('attribute_draft') or {};same=old.get('schema_hash')==digest
+   source=source_fingerprint(bundle);manual=set(old.get('manual_keys') or []);unchanged=old.get('source_fingerprint')==source
+   values={k:v for k,v in (old.get('values') or {}).items() if unchanged or k in manual} if same else {};suggestions={}
+   for field in fields:
+    key=field_key(field)
+    if key in values or field['id'] in (8229,21841,21837,21845):continue
+    suggestion=suggested_value(field,bundle)
+    if suggestion is None or suggestion=='':continue
+    suggestions[key]=suggestion
+    if field.get('dictionary_id'):
+     try:
+      rows=self.dictionary(bundle,field,str(suggestion))['result'];matches=[r for r in rows if str(r.get('value','')).casefold()==str(suggestion).casefold()]
+      if len(matches)==1:values[key]=[{'dictionary_value_id':matches[0]['id'],'value':matches[0]['value']}]
+     except ValueError:pass
+    else:
+     proposed=[{'value':str(v)} for v in (suggestion if isinstance(suggestion,list) else [suggestion])]
+     try:validate_values(field,proposed);values[key]=proposed
+     except ValueError:pass
+   state={'category_key':[category,type_id],'schema_hash':digest,'fields':fields,'values':values,'suggestions':suggestions,'fetched_at':time.time(),'confirmed':bool(same and unchanged and old.get('confirmed')),'source_fingerprint':source,'manual_keys':sorted(manual) if same else []}
+   with self.lock:
+    latest=read(path)
+    if category_key(latest)!=(category,type_id) or source_fingerprint(latest)!=source or not latest['category'].get('confirmed'):raise ValueError('读取期间类目已变化，请重新读取')
+    # Do not discard edits made while a network request was in progress.
+    current=latest.get('attribute_draft') or {}
+    if current.get('schema_hash')==digest:
+     for k,v in (current.get('values') or {}).items():
+      if current.get('source_fingerprint')==source or k in (current.get('manual_keys') or []):state['values'][k]=v
+     state['manual_keys']=current.get('manual_keys') or []
+     state['confirmed']=bool(current.get('source_fingerprint')==source and current.get('confirmed'))
+     if state['confirmed']:state['confirmed_values_hash']=current.get('confirmed_values_hash')
+    latest['attribute_draft']=state
+    if not state.get('confirmed') and '必填属性待核对' not in latest.get('blockers',[]):latest.setdefault('blockers',[]).append('必填属性待核对')
+    write(path,latest)
+   return state
+ def save_values(self,path,key,values):
+  path=Path(path)
+  with self.lock:
+   bundle=read(path);state=bundle.get('attribute_draft') or {}
+   if list(category_key(bundle))!=state.get('category_key'):raise ValueError('类目已变化，请重新读取属性')
+   field=next((f for f in state['fields'] if field_key(f)==key),None)
+   if field is None:raise ValueError('此属性不属于当前官方类目')
+   validate_values(field,values)
+   if field.get('dictionary_id'):
+    category,type_id=category_key(bundle);known_path=self.root/f'{category}-{type_id}-{field["id"]}.json';known=read(known_path) if known_path.exists() else {}
+    if any(str(v['dictionary_value_id']) not in known for v in values):raise ValueError('字典值未经当前类目官方接口验证，请重新选择')
+    values=[{'dictionary_value_id':v['dictionary_value_id'],'value':known[str(v['dictionary_value_id'])]['value']} for v in values]
+   state.setdefault('values',{})[key]=values;state['manual_keys']=sorted(set(state.get('manual_keys') or [])|{key});state['confirmed']=False;bundle['attribute_draft']=state;write(path,bundle)
+ def confirm(self,path,vat,currency_confirmed):return self.confirm_many([path],vat,currency_confirmed)
+ def confirm_many(self,paths,vat,currency_confirmed,expected=None):
+  from listing_preview import attribute_errors
+  if vat not in ('0','0.05','0.07','0.1','0.2','0.22'):raise ValueError('请选择真实适用的增值税率，不自动假定免税')
+  if not currency_confirmed:raise ValueError('请确认店铺结算币种为CNY')
+  if not paths:raise ValueError('没有可确认的变体任务')
+  prepared=[]
+  with self.lock:
+   for name in paths:
+    path=Path(name);bundle=read(path);errors=attribute_errors(bundle)
+    if not (bundle.get('category') or {}).get('confirmed'):errors.append('类目待确认')
+    if expected is not None and expected.get(str(path))!=review_hash(bundle.get('attribute_draft') or {}):errors.append('查看整组预览后属性发生变化，请重新核对')
+    if errors:raise ValueError(path.parent.name+'：\n'+'\n'.join(errors))
+    prepared.append((path,bundle))
+   for path,bundle in prepared:
+    state=bundle['attribute_draft'];state['confirmed']=True;state['confirmed_values_hash']=review_hash(state)
+    bundle['category']['attributes_revalidation_required']=False;bundle['blockers']=[b for b in bundle.get('blockers',[]) if b not in ('类目及必填属性待匹配','必填属性待核对')]
+    bundle['export_settings']={'currency_code':'CNY','currency_confirmed':True,'vat':vat};write(path,bundle)
+  return len(prepared)
+ def worker(self,stop):
+  while not stop.is_set():
+   for path in (self.data/'products').glob('*/listing_bundle.json'):
+    if stop.is_set():return
+    if self.active_skus is not None and path.parent.name not in self.active_skus():continue
+    if self.retry_at.get(str(path),0)>time.time():continue
+    try:
+     with self.lock:bundle=read(path)
+     if not (bundle.get('category') or {}).get('confirmed'):continue
+     state=bundle.get('attribute_draft') or {}
+     if state.get('category_key')==list(category_key(bundle)) and state.get('source_fingerprint')==source_fingerprint(bundle) and time.time()-state.get('fetched_at',0)<86400:
+      self.status='当前类目属性已缓存，可核对或导出';continue
+     self.status=path.parent.name+'：正在读取官方必填属性';self.refresh(path);self.status='必填属性已读取，待核对缺失项'
+    except Exception as exc:self.status='属性待处理：'+str(exc)[:160];self.retry_at[str(path)]=time.time()+60
+   self.wake.wait(15);self.wake.clear()
