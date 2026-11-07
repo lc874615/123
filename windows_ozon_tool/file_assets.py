@@ -1,6 +1,5 @@
-"""Read numbered image assets without extracting untrusted archive paths."""
-import base64,hashlib,io,re,zipfile
-from pathlib import PurePosixPath
+"""Read numbered image assets from individual downloaded files."""
+import base64,hashlib,io
 from PIL import Image
 from asset_guard import reject_reference
 LIMIT=20*1024*1024
@@ -22,18 +21,5 @@ def validate_images(images,expected,references):
  return [base64.b64encode(data).decode() for data in images]
 
 def decode(data,extension,expected,references):
- if extension!='zip':return validate_images([data],1,references)
- images=[]
- with zipfile.ZipFile(io.BytesIO(data)) as archive:
-  entries=archive.infolist()
-  if len(entries)>64:raise ValueError('压缩包文件过多')
-  for item in entries:
-   path=PurePosixPath(item.filename)
-   if path.is_absolute() or '..' in path.parts or '\\' in item.filename or ':' in item.filename or (item.external_attr>>16)&0o170000==0o120000:raise ValueError('压缩包包含不安全路径')
-   if item.is_dir() or path.suffix.lower() not in ('.jpg','.jpeg','.png','.webp'):continue
-   if item.file_size>LIMIT:raise ValueError('压缩包中的图片过大')
-   match=re.match(r'^0*([1-8])(?:[_ .-]|$)',path.stem)
-   if not match:raise ValueError('压缩包图片须有01至08顺序编号，避免误认主图')
-   images.append((int(match.group(1)),item))
-  if len(images)!=expected or sorted(n for n,_ in images)!=list(range(1,expected+1)):raise ValueError('压缩包图片编号或数量不完整')
-  return validate_images([archive.read(item) for _,item in sorted(images,key=lambda x:x[0])],expected,references)
+ if extension not in ('jpg','jpeg','png','webp'):raise ValueError('只支持独立图片，不读取压缩包')
+ return validate_images([data],1,references)

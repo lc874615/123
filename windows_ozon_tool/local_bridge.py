@@ -58,7 +58,7 @@ class Store:
   group=[t for t in self.tasks if t['sku']==sku]
   for t in group:t.update(state='cancelled',message='由一次提交整套任务替代')
   task=dict(group[0]);task.update(id=secrets.token_hex(16),name='00_full_set',state='queued',message='等待扩展领取任务',auto_batch=True,set_mode=True,received_images=[])
-  task['prompt']='请一次完成8张独立的Ozon商品图片，必须是8个独立图片文件，不要拼图，不要把8个画面合成一张。按顺序输出：'+ '；'.join(f'{i+1}. {brief}' for i,(_,brief) in enumerate(TASKS))+ '。如以文件或ZIP交付，8张文件须按01_至08_编号，01_为主图，ZIP不得包含原始参考图。第1张是商品主图，展示真实销售数量。每张3:4竖版，自然俄文，风格一致，保持原图外观。严禁虚构尺寸、材质、配件和功能，包装尺寸不能当作商品尺寸。商品事实：'+facts
+  task['prompt']='请一次完成8张独立的Ozon商品图片，必须是8个独立图片文件，不要拼图，不要把8个画面合成一张。按顺序输出：'+ '；'.join(f'{i+1}. {brief}' for i,(_,brief) in enumerate(TASKS))+ '。请直接交付8张独立图片及各自下载入口，不要提供ZIP。文件须按01_至08_编号，01_为主图，不得混入原始参考图。第1张是商品主图，展示真实销售数量。每张3:4竖版，自然俄文，风格一致，保持原图外观。严禁虚构尺寸、材质、配件和功能，包装尺寸不能当作商品尺寸。商品事实：'+facts
   self.tasks=[t for t in self.tasks if t['sku']!=sku]+[task];self.save()
  def resume_unsent_upload(self):
   count=0
@@ -170,7 +170,7 @@ class Store:
   if any(t['state'] in ('claimed','sending','waiting','needs_attention','review') for t in self.tasks):raise ValueError('请先审核上一任务或处理异常，不能继续发送')
   t=next((t for t in self.tasks if t['state']=='queued'),None)
   if not t:raise ValueError('没有排队任务，请在本地窗口创建商品')
-  t['state']='claimed';self.save();result=dict(t);result['references']=[{'name':r['name'],'mime':r['mime'],'purpose':r.get('purpose','variant_main'),'base64':base64.b64encode(Path(r['path']).read_bytes()).decode()} for r in t.get('references',[])];return result
+  t['state']='claimed';t['prompt']=t['prompt'].replace('。如以文件或ZIP交付，8张文件须按01_至08_编号，01_为主图，ZIP不得包含原始参考图。','。仅交付8张独立图片，按01_至08_编号。');t['prompt']+='\n交付要求：仅输出独立图片及逐张下载入口，不要打包，不提供ZIP或其他压缩包。';self.save();result=dict(t);result['references']=[{'name':r['name'],'mime':r['mime'],'purpose':r.get('purpose','variant_main'),'base64':base64.b64encode(Path(r['path']).read_bytes()).decode()} for r in t.get('references',[])];return result
  def find(self,tid):
   t=next((t for t in self.tasks if t['id']==tid),None)
   if not t:raise ValueError('任务不存在')
@@ -308,13 +308,9 @@ def server(store,token,port=8765):
       value={'ok':True,'queue_reason':store.queue_reason(),'blockers':store.blockers()}
      elif self.path=='/resume-unsent-upload':value=store.resume_unsent_upload()
      elif self.path=='/queue-status':value={'blockers':store.blockers(),'queue_reason':store.queue_reason(),'queued_count':sum(t['state']=='queued' for t in store.tasks),'listings':store.listing_status()}
-     elif self.path=='/decode-archive':
-      from file_assets import decode
-      task=store.find(body['task_id']);raw=base64.b64decode(body['archive_b64'],validate=True)
-      value={'images':decode(raw,'zip',task.get('expected_images',8),task.get('references',[]))}
      elif self.path=='/download-ticket':
       task=store.find(body['task_id']);ext=body['extension'].lower()
-      if ext not in ('jpg','jpeg','png','webp','zip'):raise ValueError('下载文件格式不支持')
+      if ext not in ('jpg','jpeg','png','webp'):raise ValueError('下载文件格式不支持')
       store.download_tickets={k:v for k,v in store.download_tickets.items() if v['expires']>time.time()}
       ticket=secrets.token_hex(16);name=ticket+'.'+ext
       store.download_tickets[ticket]={'task_id':task['id'],'name':name,'extension':ext,'expires':time.time()+180}
@@ -386,7 +382,7 @@ def main():
  import tkinter as tk
  from tkinter import ttk,messagebox,filedialog
  store=Store(DATA);token=secrets.token_urlsafe(32);http=server(store,token);threading.Thread(target=http.serve_forever,daemon=True).start()
- root=tk.Tk();root.title('Ozon Edge 本地服务 v0.23');root.geometry('1120x850')
+ root=tk.Tk();root.title('Ozon Edge 本地服务 v0.24');root.geometry('1120x850')
  shell=ttk.Frame(root);shell.pack(fill='both',expand=True);shell.rowconfigure(0,weight=1);shell.columnconfigure(0,weight=1)
  canvas=tk.Canvas(shell,highlightthickness=0);canvas.grid(row=0,column=0,sticky='nsew')
  outer_scroll=ttk.Scrollbar(shell,orient='vertical',command=canvas.yview);outer_scroll.grid(row=0,column=1,sticky='ns');canvas.configure(yscrollcommand=outer_scroll.set)
@@ -456,6 +452,7 @@ def main():
      store.tasks=previous;store.save();raise
    messagebox.showinfo('已创建',f"已创建 {len(records)} 个变体；首变体生成主图及共用详情，其余只生成主图；详情图及文案共用。")
   except Exception as e:messagebox.showerror('未创建',str(e))
+ ttk.Label(win,text='每个变体：01固定为独立主图；02—08沿用首变体的7张详情图').pack(pady=3)
  ttk.Button(win,text='创建全部变体并自动处理',command=create).pack(pady=6)
  view=ttk.Treeview(win,columns=('sku','progress','status'),show='headings',height=8,selectmode='browse')
  for key,label,width in [('sku','变体货号',180),('progress','进度',140),('status','状态',460)]:view.heading(key,text=label,anchor='center');view.column(key,width=width,stretch=key=='status',anchor='center')
