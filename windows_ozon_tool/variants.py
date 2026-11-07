@@ -29,53 +29,79 @@ def facts(values):
 class VariantGrid:
  def __init__(self,parent,base):
   import tkinter as tk
-  from tkinter import ttk,filedialog,messagebox
-  self.tk=tk;self.ttk=ttk;self.base=base;self.columns=[];self.next_index=1;self.focus=(0,0)
-  self.frame=ttk.Frame(parent);self.frame.pack(fill='both',expand=False,padx=12)
-  toolbar=ttk.Frame(self.frame);toolbar.pack(fill='x')
-  ttk.Button(toolbar,text='增加变体',command=self.add).pack(side='left')
-  ttk.Button(toolbar,text='当前格值填充整行',command=self.fill_row).pack(side='left',padx=4)
-  ttk.Button(toolbar,text='粘贴Excel表格到当前格',command=self.paste).pack(side='left')
-  ttk.Label(toolbar,text='支持从Excel复制多行多列；各变体独立选择主图参考').pack(side='left',padx=5)
-  canvas=tk.Canvas(self.frame,height=290);canvas.pack(fill='both',expand=True)
-  sx=ttk.Scrollbar(self.frame,orient='horizontal',command=canvas.xview);sx.pack(fill='x');sy=ttk.Scrollbar(self.frame,orient='vertical',command=canvas.yview);sy.pack(side='right',fill='y')
-  canvas.configure(xscrollcommand=sx.set,yscrollcommand=sy.set)
-  self.body=ttk.Frame(canvas);canvas.create_window((0,0),window=self.body,anchor='nw');self.body.bind('<Configure>',lambda e:canvas.configure(scrollregion=canvas.bbox('all')))
-  for r,(_,label,_) in enumerate(FIELDS,1):ttk.Label(self.body,text=label,width=29).grid(row=r,column=0,sticky='w',padx=4,pady=2)
-  self.base.trace_add('write',lambda *_:self.headers());self.add()
- def headers(self):
-  for col in self.columns:
-   try:text=article(self.base.get().strip(),col['index'])
-   except ValueError:text='待填基础货号'
-   col['header'].configure(text=f"变体{col['index']}\n{text}")
+  from tkinter import ttk
+  self.tk=tk;self.ttk=ttk;self.base=base;self.rows=[];self.next_index=1;self.focus=(1,0);self.editor=None;self.photos={}
+  self.frame=ttk.Frame(parent);self.frame.pack(fill='both',padx=12,pady=8)
+  bar=ttk.Frame(self.frame);bar.pack(fill='x',pady=4)
+  for label,cmd in [('增加变体',self.add),('删除选中变体',self.remove),('选择主图参考',self.choose),('当前参数批量填充',self.fill_row),('粘贴Excel表格',self.paste)]:ttk.Button(bar,text=label,command=cmd).pack(side='left',padx=3)
+  ttk.Label(self.frame,text='每行一个变体；双击参数编辑。货号自动生成；主图参考逐变体上传。').pack(anchor='w')
+  holder=ttk.Frame(self.frame);holder.pack(fill='both',expand=True);holder.rowconfigure(0,weight=1);holder.columnconfigure(0,weight=1)
+  self.tree=ttk.Treeview(holder,columns=('index','article','refs')+tuple(k for k,_,_ in FIELDS),show='tree headings',height=6,selectmode='extended')
+  self.tree.heading('#0',text='主图');self.tree.column('#0',width=85,stretch=False)
+  for key,title,width in [('index','序号',55),('article','货号',160),('refs','主图参考',95)]+[(k,label,170 if k in ('name','extra') else 125) for k,label,_ in FIELDS]:self.tree.heading(key,text=title);self.tree.column(key,width=width,stretch=False)
+  self.tree.grid(row=0,column=0,sticky='nsew');sx=ttk.Scrollbar(holder,orient='horizontal',command=self.tree.xview);sx.grid(row=1,column=0,sticky='ew');sy=ttk.Scrollbar(holder,orient='vertical',command=self.tree.yview);sy.grid(row=0,column=1,sticky='ns');self.tree.configure(xscrollcommand=sx.set,yscrollcommand=sy.set)
+  ttk.Style().configure('Variants.Treeview',rowheight=58);self.tree.configure(style='Variants.Treeview')
+  self.tree.bind('<Double-1>',self.edit);self.tree.bind('<ButtonRelease-1>',self.track);self.tree.bind('<Control-v>',lambda e:self.paste());self.base.trace_add('write',lambda *_:self.refresh());self.add()
+ def commit(self):
+  if self.editor:
+   widget,row,key=self.editor;row['values'][key]=widget.get().strip();self.editor=None;widget.destroy();self.refresh()
+ def refresh(self):
+  selected=self.tree.selection()
+  for item in self.tree.get_children():self.tree.delete(item)
+  for row in self.rows:
+   try:code=article(self.base.get().strip(),row['index'])
+   except ValueError:code='待填基础货号'
+   self.tree.insert('', 'end',iid=str(row['index']),image=self.photos.get(row['index'],''),values=(row['index'],code,f"{len(row['refs'])} 张")+tuple(row['values'][k] for k,_,_ in FIELDS))
+  selected=[i for i in selected if self.tree.exists(i)]
+  if selected:self.tree.selection_set(selected)
  def add(self):
-  c=len(self.columns)+1;col={'index':self.next_index,'cells':[],'refs':[]};self.next_index+=1
-  col['header']=self.ttk.Label(self.body,width=27);col['header'].grid(row=0,column=c)
-  for r,(_,_,default) in enumerate(FIELDS,1):
-   var=self.tk.StringVar(value=default);entry=self.ttk.Entry(self.body,textvariable=var,width=27);entry.grid(row=r,column=c,padx=3,pady=2);entry.bind('<FocusIn>',lambda e,r=r-1,c=c-1:setattr(self,'focus',(r,c)));col['cells'].append(var)
-  def choose():
-   from tkinter import filedialog
-   refs=list(filedialog.askopenfilenames(filetypes=[('Images','*.png *.jpg *.jpeg *.webp')]))
-   if refs:col['refs']=refs;col['refs_label'].configure(text=f'已选{len(refs)}张原图')
-  self.ttk.Button(self.body,text='选择本变体主图参考',command=choose).grid(row=len(FIELDS)+1,column=c)
-  col['refs_label']=self.ttk.Label(self.body,text='未选主图参考');col['refs_label'].grid(row=len(FIELDS)+2,column=c)
-  self.columns.append(col);self.headers()
+  self.commit();self.rows.append({'index':self.next_index,'refs':[],'values':{k:d for k,_,d in FIELDS}});self.next_index+=1;self.refresh()
+ def selected(self):
+  return [r for r in self.rows if str(r['index']) in self.tree.selection()]
+ def remove(self):
+  self.commit();ids={r['index'] for r in self.selected()};self.rows=[r for r in self.rows if r['index'] not in ids];self.refresh()
+ def choose(self):
+  from tkinter import filedialog,messagebox
+  from PIL import Image,ImageOps,ImageTk
+  rows=self.selected()
+  if len(rows)!=1:messagebox.showinfo('选择变体','请选中一行变体再上传主图参考');return
+  paths=list(filedialog.askopenfilenames(filetypes=[('Images','*.png *.jpg *.jpeg *.webp')]))
+  if not paths:return
+  try:
+   with Image.open(paths[0]) as im:photo=ImageTk.PhotoImage(ImageOps.contain(im.convert('RGB'),(64,52)))
+   rows[0]['refs']=paths;self.photos[rows[0]['index']]=photo;self.refresh()
+  except Exception as e:messagebox.showerror('图片无法读取',str(e))
+ def track(self,event):
+  item=self.tree.identify_row(event.y);column=self.tree.identify_column(event.x)
+  if item and column.startswith('#') and int(column[1:])>=4:self.focus=(int(item),int(column[1:])-4)
+ def edit(self,event):
+  self.commit();self.track(event);item=self.tree.identify_row(event.y);column=self.tree.identify_column(event.x)
+  if not item or not column.startswith('#') or int(column[1:])<4:return
+  key=FIELDS[int(column[1:])-4][0];row=next(r for r in self.rows if str(r['index'])==item);box=self.tree.bbox(item,column)
+  if not box:return
+  entry=self.ttk.Entry(self.tree);entry.insert(0,row['values'][key]);entry.place(x=box[0],y=box[1],width=box[2],height=box[3]);entry.focus_set();entry.selection_range(0,'end');self.editor=(entry,row,key)
+  entry.bind('<Return>',lambda e:self.commit());entry.bind('<FocusOut>',lambda e:self.commit())
  def fill_row(self):
-  r,c=self.focus;value=self.columns[c]['cells'][r].get()
-  for col in self.columns:col['cells'][r].set(value)
+  self.commit();index,col=self.focus;source=next((r for r in self.rows if r['index']==index),None)
+  if source is None:return
+  key=FIELDS[col][0];targets=self.selected()
+  if len(targets)<2:targets=self.rows
+  for row in targets:row['values'][key]=source['values'][key]
+  self.refresh()
  def paste(self):
   from tkinter import messagebox
+  self.commit()
   try:
-   rows=self.frame.clipboard_get().rstrip('\r\n').splitlines();r,c=self.focus
-   if r+len(rows)>len(FIELDS):raise ValueError('粘贴数据超过参数行数')
-   needed=c+max(len(x.split('\t')) for x in rows)
-   while len(self.columns)<needed:self.add()
-   for y,line in enumerate(rows):
-    for x,value in enumerate(line.split('\t')):self.columns[c+x]['cells'][r+y].set(value)
+   matrix=[line.split('\t') for line in self.frame.clipboard_get().rstrip('\r\n').splitlines()]
+   if not matrix:return
+   index,col=self.focus;start=next((i for i,r in enumerate(self.rows) if r['index']==index),0)
+   if col+max(map(len,matrix))>len(FIELDS):raise ValueError('超过参数列数；请勿包含序号、货号、主图列')
+   while len(self.rows)<start+len(matrix):self.add()
+   for y,line in enumerate(matrix):
+    for x,value in enumerate(line):self.rows[start+y]['values'][FIELDS[col+x][0]]=value
+   self.refresh()
   except Exception as e:messagebox.showerror('无法粘贴',str(e))
  def records(self):
-  result=[]
-  for col in self.columns:
-   values={key:v.get().strip() for (key,_,_),v in zip(FIELDS,col['cells'])}
-   result.append({'article':article(self.base.get().strip(),col['index']),'index':col['index'],'base_article':self.base.get().strip(),'values':values,'facts':facts(values),'references':col['refs']})
-  return result
+  self.commit()
+  if not self.rows:raise ValueError('请至少增加一个变体')
+  return [{'article':article(self.base.get().strip(),r['index']),'index':r['index'],'base_article':self.base.get().strip(),'values':dict(r['values']),'facts':facts(r['values']),'references':list(r['refs'])} for r in self.rows]
