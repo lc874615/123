@@ -23,6 +23,15 @@ const {chromium}=require('playwright'),assert=require('node:assert/strict'),path
   // Stop preserves the prefix instead of continuing to save behind the user's back.
   const stopped=await page.evaluate(async()=>{let count=0;try{await OzonImages.collect(document,{expected:8,marker:'【OZON_TASK:CURRENT】',stopped:()=>count>=2,onImage:async()=>count++});return {count};}catch(e){return {count,message:e.message};}});
   assert.equal(stopped.count,2);assert.match(stopped.message,/暂停/);
+  await page.evaluate(()=>{
+   window.messages=[];let fail=true;
+   window.chrome={runtime:{onMessage:{addListener:f=>window.listener=f},sendMessage:async m=>{messages.push(m);if(m.kind==='set-result'&&fail){fail=false;return {error:'恢复图片与已保存顺序不一致',code:'IMAGE_ORDER_CONFLICT'};}return {ok:true};}}};
+  });
+  await page.addScriptTag({path:path.join(__dirname,'content.js')});
+  await page.evaluate(()=>listener({kind:'recover',task:{id:'CURRENT',sku:'GROUP(1)',expected_images:8,set_mode:true}},{},()=>{}));
+  await page.waitForFunction(()=>messages.filter(m=>m.kind==='set-result').length===9);
+  const recovery=await page.evaluate(()=>({repairs:messages.filter(m=>m.kind==='repair-order').length,indexes:messages.filter(m=>m.kind==='set-result').map(m=>m.index),errors:messages.filter(m=>m.kind==='event'&&m.state==='needs_attention').length}));
+  assert.equal(recovery.repairs,1);assert.deepEqual(recovery.indexes,[0,0,1,2,3,4,5,6,7]);assert.equal(recovery.errors,0);
   await page.evaluate(()=>document.querySelector('#strip').remove());
   const single=await page.evaluate(()=>OzonImages.collect(document,{expected:1,marker:'【OZON_TASK:CURRENT】'}));assert.deepEqual(single,[result[4]]);
   console.log('PASS diagnostic (2): 14 images, five user references excluded, all eight 1086x1448 gallery entries saved despite clipped/offscreen strip, zero clicks, wrong automatic marker rejected, stop preserves prefix');

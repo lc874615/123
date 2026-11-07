@@ -18,11 +18,11 @@ class SharedCopyTests(unittest.TestCase):
     store.create_set(f'GROUP({i})',f'颜色：{color}；主体材质：聚丙烯')
     task=store.tasks[-1];task.update(base_article='GROUP',variant_index=i,state='saved',video='test.mp4')
     folder=Path(tmp)/'products'/task['sku'];folder.mkdir(parents=True)
-    (folder/'listing_bundle.json').write_text(json.dumps({'copy':{},'blockers':['俄文文案待生成']}),encoding='utf-8')
+    (folder/'listing_bundle.json').write_text(json.dumps({'sku':task['sku'],'copy':{},'blockers':['俄文文案待生成']}),encoding='utf-8')
    group=configure(store.tasks,'GROUP')
    prompt=copy_prompt_for(group[0]);self.assertIn('红色',prompt);self.assertIn('金色',prompt);self.assertIn('统一一套',prompt)
    common={'sku':'GROUP(1)','title_ru':'Корзина','description_ru':'Красный или золотистый цвет на выбор.','tags_ru':['#корзина'],'missing_facts':[]}
-   leader=Path(tmp)/'products'/'GROUP(1)'/'listing_bundle.json';leader.write_text(json.dumps({'copy':common}),encoding='utf-8')
+   leader=Path(tmp)/'products'/'GROUP(1)'/'listing_bundle.json';leader.write_text(json.dumps({'sku':'GROUP(1)','copy':common,'blockers':[]}),encoding='utf-8')
    self.assertIsNone(store.next_copy())
    follower=json.loads((Path(tmp)/'products'/'GROUP(2)'/'listing_bundle.json').read_text(encoding='utf-8'))
    for key in ('title_ru','description_ru','tags_ru'):self.assertEqual(follower['copy'][key],common[key])

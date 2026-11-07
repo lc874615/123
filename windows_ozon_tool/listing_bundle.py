@@ -51,3 +51,35 @@ def save_copy(folder,value):
  data['copy']=value;data['copy_review_status']='pending_human_review';data['blockers']=[x for x in data['blockers'] if x!='俄文文案待生成']
  tmp=target.with_suffix('.tmp');tmp.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding='utf-8');tmp.replace(target)
  return {'saved':True,'review_status':'pending_human_review'}
+
+def copy_complete(value):
+ return isinstance(value,dict) and all(isinstance(value.get(k),str) and value[k].strip() for k in ('title_ru','description_ru')) and all(isinstance(value.get(k),list) and all(isinstance(x,str) for x in value[k]) for k in ('tags_ru','missing_facts'))
+
+def copy_hash(value):
+ return hashlib.sha256(json.dumps({k:value.get(k) for k in ('title_ru','description_ru','tags_ru')},ensure_ascii=False,sort_keys=True).encode()).hexdigest()
+
+def share_copy(folder,source,value):
+ import secrets
+ folder=Path(folder);target=folder/'listing_bundle.json';data=json.loads(target.read_text(encoding='utf-8-sig'))
+ if not copy_complete(value):raise ValueError('首变体共用文案不完整')
+ expected={**value,'sku':data['sku']};old=data.get('copy',{})
+ if old.get('title_ru') and copy_hash(old)!=copy_hash(expected):
+  backup=folder/('copy_before_shared_sync_'+secrets.token_hex(6)+'.json');backup.write_text(json.dumps(old,ensure_ascii=False,indent=2),encoding='utf-8')
+ data.update(copy=expected,copy_source=source,copy_shared_hash=copy_hash(value),copy_review_status='pending_human_review')
+ data['blockers']=[b for b in data.get('blockers',[]) if b!='俄文文案待生成']
+ tmp=target.with_suffix('.tmp');tmp.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding='utf-8');tmp.replace(target)
+ return data
+
+def refresh_assets(folder):
+ folder=Path(folder);target=folder/'listing_bundle.json'
+ if not target.exists():return
+ data=json.loads(target.read_text(encoding='utf-8-sig'));rows=json.loads((folder/'image_manifest.json').read_text(encoding='utf-8-sig'))
+ if len(rows)!=8 or [r['order'] for r in rows]!=list(range(1,9)):raise ValueError('更新草稿时图片顺序不完整')
+ images=[]
+ for row in rows:
+  name=Path(row['file'].replace('\\','/')).name;path=folder/'images'/name
+  if hashlib.sha256(path.read_bytes()).hexdigest()!=row['sha256']:raise ValueError('更新草稿时图片校验失败')
+  images.append({'order':row['order'],'role':row['role'],'local_file':'images/'+name,'sha256':row['sha256'],'https_url':None})
+ data['images']=images;data['video']={'local_file':'video/product_8s.mp4','exists':(folder/'video'/'product_8s.mp4').exists(),'https_url':None}
+ data.pop('recollection_pending',None);data['blockers']=[b for b in data.get('blockers',[]) if b!='图片重新采集中']
+ tmp=target.with_suffix('.tmp');tmp.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding='utf-8');tmp.replace(target)

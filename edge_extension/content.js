@@ -6,7 +6,7 @@ function findEditor(){
  for(const sel of selectors){const found=[...document.querySelectorAll(sel)].filter(e=>e.getClientRects().length&&!e.disabled&&e.getAttribute('aria-hidden')!=='true');if(found.length===1)return found[0];}
  return null;
 }
-function preflight(){const e=findEditor();return {version:'0.19.0',ready:!!e&&!document.querySelector('[data-testid="stop-button"]'),url:location.origin+location.pathname,message:e?'输入框已识别':'未找到可见输入框。请在普通ChatGPT文字对话中刷新页面，点击输入区后重试；不能在图片查看器或其他应用中执行。'};}
+function preflight(){const e=findEditor();return {version:'0.20.0',ready:!!e&&!document.querySelector('[data-testid="stop-button"]'),url:location.origin+location.pathname,message:e?'输入框已识别':'未找到可见输入框。请在普通ChatGPT文字对话中刷新页面，点击输入区后重试；不能在图片查看器或其他应用中执行。'};}
 async function run(task){
  if(running)throw Error('本页正在执行任务');running=true;stop=false;
  try{
@@ -32,7 +32,7 @@ async function run(task){
   while(Date.now()<deadline){
    if(stop)throw Error('已暂停；请检查网页结果');
    if(task.set_mode){
-    const images=await globalThis.OzonImages.collect(document,{allowPartial:true,expected:task.expected_images||8,previous:previousImages,before:oldReplies,marker:'【OZON_TASK:'+task.id+'】',sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message),onImage:(index,b64)=>saveImage(task,index,b64)});
+    const images=await collectImages(task,{allowPartial:true,expected:task.expected_images||8,previous:previousImages,before:oldReplies,marker:'【OZON_TASK:'+task.id+'】',sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message),onImage:(index,b64)=>saveImage(task,index,b64)});
     if(images)return;
     if(Date.now()-lastReport>5000){lastReport=Date.now();await tell(task,'waiting','等待采集：助手区域'+globalThis.OzonConversation.assistantNodes(document).length+'个、页面图片'+document.querySelectorAll('main img,[role="main"] img').length+'张。若网页已生成8张，请导出页面诊断；不会重发');}
 
@@ -54,15 +54,36 @@ async function run(task){
   throw Error(task.set_mode?'未收齐8张独立图片（可能只返回单图或拼图）；已暂停，不自动重发':'等待超时，请检查验证、限额或网页变化；不会重发');
  }catch(e){await tell(task,'needs_attention',e.message).catch(()=>{});}finally{running=false;}
 }
+async function collectImages(task,options){
+ const marker='【OZON_TASK:'+task.id+'】';
+ if(task.orderRepairPending){
+  const main=globalThis.OzonConversation.main(document);
+  if(!(main?.innerText||main?.textContent||'').includes(marker))throw Error('自动重采集未找到当前任务标记，已有文件保留，请切回对应作图页面');
+  const images=await globalThis.OzonImages.collect(document,{...options,allowPartial:false,onImage:async()=>{}});
+  if(!images)return null;
+  const reset=await chrome.runtime.sendMessage({kind:'repair-order',task_id:task.id});if(reset?.error)throw Error(reset.error);
+  task.orderRepairPending=false;task.orderRepairAttempted=true;
+  for(let index=0;index<images.length;index++)await saveImage(task,index,images[index]);
+  return images;
+ }
+ try{return await globalThis.OzonImages.collect(document,options);}
+ catch(error){
+  if(error.code!=='IMAGE_ORDER_CONFLICT'||task.orderRepairAttempted)throw error;
+  task.orderRepairPending=true;
+  await tell(task,'waiting','发现顺序冲突：等待当前任务最终完整图库，随后自动备份并重新采集');
+  return collectImages(task,options);
+ }
+}
 async function saveImage(task,index,image_b64){
  if(stop)throw Error('已暂停，已有图片保留');
  const result=await chrome.runtime.sendMessage({kind:'set-result',task_id:task.id,index,image_b64});
- if(result?.error)throw Error(result.error);
+ if(result?.error){const e=Error(result.error);e.code=result.code;throw e;}
 }
 async function recover(task){
  if(running)throw Error('本页正在执行任务');running=true;stop=false;
  try{
-  const images=await globalThis.OzonImages.collect(document,{expected:task.expected_images||8,marker:'【OZON_TASK:'+task.id+'】',sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message),onImage:(index,b64)=>saveImage(task,index,b64)});
+  let images=await collectImages(task,{expected:task.expected_images||8,marker:'【OZON_TASK:'+task.id+'】',sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message),onImage:(index,b64)=>saveImage(task,index,b64)});
+  const until=Date.now()+20*60*1000;while(!images&&task.orderRepairPending&&Date.now()<until&&!stop){await sleep(1500);images=await collectImages(task,{expected:task.expected_images||8,marker:'【OZON_TASK:'+task.id+'】',sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message),onImage:(index,b64)=>saveImage(task,index,b64)});}
   if(!images)throw Error('本页未收齐完整原图，请展开当前回复的图片列表后重试；不会重新生成');
 
  }catch(e){await tell(task,'needs_attention',e.message).catch(()=>{});}finally{running=false;}

@@ -31,8 +31,16 @@ test('alarm restores SKU and finishes copy after background suspension without r
 });
 test('obsolete persisted image task is reconciled before claiming one queued task',async()=>{
  const state={pairToken:'test',autoEnabled:true,autoTab:3,activeTask:{id:'DELETED',sku:'OLD',tabId:3}},calls=[],sent=[];
- const chrome={storage:{local:{get:async()=>structuredClone(state),set:async x=>Object.assign(state,structuredClone(x)),remove:async k=>delete state[k]}},runtime:{onMessage:{addListener:()=>{}}},alarms:{onAlarm:{addListener:()=>{}}},scripting:{executeScript:async()=>{}},tabs:{get:async()=>({id:3,url:'https://chatgpt.com/c/test'}),sendMessage:async(id,m)=>{sent.push(m.kind);return m.kind==='preflight'?{ready:true,version:'0.19.0'}:{ok:true};}}};
+ const chrome={storage:{local:{get:async()=>structuredClone(state),set:async x=>Object.assign(state,structuredClone(x)),remove:async k=>delete state[k]}},runtime:{onMessage:{addListener:()=>{}}},alarms:{onAlarm:{addListener:()=>{}}},scripting:{executeScript:async()=>{}},tabs:{get:async()=>({id:3,url:'https://chatgpt.com/c/test'}),sendMessage:async(id,m)=>{sent.push(m.kind);return m.kind==='preflight'?{ready:true,version:'0.20.0'}:{ok:true};}}};
  const ctx={chrome,setTimeout,clearTimeout,AbortSignal,URL,fetch:async(url,options)=>{calls.push(url);let value={ok:true};if(url.endsWith('/task-status'))value={found:false};if(url.endsWith('/poll'))value={ready:true};if(url.endsWith('/claim'))value={id:'NEW_TASK',sku:'NEW'};return {ok:true,json:async()=>value};}};
  vm.runInNewContext(fs.readFileSync(__dirname+'/background.js','utf8'),ctx);await vm.runInNewContext('poll()',ctx);
  assert.equal(state.activeTask.id,'NEW_TASK');assert.deepEqual(sent,['preflight','start']);assert.equal(calls.filter(x=>x.endsWith('/claim')).length,1);
+});
+test('authorized automatic order repair keeps active task and enables later pipeline',async()=>{
+ let listener,alarms=0;const state={pairToken:'test',autoEnabled:false,activeTask:{id:'IMAGE',sku:'GROUP(1)',tabId:3}};
+ const chrome={storage:{local:{get:async()=>structuredClone(state),set:async x=>Object.assign(state,structuredClone(x)),remove:async k=>delete state[k]}},runtime:{onMessage:{addListener:f=>listener=f}},alarms:{create:async()=>{alarms++;},onAlarm:{addListener:()=>{}}}};
+ const ctx={chrome,setTimeout,clearTimeout,AbortSignal,URL,fetch:async(url)=>{assert.ok(url.endsWith('/repair-order'));return {ok:true,json:async()=>({ok:true,backup_created:true})};}};
+ vm.runInNewContext(fs.readFileSync(__dirname+'/background.js','utf8'),ctx);
+ const result=await new Promise(resolve=>listener({kind:'repair-order',task_id:'IMAGE'},{tab:{id:3}},resolve));
+ assert.equal(result.backup_created,true);assert.equal(state.autoEnabled,true);assert.equal(state.autoTab,3);assert.equal(state.activeTask.id,'IMAGE');assert.equal(alarms,1);
 });
