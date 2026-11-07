@@ -21,7 +21,7 @@ class ImageOrderConflict(ValueError):
 
 class Store:
  def __init__(self,folder):
-  self.folder=Path(folder);self.folder.mkdir(parents=True,exist_ok=True);self.lock=threading.Lock();self.client={};self.path=self.folder/'tasks.json';self.tasks=json.loads(self.path.read_text(encoding='utf-8-sig')) if self.path.exists() else []
+  self.folder=Path(folder);self.folder.mkdir(parents=True,exist_ok=True);self.lock=threading.Lock();self.client={};self.download_tickets={};self.path=self.folder/'tasks.json';self.tasks=json.loads(self.path.read_text(encoding='utf-8-sig')) if self.path.exists() else []
   for t in self.tasks:
    if t['state'] in ('claimed','sending','waiting'):t['state']='needs_attention';t['message']='服务重启，请检查网页后人工处理'
    if t.get('copy_state')=='running':t['copy_state']='needs_attention';t['message']='文案任务被重启中断，请保存网页现有结果'
@@ -58,8 +58,14 @@ class Store:
   group=[t for t in self.tasks if t['sku']==sku]
   for t in group:t.update(state='cancelled',message='由一次提交整套任务替代')
   task=dict(group[0]);task.update(id=secrets.token_hex(16),name='00_full_set',state='queued',message='等待扩展领取任务',auto_batch=True,set_mode=True,received_images=[])
-  task['prompt']='请一次完成8张独立的Ozon商品图片，必须是8个独立图片文件，不要拼图，不要把8个画面合成一张。按顺序输出：'+ '；'.join(f'{i+1}. {brief}' for i,(_,brief) in enumerate(TASKS))+ '。第1张是商品主图，展示真实销售数量。每张3:4竖版，自然俄文，风格一致，保持原图外观。严禁虚构尺寸、材质、配件和功能，包装尺寸不能当作商品尺寸。商品事实：'+facts
+  task['prompt']='请一次完成8张独立的Ozon商品图片，必须是8个独立图片文件，不要拼图，不要把8个画面合成一张。按顺序输出：'+ '；'.join(f'{i+1}. {brief}' for i,(_,brief) in enumerate(TASKS))+ '。如以文件或ZIP交付，8张文件须按01_至08_编号，01_为主图，ZIP不得包含原始参考图。第1张是商品主图，展示真实销售数量。每张3:4竖版，自然俄文，风格一致，保持原图外观。严禁虚构尺寸、材质、配件和功能，包装尺寸不能当作商品尺寸。商品事实：'+facts
   self.tasks=[t for t in self.tasks if t['sku']!=sku]+[task];self.save()
+ def resume_unsent_upload(self):
+  count=0
+  for task in self.tasks:
+   if task['state']=='needs_attention' and not task.get('received_images') and task.get('message')=='未找到图片上传控件，已暂停，未发送任务':
+    task.update(state='queued',message='上传适配已更新，恢复尚未发送的任务');count+=1
+  self.save();return {'resumed':count}
  def blockers(self):
   return [{'id':t['id'],'sku':t['sku'],'state':t['state'],'copy_state':t.get('copy_state'),'message':t.get('message','')} for t in self.tasks if t['state'] in ('claimed','sending','waiting','needs_attention','review') or t.get('copy_state') in ('running','needs_attention')]
  def queue_reason(self):
@@ -300,7 +306,27 @@ def server(store,token,port=8765):
      if self.path=='/heartbeat':
       store.client={'last_seen':time.time(),'auto_enabled':bool(body.get('auto_enabled'))}
       value={'ok':True,'queue_reason':store.queue_reason(),'blockers':store.blockers()}
+     elif self.path=='/resume-unsent-upload':value=store.resume_unsent_upload()
      elif self.path=='/queue-status':value={'blockers':store.blockers(),'queue_reason':store.queue_reason(),'queued_count':sum(t['state']=='queued' for t in store.tasks),'listings':store.listing_status()}
+     elif self.path=='/decode-archive':
+      from file_assets import decode
+      task=store.find(body['task_id']);raw=base64.b64decode(body['archive_b64'],validate=True)
+      value={'images':decode(raw,'zip',task.get('expected_images',8),task.get('references',[]))}
+     elif self.path=='/download-ticket':
+      task=store.find(body['task_id']);ext=body['extension'].lower()
+      if ext not in ('jpg','jpeg','png','webp','zip'):raise ValueError('下载文件格式不支持')
+      store.download_tickets={k:v for k,v in store.download_tickets.items() if v['expires']>time.time()}
+      ticket=secrets.token_hex(16);name=ticket+'.'+ext
+      store.download_tickets[ticket]={'task_id':task['id'],'name':name,'extension':ext,'expires':time.time()+180}
+      value={'ticket':ticket,'filename':'OzonImports/'+task['id']+'/'+name}
+     elif self.path=='/read-download':
+      from file_assets import decode
+      ticket=store.download_tickets.pop(body['ticket'],None)
+      if not ticket or ticket['task_id']!=body['task_id'] or ticket['expires']<time.time():raise ValueError('下载凭证已失效')
+      path=Path(body['path']).resolve();task=store.find(ticket['task_id'])
+      if path.name!=ticket['name'] or path.parent.name!=task['id'] or path.parent.parent.name!='OzonImports' or not path.is_file():raise ValueError('下载文件与本次凭证不匹配')
+      if path.stat().st_size>96*1024*1024:raise ValueError('下载文件过大')
+      value={'images':decode(path.read_bytes(),ticket['extension'],task.get('expected_images',8),task.get('references',[]))}
      elif self.path=='/repair-order':value=store.repair_order(body['task_id'])
      elif self.path=='/task-status':value=store.task_status(body['task_id'])
      elif self.path=='/poll':
@@ -360,7 +386,7 @@ def main():
  import tkinter as tk
  from tkinter import ttk,messagebox,filedialog
  store=Store(DATA);token=secrets.token_urlsafe(32);http=server(store,token);threading.Thread(target=http.serve_forever,daemon=True).start()
- root=tk.Tk();root.title('Ozon Edge 本地服务 v0.20');root.geometry('1120x850')
+ root=tk.Tk();root.title('Ozon Edge 本地服务 v0.22');root.geometry('1120x850')
  shell=ttk.Frame(root);shell.pack(fill='both',expand=True);shell.rowconfigure(0,weight=1);shell.columnconfigure(0,weight=1)
  canvas=tk.Canvas(shell,highlightthickness=0);canvas.grid(row=0,column=0,sticky='nsew')
  outer_scroll=ttk.Scrollbar(shell,orient='vertical',command=canvas.yview);outer_scroll.grid(row=0,column=1,sticky='ns');canvas.configure(yscrollcommand=outer_scroll.set)

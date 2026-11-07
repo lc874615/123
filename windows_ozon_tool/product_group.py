@@ -10,7 +10,7 @@ def configure(tasks,base):
   t.update(model=model,group_facts=all_facts,group_variants=[{'sku':r['sku'],'variant_parameters':r.get('variant_parameters',{}),'facts':r['facts']} for r in group],copy_leader=group[0]['sku'])
   if i:
    t['expected_images']=1;t['gallery_source']=group[0]['sku']
-   t['prompt']='仅生成一张独立商品主图，3:4竖版，自然俄文，准确展示本变体颜色、规格和销售数量。严禁使用其他变体外观。当前变体：'+t['facts']
+   t['prompt']='仅生成一张独立商品主图，文件交付时命名01_main，3:4竖版，自然俄文，准确展示本变体颜色、规格和销售数量。严禁使用其他变体外观。当前变体：'+t['facts']
   else:
    t['expected_images']=8;t['prompt']+='。同组全部变体资料：'+all_facts+'。第2至8张为全组共用详情图：不同颜色和尺寸须标明变体对应关系，无法兼容的细节不要误标成全组通用。'
  return group

@@ -1,4 +1,5 @@
 (()=>{if(window.__ozonLocalInstalled)return;window.__ozonLocalInstalled=true;let stop=false,running=false;
+async function collectSource(task,options){return await globalThis.OzonFiles?.collect(document,{...options,task})||await globalThis.OzonImages.collect(document,options);}
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function tell(task,state,message){const r=await chrome.runtime.sendMessage({kind:'event',task_id:task.id,state,message});if(r?.error)throw Error(r.error);}
 function findEditor(){
@@ -6,7 +7,7 @@ function findEditor(){
  for(const sel of selectors){const found=[...document.querySelectorAll(sel)].filter(e=>e.getClientRects().length&&!e.disabled&&e.getAttribute('aria-hidden')!=='true');if(found.length===1)return found[0];}
  return null;
 }
-function preflight(){const e=findEditor();return {version:'0.20.0',ready:!!e&&!document.querySelector('[data-testid="stop-button"]'),url:location.origin+location.pathname,message:e?'输入框已识别':'未找到可见输入框。请在普通ChatGPT文字对话中刷新页面，点击输入区后重试；不能在图片查看器或其他应用中执行。'};}
+function preflight(){const e=findEditor();return {version:'0.22.0',ready:!!e&&!document.querySelector('[data-testid="stop-button"]'),url:location.origin+location.pathname,message:e?'输入框已识别':'未找到可见输入框。请在普通ChatGPT文字对话中刷新页面，点击输入区后重试；不能在图片查看器或其他应用中执行。'};}
 async function run(task){
  if(running)throw Error('本页正在执行任务');running=true;stop=false;
  try{
@@ -59,14 +60,14 @@ async function collectImages(task,options){
  if(task.orderRepairPending){
   const main=globalThis.OzonConversation.main(document);
   if(!(main?.innerText||main?.textContent||'').includes(marker))throw Error('自动重采集未找到当前任务标记，已有文件保留，请切回对应作图页面');
-  const images=await globalThis.OzonImages.collect(document,{...options,allowPartial:false,onImage:async()=>{}});
+  const images=await collectSource(task,{...options,allowPartial:false,onImage:async()=>{}});
   if(!images)return null;
   const reset=await chrome.runtime.sendMessage({kind:'repair-order',task_id:task.id});if(reset?.error)throw Error(reset.error);
   task.orderRepairPending=false;task.orderRepairAttempted=true;
   for(let index=0;index<images.length;index++)await saveImage(task,index,images[index]);
   return images;
  }
- try{return await globalThis.OzonImages.collect(document,options);}
+ try{return await collectSource(task,options);}
  catch(error){
   if(error.code!=='IMAGE_ORDER_CONFLICT'||task.orderRepairAttempted)throw error;
   task.orderRepairPending=true;
@@ -82,8 +83,8 @@ async function saveImage(task,index,image_b64){
 async function recover(task){
  if(running)throw Error('本页正在执行任务');running=true;stop=false;
  try{
-  let images=await collectImages(task,{expected:task.expected_images||8,marker:'【OZON_TASK:'+task.id+'】',sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message),onImage:(index,b64)=>saveImage(task,index,b64)});
-  const until=Date.now()+20*60*1000;while(!images&&task.orderRepairPending&&Date.now()<until&&!stop){await sleep(1500);images=await collectImages(task,{expected:task.expected_images||8,marker:'【OZON_TASK:'+task.id+'】',sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message),onImage:(index,b64)=>saveImage(task,index,b64)});}
+  let images=await collectImages(task,{manual:true,expected:task.expected_images||8,marker:'【OZON_TASK:'+task.id+'】',sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message),onImage:(index,b64)=>saveImage(task,index,b64)});
+  const until=Date.now()+20*60*1000;while(!images&&task.orderRepairPending&&Date.now()<until&&!stop){await sleep(1500);images=await collectImages(task,{manual:true,expected:task.expected_images||8,marker:'【OZON_TASK:'+task.id+'】',sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message),onImage:(index,b64)=>saveImage(task,index,b64)});}
   if(!images)throw Error('本页未收齐完整原图，请展开当前回复的图片列表后重试；不会重新生成');
 
  }catch(e){await tell(task,'needs_attention',e.message).catch(()=>{});}finally{running=false;}
@@ -119,4 +120,4 @@ function extractCopy(task){
  return result;
 }
 
-chrome.runtime.onMessage.addListener((m,sender,reply)=>{if(m.kind==='copy-inspect-v016'){reply({copy:globalThis.OzonCopy.latest(document,{sku:m.task.sku,marker:m.task.marker}),generating:!!document.querySelector('[data-testid="stop-button"]')});return false;}if(m.kind==='copy-extract-v013'){try{reply(extractCopy(m.task));}catch(e){reply({error:e.message});}return false;}if(m.kind==='copy'){copy(m.task);reply({ok:true});return false;}if(m.kind==='recover'){recover(m.task);reply({ok:true});return false;}if(m.kind==='preflight'){reply(preflight());return false;}if(m.kind==='stop'){stop=true;reply({ok:true});}if(m.kind==='start'){run(m.task);reply({ok:true});}return false;});})();
+chrome.runtime.onMessage.addListener((m,sender,reply)=>{if(m.kind==='download-click'){const element=document.querySelector('[data-ozon-download="'+m.token+'"]');if(!element||!globalThis.OzonFiles?.allowed(element.getAttribute('href'))){reply({error:'下载链接已变化或不是受支持的GPT文件链接'});return false;}element.click();reply({ok:true});return false;}if(m.kind==='copy-inspect-v016'){reply({copy:globalThis.OzonCopy.latest(document,{sku:m.task.sku,marker:m.task.marker}),generating:!!document.querySelector('[data-testid="stop-button"]')});return false;}if(m.kind==='copy-extract-v013'){try{reply(extractCopy(m.task));}catch(e){reply({error:e.message});}return false;}if(m.kind==='copy'){copy(m.task);reply({ok:true});return false;}if(m.kind==='recover'){recover(m.task);reply({ok:true});return false;}if(m.kind==='preflight'){reply(preflight());return false;}if(m.kind==='stop'){stop=true;reply({ok:true});}if(m.kind==='start'){run(m.task);reply({ok:true});}return false;});})();
