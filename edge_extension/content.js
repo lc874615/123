@@ -59,4 +59,17 @@ async function run(task){
   throw Error(task.set_mode?'未收齐8张独立图片（可能只返回单图或拼图）；已暂停，不自动重发':'等待超时，请检查验证、限额或网页变化；不会重发');
  }catch(e){await tell(task,'needs_attention',e.message).catch(()=>{});}finally{running=false;}
 }
-chrome.runtime.onMessage.addListener((m,sender,reply)=>{if(m.kind==='preflight'){reply(preflight());return false;}if(m.kind==='stop'){stop=true;reply({ok:true});}if(m.kind==='start'){run(m.task);reply({ok:true});}return false;});})();
+async function recover(task){
+ try{
+  const all=[...document.querySelectorAll('main img')];
+  // Thumbnail galleries may expose only the selected full-size image. Fail clearly rather than substitute thumbnails.
+  const sources=new Set();const images=all.filter(i=>{const src=i.currentSrc||i.src;if(!i.complete||i.naturalWidth<512||i.naturalHeight<512||sources.has(src))return false;sources.add(src);return true;}).slice(-8);
+  if(images.length!==8)throw Error('本页未暴露8张完整图片资源，检测到'+images.length+'张；请展开图片列表后重试，不会重新生成');
+  for(let index=task.saved_count||0;index<8;index++){
+   const r=await fetch(images[index].currentSrc||images[index].src,{credentials:'include'});if(!r.ok)throw Error('图片资源读取失败');const blob=await r.blob();
+   const image_b64=await new Promise((resolve,reject)=>{const f=new FileReader();f.onload=()=>resolve(f.result.split(',')[1]);f.onerror=reject;f.readAsDataURL(blob);});
+   const result=await chrome.runtime.sendMessage({kind:'set-result',task_id:task.id,index,image_b64});if(result?.error)throw Error(result.error);
+  }
+ }catch(e){await tell(task,'needs_attention',e.message).catch(()=>{});}
+}
+chrome.runtime.onMessage.addListener((m,sender,reply)=>{if(m.kind==='recover'){recover(m.task);reply({ok:true});return false;}if(m.kind==='preflight'){reply(preflight());return false;}if(m.kind==='stop'){stop=true;reply({ok:true});}if(m.kind==='start'){run(m.task);reply({ok:true});}return false;});})();

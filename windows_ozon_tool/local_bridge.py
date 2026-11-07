@@ -45,6 +45,10 @@ class Store:
   task=dict(group[0]);task.update(id=secrets.token_hex(16),name='00_full_set',state='queued',auto_batch=True,set_mode=True,received_images=[])
   task['prompt']='请一次完成8张独立的Ozon商品图片，必须是8个独立图片文件，不要拼图，不要把8个画面合成一张。按顺序输出：'+ '；'.join(f'{i+1}. {brief}' for i,(_,brief) in enumerate(TASKS))+ '。第1张是商品主图，展示真实销售数量。每张3:4竖版，自然俄文，风格一致，保持原图外观。严禁虚构尺寸、材质、配件和功能，包装尺寸不能当作商品尺寸。商品事实：'+facts
   self.tasks=[t for t in self.tasks if t['sku']!=sku]+[task];self.save()
+ def recover(self,sku):
+  group=[t for t in self.tasks if t['sku']==sku and t.get('set_mode') and t['state'] in ('waiting','needs_attention','claimed','sending')]
+  if len(group)!=1:raise ValueError('没有唯一可恢复的整套任务，请核对SKU')
+  task=group[0];task.update(state='waiting',message='用户请求从现有网页恢复保存，不重新生成');self.save();return {'id':task['id'],'set_mode':True,'saved_count':len(task.get('received_images',[]))}
  def set_result(self,tid,index,encoded):
   task=self.find(tid)
   if not task.get('set_mode') or task['state'] not in ('claimed','sending','waiting'):raise ValueError('整套任务状态无效')
@@ -147,6 +151,7 @@ def server(store,token,port=8765):
      if self.path=='/poll':
       active=any(t['state'] in ('claimed','sending','waiting','needs_attention','review') for t in store.tasks)
       value={'ready':not active and any(t['state']=='queued' and t.get('auto_batch') for t in store.tasks)}
+     elif self.path=='/recover':value=store.recover(body['sku'])
      elif self.path=='/claim':value=store.claim()
      elif self.path=='/set-result':value=store.set_result(body['task_id'],body['index'],body['image_b64'])
      elif self.path=='/result':value=store.result(body['task_id'],body['image_b64'])
