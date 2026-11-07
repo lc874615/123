@@ -79,7 +79,7 @@ class Store:
   if any(t['state'] in ('claimed','sending','waiting','needs_attention','review') for t in self.tasks):raise ValueError('请先审核上一任务或处理异常，不能继续发送')
   t=next((t for t in self.tasks if t['state']=='queued'),None)
   if not t:raise ValueError('没有排队任务，请在本地窗口创建商品')
-  t['state']='claimed';self.save();result=dict(t);result['references']=[{'name':r['name'],'mime':r['mime'],'base64':base64.b64encode(Path(r['path']).read_bytes()).decode()} for r in t.get('references',[])];return result
+  t['state']='claimed';self.save();result=dict(t);result['references']=[{'name':r['name'],'mime':r['mime'],'purpose':r.get('purpose','variant_main'),'base64':base64.b64encode(Path(r['path']).read_bytes()).decode()} for r in t.get('references',[])];return result
  def find(self,tid):
   t=next((t for t in self.tasks if t['id']==tid),None)
   if not t:raise ValueError('任务不存在')
@@ -218,16 +218,28 @@ def main():
  import tkinter as tk
  from tkinter import ttk,messagebox,filedialog
  store=Store(DATA);token=secrets.token_urlsafe(32);http=server(store,token);threading.Thread(target=http.serve_forever,daemon=True).start()
- win=tk.Tk();win.title('Ozon Edge 本地服务 v0.8');win.geometry('1120x950')
+ win=tk.Tk();win.title('Ozon Edge 本地服务 v0.9.1');win.geometry('1120x950')
  ttk.Label(win,text='本地服务已启动。将配对码粘贴至 Edge 扩展；可在下方选择原图，扩展将附加到当前ChatGPT对话。').pack(pady=8)
  code=ttk.Entry(win,width=65);code.insert(0,token);code.pack()
  ttk.Label(win,text='基础货号（上架货号按变体自动加(1)、(2)…）').pack()
  base=tk.StringVar();ttk.Entry(win,textvariable=base,width=60).pack()
  from variants import VariantGrid
+ shared_refs=[]
+ shared_label=ttk.Label(win,text='共用详情图参考：未选择');shared_label.pack()
+ def choose_shared():
+  nonlocal shared_refs
+  selected=list(filedialog.askopenfilenames(title='选择全组共用详情图参考',filetypes=[('Images','*.png *.jpg *.jpeg *.webp')]))
+  if selected:shared_refs=selected;shared_label.configure(text=f'共用详情图参考：已选 {len(selected)} 张')
+ ttk.Button(win,text='选择共用详情图参考（全组一次）',command=choose_shared).pack(pady=4)
  grid=VariantGrid(win,base)
  def create():
   try:
    records=grid.records()
+   if not shared_refs:raise ValueError('请选择共用详情图参考')
+   if len(shared_refs)>8:raise ValueError('共用详情参考最多8张')
+   for ref in shared_refs:
+    if Path(ref).stat().st_size>3*1024*1024:raise ValueError('原图单张限3MB')
+    with Image.open(ref) as image:image.verify()
    with store.lock:
     if any(any(t['sku']==r['article'] for t in store.tasks) for r in records):raise ValueError('部分变体货号已有任务，请勿重复创建')
     # Validate all references before creating any variant task.
@@ -242,13 +254,28 @@ def main():
      for r in records:
       store.create_set(r['article'],r['facts'],r['references'])
       task=next(t for t in store.tasks if t['sku']==r['article'])
+      task['main_references']=list(task['references'])
       task.update(base_article=r['base_article'],variant_index=r['index'],variant_parameters=r['values'])
      from product_group import configure
      configure(store.tasks,records[0]['base_article'])
+     leader=next(t for t in store.tasks if t['sku']==records[0]['article'])
+     shared_dir=store.folder/'products'/leader['sku']/'shared_references';shared_dir.mkdir(parents=True,exist_ok=True)
+     shared=[]
+     for i,ref in enumerate(shared_refs):
+      raw=Path(ref).read_bytes()
+      with Image.open(ref) as im:fmt=im.format
+      mime={'PNG':'image/png','JPEG':'image/jpeg','WEBP':'image/webp'}.get(fmt)
+      if not mime:raise ValueError('共用详情参考仅支持PNG/JPG/WEBP')
+      dest=shared_dir/(str(i+1)+'.'+{'PNG':'png','JPEG':'jpg','WEBP':'webp'}[fmt])
+      dest.write_bytes(raw);shared.append({'path':str(dest),'name':dest.name,'mime':mime,'purpose':'shared_gallery'})
+     leader['detail_references']=shared
+     leader['references']=leader['main_references']+shared
+     leader['prompt']+='。本次附件前'+str(len(leader['main_references']))+'张仅用于变体1主图，之后'+str(len(shared))+'张仅用于7张共用详情图。主图必须与当前变体参数一致。详情图按全组颜色混搭、尺寸对照方式生成，注明不同规格为选项而非全部随货交付。'
+
      store.save()
     except Exception:
      store.tasks=previous;store.save();raise
-   messagebox.showinfo('已创建',f"已创建 {len(records)} 个变体；每个变体独立生成8图、视频和文案。")
+   messagebox.showinfo('已创建',f"已创建 {len(records)} 个变体；首变体生成主图及共用详情，其余只生成主图；详情图及文案共用。")
   except Exception as e:messagebox.showerror('未创建',str(e))
  ttk.Button(win,text='创建全部变体并自动处理',command=create).pack(pady=6)
  view=ttk.Treeview(win,columns=('sku','progress','status'),show='headings',height=8,selectmode='browse')

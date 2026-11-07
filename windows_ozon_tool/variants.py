@@ -36,7 +36,7 @@ class VariantGrid:
   ttk.Button(toolbar,text='增加变体',command=self.add).pack(side='left')
   ttk.Button(toolbar,text='当前格值填充整行',command=self.fill_row).pack(side='left',padx=4)
   ttk.Button(toolbar,text='粘贴Excel表格到当前格',command=self.paste).pack(side='left')
-  ttk.Label(toolbar,text='支持从Excel复制多行多列；各变体独立选择原图').pack(side='left',padx=5)
+  ttk.Label(toolbar,text='支持从Excel复制多行多列；各变体独立选择主图参考').pack(side='left',padx=5)
   canvas=tk.Canvas(self.frame,height=290);canvas.pack(fill='both',expand=True)
   sx=ttk.Scrollbar(self.frame,orient='horizontal',command=canvas.xview);sx.pack(fill='x');sy=ttk.Scrollbar(self.frame,orient='vertical',command=canvas.yview);sy.pack(side='right',fill='y')
   canvas.configure(xscrollcommand=sx.set,yscrollcommand=sy.set)
@@ -57,8 +57,8 @@ class VariantGrid:
    from tkinter import filedialog
    refs=list(filedialog.askopenfilenames(filetypes=[('Images','*.png *.jpg *.jpeg *.webp')]))
    if refs:col['refs']=refs;col['refs_label'].configure(text=f'已选{len(refs)}张原图')
-  self.ttk.Button(self.body,text='选择本变体原图',command=choose).grid(row=len(FIELDS)+1,column=c)
-  col['refs_label']=self.ttk.Label(self.body,text='未选择原图');col['refs_label'].grid(row=len(FIELDS)+2,column=c)
+  self.ttk.Button(self.body,text='选择本变体主图参考',command=choose).grid(row=len(FIELDS)+1,column=c)
+  col['refs_label']=self.ttk.Label(self.body,text='未选主图参考');col['refs_label'].grid(row=len(FIELDS)+2,column=c)
   self.columns.append(col);self.headers()
  def fill_row(self):
   r,c=self.focus;value=self.columns[c]['cells'][r].get()
