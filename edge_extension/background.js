@@ -5,6 +5,11 @@ async function restore(){const x=await chrome.storage.local.get('activeTask');if
 async function persist(){if(current)await chrome.storage.local.set({...(current.sku?{lastSku:current.sku}:{}),activeTask:{id:current.id,sku:current.sku,marker:current.marker,tabId:runTab,startedAt:current.startedAt||Date.now(),signature:current.signature}});else await chrome.storage.local.remove('activeTask');}
 async function status(s){await chrome.storage.local.set({status:s});}
 async function api(path,body){const {pairToken}=await chrome.storage.local.get('pairToken');if(!pairToken)throw Error('请先输入配对码');const r=await fetch(BASE+path,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+pairToken},body:JSON.stringify(body),signal:AbortSignal.timeout(30000)});const d=await r.json();if(!r.ok){const e=Error(d.error||'本地服务错误');e.code=d.code;throw e;}return d;}
+async function workTab(fallback){
+ const {autoTab}=await chrome.storage.local.get('autoTab');
+ if(autoTab!=null){try{const tab=await chrome.tabs.get(autoTab);if(tab.url&&new URL(tab.url).origin==='https://chatgpt.com')return tab;}catch{}throw Error('无法访问已绑定的作图标签，请切回该对话重新绑定');}
+ return await chrome.tabs.get(fallback);
+}
 chrome.runtime.onMessage.addListener((m,sender,reply)=>{(async()=>{
  await restore();
  if(['decode-archive','download-asset'].includes(m.kind)){
@@ -15,22 +20,28 @@ chrome.runtime.onMessage.addListener((m,sender,reply)=>{(async()=>{
   if(current?.id!==taskId)throw Error('文件采集已暂停，下载文件已保留');
   return await api('/read-download',{task_id:taskId,ticket:grant.ticket,path:downloaded});
  }
+ if(m.kind==='binding-info'){
+  const tab=await workTab(m.tabId);const x=await chrome.storage.local.get('autoTab');return {bound:x.autoTab!=null,title:tab.title||'ChatGPT',tabId:tab.id};
+ }
+ if(m.kind==='focus-work'){
+  const tab=await workTab(m.tabId);await chrome.tabs.update(tab.id,{active:true});return {status:'已定位作图页：'+(tab.title||'ChatGPT')};
+ }
  if(m.kind==='diagnose'){
-  const tab=await chrome.tabs.get(m.tabId);if(!tab.url||new URL(tab.url).origin!=='https://chatgpt.com')throw Error('请在ChatGPT商品对话中导出诊断');
-  await chrome.scripting.executeScript({target:{tabId:tab.id},files:['conversation.js','copy_parser.js','diagnostics.js']});
+  const tab=await workTab(m.tabId);if(!tab.url||new URL(tab.url).origin!=='https://chatgpt.com')throw Error('请在ChatGPT商品对话中导出诊断');
+  await chrome.scripting.executeScript({target:{tabId:tab.id},files:['conversation.js','copy_parser.js','file_links.js','diagnostics.js']});
   const result=await chrome.scripting.executeScript({target:{tabId:tab.id},func:()=>globalThis.OzonDiagnostics.snapshot()});
   const extension=await chrome.storage.local.get(['autoEnabled','autoTab','status']);
   let queue;try{queue=await api('/queue-status',{});}catch(e){queue={error:e.message};}
-  return {diagnostic:{...result[0].result,extension:{autoEnabled:!!extension.autoEnabled,busy,hasBoundTab:extension.autoTab!=null,activeTask:current?{id:current.id,sku:current.sku}:null,status:extension.status},queue}};
+  return {diagnostic:{...result[0].result,target:{selected:extension.autoTab!=null?'bound-work-tab':'current-unbound-tab',title:tab.title||'',sameAsOpenedPopup:tab.id===m.tabId},extension:{backgroundVersion:chrome.runtime.getManifest?.().version||null,autoEnabled:!!extension.autoEnabled,busy,hasBoundTab:extension.autoTab!=null,activeTask:current?{id:current.id,sku:current.sku}:null,status:extension.status},queue}};
  }
  if(m.kind==='enable'){
   const tab=await chrome.tabs.get(m.tabId);if(!tab.url||new URL(tab.url).origin!=='https://chatgpt.com')throw Error('请先打开ChatGPT商品对话');
-  await api('/resume-unsent-upload',{});await api('/heartbeat',{auto_enabled:true});await chrome.storage.local.set({autoTab:tab.id,autoEnabled:true});await chrome.alarms.create('ozon-poll',{periodInMinutes:0.5});await status('自动批次已启用：本地创建商品后将自动开始。');setTimeout(poll,100);return {status:'已绑定，等待本地任务'};
+  await api('/resume-unsent-upload',{});await api('/heartbeat',{auto_enabled:true});await chrome.storage.local.set({autoTab:tab.id,autoTitle:tab.title||'ChatGPT作图页',autoEnabled:true});await chrome.alarms.create('ozon-poll',{periodInMinutes:0.5});await status('自动批次已启用：本地创建商品后将自动开始。');setTimeout(poll,100);return {status:'已绑定作图页：'+(tab.title||'ChatGPT')+'，等待本地任务'};
  }
  if(m.kind==='copy'){
   await chrome.alarms.create('ozon-poll',{periodInMinutes:0.5});
   if(busy)throw Error('请先完成或停止当前作图任务');
-  const tab=await chrome.tabs.get(m.tabId);if(!tab.url||new URL(tab.url).origin!=='https://chatgpt.com')throw Error('请打开商品ChatGPT对话');
+  const tab=await workTab(m.tabId);if(!tab.url||new URL(tab.url).origin!=='https://chatgpt.com')throw Error('请打开商品ChatGPT对话');
   current=await api('/copy-task',{sku:m.sku});runTab=tab.id;busy=true;current.startedAt=Date.now();await persist();
   await chrome.scripting.executeScript({target:{tabId:tab.id},files:['diagnostics.js','conversation.js','composer.js','uploads.js','copy_parser.js','images.js','file_links.js','content.js']});await chrome.tabs.sendMessage(tab.id,{kind:'copy',task:current});return {status:'正在生成俄文文案'};
  }
@@ -41,7 +52,7 @@ chrome.runtime.onMessage.addListener((m,sender,reply)=>{(async()=>{
   await status('文案已保存至本地草稿，待审核');return {status:'文案已保存至本地草稿，待审核'};
  }
  if(m.kind==='copy-recover'){
-  const tab=await chrome.tabs.get(m.tabId);if(!tab.url||new URL(tab.url).origin!=='https://chatgpt.com')throw Error('请打开含现有文案的ChatGPT商品对话');
+  const tab=await workTab(m.tabId);if(!tab.url||new URL(tab.url).origin!=='https://chatgpt.com')throw Error('请打开含现有文案的ChatGPT商品对话');
   if(current&&current.id!=='copy:'+m.sku)throw Error('另一个任务尚未完成，请先停止');
   current=await api('/copy-task',{sku:m.sku});runTab=tab.id;busy=true;current.startedAt=Date.now();await persist();
   try{
@@ -68,7 +79,7 @@ chrome.runtime.onMessage.addListener((m,sender,reply)=>{(async()=>{
   await api('/copy-result',{sku:current.id.slice(5),copy:m.copy});busy=false;current=null;await persist();await status('俄文文案已保存至本地草稿，待审核');return {ok:true};
  }
  if(m.kind==='recover'){
-  const tab=await chrome.tabs.get(m.tabId);if(!tab.url||new URL(tab.url).origin!=='https://chatgpt.com')throw Error('请打开已生成图片的商品对话');
+  const tab=await workTab(m.tabId);if(!tab.url||new URL(tab.url).origin!=='https://chatgpt.com')throw Error('请打开已生成图片的商品对话');
   current=await api('/recover',{sku:m.sku});runTab=tab.id;busy=true;current.startedAt=Date.now();await persist();
   await chrome.scripting.executeScript({target:{tabId:tab.id},files:['diagnostics.js','conversation.js','composer.js','uploads.js','copy_parser.js','images.js','file_links.js','content.js']});await chrome.tabs.sendMessage(tab.id,{kind:'recover',task:current});return {status:'正在读取现有图片，不发送生成请求'};
  }
@@ -80,9 +91,9 @@ chrome.runtime.onMessage.addListener((m,sender,reply)=>{(async()=>{
  }
  if(m.kind==='run'){
   if(busy)throw Error('当前任务尚未结束，请先完成或暂停。');
-  const tab=await chrome.tabs.get(m.tabId);if(!tab.url||new URL(tab.url).origin!=='https://chatgpt.com')throw Error('请在 ChatGPT 标签页点击扩展');
+  const tab=await workTab(m.tabId);if(!tab.url||new URL(tab.url).origin!=='https://chatgpt.com')throw Error('请在 ChatGPT 标签页点击扩展');
   busy=true;runTab=tab.id;
-  try{await chrome.scripting.executeScript({target:{tabId:tab.id},files:['diagnostics.js','conversation.js','composer.js','uploads.js','copy_parser.js','images.js','file_links.js','content.js']});const check=await chrome.tabs.sendMessage(tab.id,{kind:'preflight'});if(check?.version!=='0.22.0')throw Error('网页脚本仍是旧版，请刷新ChatGPT页面后重试');if(!check?.ready)throw Error(check?.message||'当前页面尚未就绪');current=await api('/claim',{tab_id:tab.id,page_url:tab.url});await persist();await chrome.tabs.sendMessage(tab.id,{kind:'start',task:current});await status('任务已启动，保持此标签页打开。');return {status:'任务已启动'};}
+  try{await chrome.scripting.executeScript({target:{tabId:tab.id},files:['diagnostics.js','conversation.js','composer.js','uploads.js','copy_parser.js','images.js','file_links.js','content.js']});const check=await chrome.tabs.sendMessage(tab.id,{kind:'preflight'});if(check?.version!=='0.23.0')throw Error('网页脚本仍是旧版，请刷新ChatGPT页面后重试');if(!check?.ready)throw Error(check?.message||'当前页面尚未就绪');current=await api('/claim',{tab_id:tab.id,page_url:tab.url});await persist();await chrome.tabs.sendMessage(tab.id,{kind:'start',task:current});await status('任务已启动，保持此标签页打开。');return {status:'任务已启动'};}
   catch(e){if(current)await api('/event',{task_id:current.id,state:'needs_attention',message:e.message}).catch(()=>{});busy=false;current=null;await persist();throw e;}
  }
  if(m.kind==='stop'){await api('/heartbeat',{auto_enabled:false}).catch(()=>{});await chrome.storage.local.set({autoEnabled:false});await chrome.alarms.clear('ozon-poll');if(runTab!==null)await chrome.tabs.sendMessage(runTab,{kind:'stop'}).catch(()=>{});if(current){if(current.id.startsWith('copy:'))await api('/copy-failed',{sku:current.id.slice(5),message:'用户暂停文案任务，请保存现有结果'});else await api('/event',{task_id:current.id,state:'needs_attention',message:'用户暂停；请检查网页，禁止直接重发。'});}busy=false;current=null;await persist();await status('已请求暂停，网页中的生成可能仍在继续。');return {status:'已暂停'};}
@@ -138,7 +149,7 @@ async function poll(){
 }
 async function runAuto(tab){
  if(busy)return;busy=true;runTab=tab.id;
- try{await chrome.scripting.executeScript({target:{tabId:tab.id},files:['diagnostics.js','conversation.js','composer.js','uploads.js','copy_parser.js','images.js','file_links.js','content.js']});const check=await chrome.tabs.sendMessage(tab.id,{kind:'preflight'});if(check?.version!=='0.22.0')throw Error('网页脚本仍是旧版，请刷新ChatGPT页面后重试');if(!check?.ready)throw Error(check?.message||'页面未就绪');current=await api('/claim',{tab_id:tab.id,page_url:tab.url});await persist();await chrome.tabs.sendMessage(tab.id,{kind:'start',task:current});}
+ try{await chrome.scripting.executeScript({target:{tabId:tab.id},files:['diagnostics.js','conversation.js','composer.js','uploads.js','copy_parser.js','images.js','file_links.js','content.js']});const check=await chrome.tabs.sendMessage(tab.id,{kind:'preflight'});if(check?.version!=='0.23.0')throw Error('网页脚本仍是旧版，请刷新ChatGPT页面后重试');if(!check?.ready)throw Error(check?.message||'页面未就绪');current=await api('/claim',{tab_id:tab.id,page_url:tab.url});await persist();await chrome.tabs.sendMessage(tab.id,{kind:'start',task:current});}
  catch(e){if(current)await api('/event',{task_id:current.id,state:'needs_attention',message:e.message}).catch(()=>{});busy=false;current=null;await persist();throw e;}
 }
 chrome.alarms.onAlarm.addListener(a=>{if(a.name==='ozon-poll')poll();});

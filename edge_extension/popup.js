@@ -2,7 +2,7 @@ let copyCandidates=[],candidateSku='';
 const status=document.querySelector('#status');
 chrome.storage.local.get(['pairToken','status','lastSku','activeTask']).then(x=>{document.querySelector('#token').value=x.pairToken||'';if(x.status)status.textContent=x.status;document.querySelector('#sku').value=x.activeTask?.sku||x.lastSku||'';});
 document.querySelector('#pair').onclick=async()=>{await chrome.storage.local.set({pairToken:document.querySelector('#token').value.trim()});status.textContent='配对码已保存在本机扩展中。';};
-document.querySelector('#run').onclick=async()=>{const [tab]=await chrome.tabs.query({active:true,currentWindow:true});try{const r=await chrome.runtime.sendMessage({kind:'enable',tabId:tab.id});status.textContent=r.error||r.status;}catch(e){status.textContent=e.message;}};
+document.querySelector('#run').onclick=async()=>{const [tab]=await chrome.tabs.query({active:true,currentWindow:true});try{const r=await chrome.runtime.sendMessage({kind:'enable',tabId:tab.id});status.textContent=r.error||r.status;await refreshBinding();}catch(e){status.textContent=e.message;}};
 document.querySelector('#stop').onclick=async()=>{const r=await chrome.runtime.sendMessage({kind:'stop'});status.textContent=r.status||r.error;};
 chrome.storage.onChanged.addListener(x=>{if(x.status)status.textContent=x.status.newValue;});
 
@@ -46,3 +46,10 @@ document.querySelector('#diagnose').onclick=async()=>{
 };
 
 document.querySelector('#sku').addEventListener('change',()=>chrome.storage.local.set({lastSku:document.querySelector('#sku').value.trim()}));
+
+async function refreshBinding(){
+ try{const [tab]=await chrome.tabs.query({active:true,currentWindow:true});const r=await chrome.runtime.sendMessage({kind:'binding-info',tabId:tab.id});document.querySelector('#binding').textContent=r.error||((r.bound?'已绑定作图页：':'尚未绑定，当前页：')+r.title);}
+ catch(e){document.querySelector('#binding').textContent=e.message;}
+}
+document.querySelector('#focus-work').onclick=async()=>{try{const [tab]=await chrome.tabs.query({active:true,currentWindow:true});const r=await chrome.runtime.sendMessage({kind:'focus-work',tabId:tab.id});status.textContent=r.error||r.status;}catch(e){status.textContent=e.message;}};
+refreshBinding();

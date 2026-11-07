@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Ozon 本地作图助手",
-  "version": "0.22.0",
+  "version": "0.23.0",
   "description": "连接本地工具，自动采集当前GPT任务的生成图库、图片文件及ZIP。",
   "permissions": [
     "activeTab",

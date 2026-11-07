@@ -1,4 +1,4 @@
-(()=>{if(window.__ozonLocalInstalled)return;window.__ozonLocalInstalled=true;let stop=false,running=false;
+(()=>{if(window.__ozonLocalInstalled)return;window.__ozonLocalInstalled=true;globalThis.__ozonContentVersion='0.23.0';let stop=false,running=false;
 async function collectSource(task,options){return await globalThis.OzonFiles?.collect(document,{...options,task})||await globalThis.OzonImages.collect(document,options);}
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function tell(task,state,message){const r=await chrome.runtime.sendMessage({kind:'event',task_id:task.id,state,message});if(r?.error)throw Error(r.error);}
@@ -7,7 +7,7 @@ function findEditor(){
  for(const sel of selectors){const found=[...document.querySelectorAll(sel)].filter(e=>e.getClientRects().length&&!e.disabled&&e.getAttribute('aria-hidden')!=='true');if(found.length===1)return found[0];}
  return null;
 }
-function preflight(){const e=findEditor();return {version:'0.22.0',ready:!!e&&!document.querySelector('[data-testid="stop-button"]'),url:location.origin+location.pathname,message:e?'输入框已识别':'未找到可见输入框。请在普通ChatGPT文字对话中刷新页面，点击输入区后重试；不能在图片查看器或其他应用中执行。'};}
+function preflight(){const e=findEditor();return {version:'0.23.0',ready:!!e&&!document.querySelector('[data-testid="stop-button"]'),url:location.origin+location.pathname,message:e?'输入框已识别':'未找到可见输入框。请在普通ChatGPT文字对话中刷新页面，点击输入区后重试；不能在图片查看器或其他应用中执行。'};}
 async function run(task){
  if(running)throw Error('本页正在执行任务');running=true;stop=false;
  try{
@@ -120,4 +120,4 @@ function extractCopy(task){
  return result;
 }
 
-chrome.runtime.onMessage.addListener((m,sender,reply)=>{if(m.kind==='download-click'){const element=document.querySelector('[data-ozon-download="'+m.token+'"]');if(!element||!globalThis.OzonFiles?.allowed(element.getAttribute('href'))){reply({error:'下载链接已变化或不是受支持的GPT文件链接'});return false;}element.click();reply({ok:true});return false;}if(m.kind==='copy-inspect-v016'){reply({copy:globalThis.OzonCopy.latest(document,{sku:m.task.sku,marker:m.task.marker}),generating:!!document.querySelector('[data-testid="stop-button"]')});return false;}if(m.kind==='copy-extract-v013'){try{reply(extractCopy(m.task));}catch(e){reply({error:e.message});}return false;}if(m.kind==='copy'){copy(m.task);reply({ok:true});return false;}if(m.kind==='recover'){recover(m.task);reply({ok:true});return false;}if(m.kind==='preflight'){reply(preflight());return false;}if(m.kind==='stop'){stop=true;reply({ok:true});}if(m.kind==='start'){run(m.task);reply({ok:true});}return false;});})();
+chrome.runtime.onMessage.addListener((m,sender,reply)=>{if(m.kind==='download-click'){const element=document.querySelector('[data-ozon-download="'+m.token+'"]');if(!element||!globalThis.OzonFiles?.allowedElement(element)){reply({error:'下载链接已变化或不是受支持的GPT文件链接'});return false;}element.click();reply({ok:true});return false;}if(m.kind==='copy-inspect-v016'){reply({copy:globalThis.OzonCopy.latest(document,{sku:m.task.sku,marker:m.task.marker}),generating:!!document.querySelector('[data-testid="stop-button"]')});return false;}if(m.kind==='copy-extract-v013'){try{reply(extractCopy(m.task));}catch(e){reply({error:e.message});}return false;}if(m.kind==='copy'){copy(m.task);reply({ok:true});return false;}if(m.kind==='recover'){recover(m.task);reply({ok:true});return false;}if(m.kind==='preflight'){reply(preflight());return false;}if(m.kind==='stop'){stop=true;reply({ok:true});}if(m.kind==='start'){run(m.task);reply({ok:true});}return false;});})();
