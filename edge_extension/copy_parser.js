@@ -49,7 +49,7 @@
   // Work layouts can render reply text without assistant/markdown attributes.
   // Only accept an explicit exact SKU here. Automatic reads also require the request marker.
   if(!options.sku)return null;
-  const main=doc.querySelector?.('main,[role="main"]');if(!main)return null;
+  const main=globalThis.OzonConversation.main(doc);if(!main)return null;
   for(let text of [main.innerText,main.textContent]){
    text=String(text||'');
    if(options.marker){const at=text.lastIndexOf(options.marker);if(at<0)continue;text=text.slice(at+options.marker.length);}
@@ -78,7 +78,7 @@
   }
   return {candidates};
  }
- function snapshot(doc=document){const values=new Set();for(const node of globalThis.OzonConversation.assistantNodes(doc)){for(const text of [node.innerText,node.textContent])for(const v of parseAll(text))values.add(JSON.stringify(v));}const main=doc.querySelector?.('main,[role="main"]');if(main)for(const text of [main.innerText,main.textContent])for(const v of parseAll(text))values.add(JSON.stringify(v));return values;}
+ function snapshot(doc=document){const values=new Set();for(const node of globalThis.OzonConversation.assistantNodes(doc)){for(const text of [node.innerText,node.textContent])for(const v of parseAll(text))values.add(JSON.stringify(v));}const main=globalThis.OzonConversation.main(doc);if(main)for(const text of [main.innerText,main.textContent])for(const v of parseAll(text))values.add(JSON.stringify(v));return values;}
 
  globalThis.OzonCopy={parse,parseAll,latest,snapshot,recover};
 })();

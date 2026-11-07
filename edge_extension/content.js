@@ -6,7 +6,7 @@ function findEditor(){
  for(const sel of selectors){const found=[...document.querySelectorAll(sel)].filter(e=>e.getClientRects().length&&!e.disabled&&e.getAttribute('aria-hidden')!=='true');if(found.length===1)return found[0];}
  return null;
 }
-function preflight(){const e=findEditor();return {version:'0.17.0',ready:!!e&&!document.querySelector('[data-testid="stop-button"]'),url:location.origin+location.pathname,message:e?'输入框已识别':'未找到可见输入框。请在普通ChatGPT文字对话中刷新页面，点击输入区后重试；不能在图片查看器或其他应用中执行。'};}
+function preflight(){const e=findEditor();return {version:'0.18.0',ready:!!e&&!document.querySelector('[data-testid="stop-button"]'),url:location.origin+location.pathname,message:e?'输入框已识别':'未找到可见输入框。请在普通ChatGPT文字对话中刷新页面，点击输入区后重试；不能在图片查看器或其他应用中执行。'};}
 async function run(task){
  if(running)throw Error('本页正在执行任务');running=true;stop=false;
  try{
@@ -31,10 +31,10 @@ async function run(task){
   const deadline=Date.now()+20*60*1000;let lastReport=0;
   while(Date.now()<deadline){
    if(stop)throw Error('已暂停；请检查网页结果');
-   if(task.set_mode&&!document.querySelector('[data-testid="stop-button"]')){
-    const images=await globalThis.OzonImages.collect(document,{expected:task.expected_images||8,previous:previousImages,before:oldReplies,marker:'【OZON_TASK:'+task.id+'】',sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message)});
-    if(images){await saveSet(task,images);return;}
-    if(Date.now()-lastReport>30000){lastReport=Date.now();await tell(task,'waiting','等待采集：助手区域'+globalThis.OzonConversation.assistantNodes(document).length+'个、页面图片'+document.querySelectorAll('main img,[role="main"] img').length+'张。若网页已生成8张，请导出页面诊断；不会重发');}
+   if(task.set_mode){
+    const images=await globalThis.OzonImages.collect(document,{allowPartial:true,expected:task.expected_images||8,previous:previousImages,before:oldReplies,marker:'【OZON_TASK:'+task.id+'】',sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message),onImage:(index,b64)=>saveImage(task,index,b64)});
+    if(images)return;
+    if(Date.now()-lastReport>5000){lastReport=Date.now();await tell(task,'waiting','等待采集：助手区域'+globalThis.OzonConversation.assistantNodes(document).length+'个、页面图片'+document.querySelectorAll('main img,[role="main"] img').length+'张。若网页已生成8张，请导出页面诊断；不会重发');}
 
    }
    const replies=[...document.querySelectorAll('[data-message-author-role="assistant"]')];
@@ -54,20 +54,17 @@ async function run(task){
   throw Error(task.set_mode?'未收齐8张独立图片（可能只返回单图或拼图）；已暂停，不自动重发':'等待超时，请检查验证、限额或网页变化；不会重发');
  }catch(e){await tell(task,'needs_attention',e.message).catch(()=>{});}finally{running=false;}
 }
-async function saveSet(task,images){
- // Re-submit the prefix too: the bridge checks its hashes before accepting a resumed sequence.
- for(let index=0;index<images.length;index++){
-  if(stop)throw Error('已暂停，已有图片保留');
-  const result=await chrome.runtime.sendMessage({kind:'set-result',task_id:task.id,index,image_b64:images[index]});
-  if(result?.error)throw Error(result.error);
- }
+async function saveImage(task,index,image_b64){
+ if(stop)throw Error('已暂停，已有图片保留');
+ const result=await chrome.runtime.sendMessage({kind:'set-result',task_id:task.id,index,image_b64});
+ if(result?.error)throw Error(result.error);
 }
 async function recover(task){
  if(running)throw Error('本页正在执行任务');running=true;stop=false;
  try{
-  const images=await globalThis.OzonImages.collect(document,{expected:task.expected_images||8,marker:'【OZON_TASK:'+task.id+'】',sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message)});
+  const images=await globalThis.OzonImages.collect(document,{expected:task.expected_images||8,marker:'【OZON_TASK:'+task.id+'】',sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message),onImage:(index,b64)=>saveImage(task,index,b64)});
   if(!images)throw Error('本页未收齐完整原图，请展开当前回复的图片列表后重试；不会重新生成');
-  await saveSet(task,images);
+
  }catch(e){await tell(task,'needs_attention',e.message).catch(()=>{});}finally{running=false;}
 }
 
@@ -79,7 +76,7 @@ async function copy(task){
   const excluded=globalThis.OzonCopy.snapshot();
   const copyNodes=globalThis.OzonConversation.assistantNodes(document);
   const beforeCopy=new Set(copyNodes),beforeText=new Map(copyNodes.map(n=>[n,n.innerText||n.textContent||'']));
-  const main=document.querySelector('main,[role="main"]');const oldText=main?.innerText||'';
+  const main=globalThis.OzonConversation.main(document);const oldText=main?.innerText||'';
   editor.focus();if(editor instanceof HTMLTextAreaElement){Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(editor,task.prompt);editor.dispatchEvent(new Event('input',{bubbles:true}));}else{document.execCommand('insertText',false,task.prompt);editor.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:task.prompt}));}
   await sleep(1000);const button=globalThis.OzonComposer.findSend(editor);if(!button)throw Error('未找到可用发送按钮');button.click();
   const until=Date.now()+300000;let stable='',repeats=0,changed=false;
@@ -97,7 +94,7 @@ async function copy(task){
 }
 function extractCopy(task){
  const result=globalThis.OzonCopy.recover(document,task.sku);
- if(!result.copy&&!result.candidates?.length)throw Error('未读取到匹配文案：助手区域'+globalThis.OzonConversation.assistantNodes(document).length+'个、页面完整JSON '+globalThis.OzonCopy.parseAll(document.querySelector('main,[role="main"]')?.innerText||'').length+'个。请导出页面诊断，无需重新生成');
+ if(!result.copy&&!result.candidates?.length)throw Error('未读取到匹配文案：助手区域'+globalThis.OzonConversation.assistantNodes(document).length+'个、页面完整JSON '+globalThis.OzonCopy.parseAll(globalThis.OzonConversation.main(document)?.innerText||'').length+'个。请导出页面诊断，无需重新生成');
  return result;
 }
 

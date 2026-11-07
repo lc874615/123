@@ -1,4 +1,17 @@
 (()=>{
+ function contentRoots(doc){return [...(doc.querySelectorAll?.('main,[role="main"]')||[])];}
+ function main(doc){
+  const roots=contentRoots(doc);
+  if(!roots.length)return doc.querySelector?.('main,[role="main"]')||null;
+  const score=n=>{
+   const text=(n.innerText||n.textContent||'').trim().length;
+   const images=n.querySelectorAll?.('img').length||0;
+   const replies=n.querySelectorAll?.('[data-message-author-role="assistant"],.markdown').length||0;
+   const visible=n.getClientRects?!!n.getClientRects().length:true;
+   return (visible?1:0.01)*(Math.min(text,200000)+images*1000+replies*500);
+  };
+  return roots.reduce((best,n)=>score(n)>score(best)?n:best,roots[0]);
+ }
  function userOwned(node){return node.closest?.('[data-message-author-role="user"],[data-turn="user"]')!=null;}
  function assistantNodes(doc){
   const roots=[...doc.querySelectorAll('[data-message-author-role="assistant"], [data-turn="assistant"]')];
@@ -40,6 +53,6 @@
  function assistantImages(root){
   return [...root.querySelectorAll('img')].filter(i=>!userOwned(i)&&!i.closest?.('aside,[role="complementary"],#prompt-textarea'));
  }
- globalThis.OzonConversation={assistantNodes,assistantImages,userOwned,imageScopes,requestReplies};
+ globalThis.OzonConversation={assistantNodes,assistantImages,userOwned,imageScopes,requestReplies,main,contentRoots};
  if(typeof module!=='undefined')module.exports=globalThis.OzonConversation;
 })();

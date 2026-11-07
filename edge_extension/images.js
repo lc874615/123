@@ -9,8 +9,8 @@
  function visibleImage(image){
   const r=image.getBoundingClientRect();return image.complete&&image.naturalWidth>0&&r.width>0&&r.height>0&&r.bottom>0&&r.top<(image.ownerDocument.defaultView?.innerHeight||10000);
  }
- function gallery(doc,{expected=8,marker=''}={}){
-  const main=doc.querySelector('main,[role="main"]');if(!main)return null;
+ function gallery(doc,{expected=8,marker='',allowPartial=false}={}){
+  const main=globalThis.OzonConversation.main(doc);if(!main)return null;
   const all=[...main.querySelectorAll('img')].filter(i=>visibleImage(i)&&!globalThis.OzonConversation.userOwned(i)&&!i.closest('aside,[role="complementary"],#prompt-textarea'));
   let anchor=null;
   if(marker){const walker=doc.createTreeWalker(main,4);let n;while((n=walker.nextNode()))if(n.nodeValue.includes(marker))anchor=n;}
@@ -20,7 +20,7 @@
   for(const preview of large){
    const p=preview.getBoundingClientRect();
    const strip=images.filter(i=>{const r=i.getBoundingClientRect();return i!==preview&&r.width>=20&&r.width<=120&&r.height>=25&&r.height<=180&&r.left>=p.right-8&&r.left<=p.right+110&&r.top>=p.top-25&&r.bottom<=p.bottom+30;}).sort((a,b)=>a.getBoundingClientRect().top-b.getBoundingClientRect().top);
-   if(strip.length===expected&&strip.every((i,n)=>!n||i.getBoundingClientRect().top>=strip[n-1].getBoundingClientRect().bottom-3))found.push({preview,strip});
+   if((strip.length===expected||(allowPartial&&anchor&&strip.length>0&&strip.length<expected))&&strip.every((i,n)=>!n||i.getBoundingClientRect().top>=strip[n-1].getBoundingClientRect().bottom-3))found.push({preview,strip});
   }
   if(found.length>1)throw Error('发现多个可见图库，请滚动到当前任务的图库后重试，未猜测图片顺序');
   return found[0]||null;
@@ -33,12 +33,12 @@
   const bitmap=await createImageBitmap(blob);const canvas=document.createElement('canvas');canvas.width=32;canvas.height=32;const ctx=canvas.getContext('2d');ctx.drawImage(bitmap,0,0,32,32);const pixels=ctx.getImageData(0,0,32,32).data;bitmap.close();
   return {digest,base64,pixels};
  }
- async function readGallery(doc,found,{expected=8,sleep=ms=>new Promise(r=>setTimeout(r,ms)),stopped=()=>false,report=async()=>{}}={}){
+ async function readGallery(doc,found,{expected=8,sleep=ms=>new Promise(r=>setTimeout(r,ms)),stopped=()=>false,report=async()=>{},onImage=async()=>{},allowPartial=false}={}){
   const original=found.preview,position=original.getBoundingClientRect(),results=[],hashes=new Set();
   const thumbnails=[];for(const image of found.strip)thumbnails.push(await bytesFor(image));
   for(let index=0;index<found.strip.length;index++){
    if(stopped())throw Error('已暂停，已有图片保留');
-   await report('已识别'+expected+'张生成图缩略图，正在读取原图 '+(index+1)+'/'+expected);
+   await report('已识别'+found.strip.length+'张生成图缩略图，正在读取原图 '+(index+1)+'/'+expected);
    const thumb=found.strip[index],target=thumb.closest('button,[role="button"]')||thumb;
    target.click();let ready=null,stable='',repeats=0;const deadline=Date.now()+15000;
    while(Date.now()<deadline){
@@ -58,14 +58,14 @@
     ready=value;break;
    }
    if(!ready)throw Error('第'+(index+1)+'张原图未加载或仍是上一张；已暂停，不会把缩略图当原图保存');
-   hashes.add(ready.digest);results.push(ready.base64);
+   hashes.add(ready.digest);results.push(ready.base64);await onImage(index,ready.base64);
   }
-  if(results.length!==expected)throw Error('图库原图数量不完整');
+  if(results.length!==expected){if(allowPartial)return null;throw Error('图库原图数量不完整');}
   return results;
  }
- async function collect(doc,{expected=8,previous=new Set(),before=new Set(),marker='',sleep,stopped,report}={}){
-  const found=gallery(doc,{expected,marker});
-  if(found)return readGallery(doc,found,{expected,sleep,stopped,report});
+ async function collect(doc,{expected=8,previous=new Set(),before=new Set(),marker='',sleep,stopped,report,onImage=async()=>{},allowPartial=false}={}){
+  const found=gallery(doc,{expected,marker,allowPartial});
+  if(found)return readGallery(doc,found,{expected,sleep,stopped,report,onImage,allowPartial});
   const scopes=globalThis.OzonConversation.imageScopes(doc,{before,marker});
   const nodes=[];
   for(const scope of scopes){
@@ -81,7 +81,7 @@
     if(hashes.has(digest))continue;hashes.add(digest);
     results.push(await new Promise((resolve,reject)=>{const f=new FileReader();f.onload=()=>resolve(f.result.split(',')[1]);f.onerror=reject;f.readAsDataURL(blob);}));
    }
-   if(results.length===expected)return results;
+   if(results.length===expected){for(let index=0;index<results.length;index++)await onImage(index,results[index]);return results;}
    if(results.length>expected)throw Error('当前回复原图数量超过预期，无法确认顺序；未覆盖已有图片');
    // Never fill a partial reply with unrelated images from older replies.
    return null;

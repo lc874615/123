@@ -7,6 +7,15 @@ from variants import valid_article
 ROOT=Path(__file__).resolve().parent
 DATA=ROOT/'data';DATA.mkdir(exist_ok=True)
 TASKS=[('01_main','双件或多件主图，严格按销售规格显示数量'),('02_dimensions','商品尺寸图，勿将包装尺寸当成商品尺寸'),('03_scene','适用场景一'),('04_scene','适用场景二'),('05_material','材质细节'),('06_structure','结构细节'),('07_details','配件与细节'),('08_contents','套装实际内容')]
+def task_view(task):
+ count=len(task.get('received_images',[]))
+ progress=f'已保存 {count}/8 图' if task.get('set_mode') else task['name']
+ labels={'queued':'排队中','saved':'图片已保存','cancelled':'已取消','needs_attention':'需处理','waiting':'处理中','claimed':'已领取','sending':'发送中','review':'待审核','approved':'已审核'}
+ state='全部素材就绪' if task.get('copy_state')=='done' else ('文案待处理' if task.get('copy_state')=='needs_attention' else ('文案生成中' if task.get('copy_state')=='running' else labels.get(task['state'],task['state'])))
+ message=task.get('message','').strip()
+ if message:state+='：'+message
+ return (task['sku'],progress,state)
+
 class Store:
  def __init__(self,folder):
   self.folder=Path(folder);self.folder.mkdir(parents=True,exist_ok=True);self.lock=threading.Lock();self.path=self.folder/'tasks.json';self.tasks=json.loads(self.path.read_text(encoding='utf-8-sig')) if self.path.exists() else []
@@ -265,7 +274,7 @@ def main():
  import tkinter as tk
  from tkinter import ttk,messagebox,filedialog
  store=Store(DATA);token=secrets.token_urlsafe(32);http=server(store,token);threading.Thread(target=http.serve_forever,daemon=True).start()
- root=tk.Tk();root.title('Ozon Edge 本地服务 v0.17');root.geometry('1120x850')
+ root=tk.Tk();root.title('Ozon Edge 本地服务 v0.18');root.geometry('1120x850')
  shell=ttk.Frame(root);shell.pack(fill='both',expand=True);shell.rowconfigure(0,weight=1);shell.columnconfigure(0,weight=1)
  canvas=tk.Canvas(shell,highlightthickness=0);canvas.grid(row=0,column=0,sticky='nsew')
  outer_scroll=ttk.Scrollbar(shell,orient='vertical',command=canvas.yview);outer_scroll.grid(row=0,column=1,sticky='ns');canvas.configure(yscrollcommand=outer_scroll.set)
@@ -347,11 +356,8 @@ def main():
   selection=view.selection()
   with store.lock:visible=[dict(t) for t in store.tasks]
   for item in view.get_children():view.delete(item)
-  labels={'queued':'排队中','saved':'图片已保存','cancelled':'已取消','needs_attention':'需处理','waiting':'处理中','claimed':'已领取','sending':'发送中','review':'待审核','approved':'已审核'}
   for task in visible:
-   count=len(task.get('received_images',[]));progress=f'{count}/8 图' if task.get('set_mode') else task['name']
-   state='全部素材就绪' if task.get('copy_state')=='done' else ('文案待处理' if task.get('copy_state')=='needs_attention' else ('文案生成中' if task.get('copy_state')=='running' else labels.get(task['state'],task['state'])))
-   view.insert('', 'end',iid=task['id'],values=(task['sku'],progress,state))
+   view.insert('', 'end',iid=task['id'],values=task_view(task))
   if selection and view.exists(selection[0]):view.selection_set(selection[0])
   win.after(1500,refresh)
  def delete():
