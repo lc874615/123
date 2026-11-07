@@ -1,0 +1,15 @@
+import unittest,tempfile
+from variants import article,valid_article,facts
+from local_bridge import Store
+class Tests(unittest.TestCase):
+ def test_article_matches_offer_id(self):
+  self.assertEqual(article('ITEM',1),'ITEM(1)');self.assertEqual(article('ITEM',12),'ITEM(12)');self.assertTrue(valid_article('ITEM(12)'));self.assertFalse(valid_article('../ITEM(1)'))
+ def test_variant_task_roundtrip(self):
+  with tempfile.TemporaryDirectory() as t:
+   s=Store(t);s.create_set(article('ITEM',1),facts({'name':'test','quantity':'2','material':'plastic','margin':'25','stock':'1000'}));self.assertEqual(s.claim()['sku'],'ITEM(1)')
+ def test_reject_bad_numeric(self):
+  for value in ['NaN','Infinity','-2','100']:
+   with self.assertRaises(ValueError):facts({'name':'test','margin':value})
+ def test_no_invented_unknown(self):
+  text=facts({'name':'test','material':'steel'});self.assertNotIn('净重',text);self.assertIn('品牌：无品牌',text)
+if __name__=='__main__':unittest.main()

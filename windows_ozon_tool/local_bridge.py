@@ -3,6 +3,7 @@ import base64,hashlib,hmac,io,json,re,secrets,threading,time
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
 from PIL import Image
+from variants import valid_article
 ROOT=Path(__file__).resolve().parent
 DATA=ROOT/'data';DATA.mkdir(exist_ok=True)
 TASKS=[('01_main','双件或多件主图，严格按销售规格显示数量'),('02_dimensions','商品尺寸图，勿将包装尺寸当成商品尺寸'),('03_scene','适用场景一'),('04_scene','适用场景二'),('05_material','材质细节'),('06_structure','结构细节'),('07_details','配件与细节'),('08_contents','套装实际内容')]
@@ -15,7 +16,7 @@ class Store:
  def save(self):
   temp=self.path.with_suffix('.tmp');temp.write_text(json.dumps(self.tasks,ensure_ascii=False,indent=2),encoding='utf-8');temp.replace(self.path)
  def create(self,sku,facts,references=None):
-  if not re.fullmatch(r'[\w-]{1,80}',sku):raise ValueError('SKU仅允许字母、数字、下划线和连字符')
+  if not valid_article(sku):raise ValueError('货号格式无效')
   if not facts.strip() or len(facts)>20000:raise ValueError('商品资料为空或过长')
   if any(t['sku']==sku for t in self.tasks):raise ValueError('SKU已经存在，避免重复建立任务')
   refs=[]
@@ -47,7 +48,7 @@ class Store:
   self.tasks=[t for t in self.tasks if t['sku']!=sku]+[task];self.save()
  def recover(self,sku):
   group=[t for t in self.tasks if t['sku']==sku and t.get('set_mode') and t['state'] in ('waiting','needs_attention','claimed','sending')]
-  if len(group)!=1:raise ValueError('没有唯一可恢复的整套任务，请核对SKU')
+  if len(group)!=1:raise ValueError('没有唯一可恢复的整套任务，请核对货号')
   task=group[0];task.update(state='waiting',message='用户请求从现有网页恢复保存，不重新生成');self.save();return {'id':task['id'],'set_mode':True,'saved_count':len(task.get('received_images',[]))}
  def set_result(self,tid,index,encoded):
   task=self.find(tid)
@@ -168,13 +169,13 @@ def server(store,token,port=8765):
       value={'ready':not active and any(t['state']=='queued' and t.get('auto_batch') for t in store.tasks),'copy_sku':copy_task['sku'] if copy_task else None}
      elif self.path=='/copy-task':
       sku=body['sku']
-      if not re.fullmatch(r'[\w-]{1,80}',sku):raise ValueError('SKU格式无效')
+      if not valid_article(sku):raise ValueError('货号格式无效')
       folder=store.folder/'products'/sku
       if not (folder/'listing_bundle.json').exists():raise ValueError('请先在本地准备上架草稿')
       for task in store.tasks:
        if task['sku']==sku:task['copy_state']='running'
       store.save()
-      value={'id':'copy:'+sku,'sku':sku,'prompt':'本次商品SKU：'+sku+'。只依据下列当前资料，不得沿用历史商品材质。输出JSON必须额外包含sku字段，值为'+sku+'。'+(folder/'copy_prompt.txt').read_text(encoding='utf-8')}
+      value={'id':'copy:'+sku,'sku':sku,'prompt':'本次变体货号：'+sku+'。只依据下列当前资料，不得沿用历史商品材质。输出JSON必须额外包含sku字段，值为'+sku+'。'+(folder/'copy_prompt.txt').read_text(encoding='utf-8')}
      elif self.path=='/copy-failed':
       sku=body['sku']
       for task in store.tasks:
@@ -183,7 +184,7 @@ def server(store,token,port=8765):
      elif self.path=='/copy-result':
       from listing_bundle import save_copy
       sku=body['sku']
-      if not re.fullmatch(r'[\w-]{1,80}',sku):raise ValueError('SKU格式无效')
+      if not valid_article(sku):raise ValueError('货号格式无效')
       value=save_copy(store.folder/'products'/sku,body['copy'])
       for task in store.tasks:
        if task['sku']==sku:task.update(copy_state='done',message='8图、视频、俄文文案及草稿已完成；待定价、类目和托管')
@@ -205,30 +206,39 @@ def main():
  import tkinter as tk
  from tkinter import ttk,messagebox,filedialog
  store=Store(DATA);token=secrets.token_urlsafe(32);http=server(store,token);threading.Thread(target=http.serve_forever,daemon=True).start()
- win=tk.Tk();win.title('Ozon Edge 本地服务 v0.5');win.geometry('850x700')
+ win=tk.Tk();win.title('Ozon Edge 本地服务 v0.8');win.geometry('1120x950')
  ttk.Label(win,text='本地服务已启动。将配对码粘贴至 Edge 扩展；可在下方选择原图，扩展将附加到当前ChatGPT对话。').pack(pady=8)
  code=ttk.Entry(win,width=65);code.insert(0,token);code.pack()
- ttk.Label(win,text='SKU（不含空格）').pack();sku=ttk.Entry(win,width=60);sku.pack()
- ttk.Label(win,text='商品事实：销售数量、尺寸、材质、成本；未知项目留空').pack();facts=tk.Text(win,height=7);facts.pack(fill='x',padx=15)
- references=[]
- ref_label=ttk.Label(win,text='尚未选择原图（也可在ChatGPT网页手动上传）');ref_label.pack()
- def choose():
-  nonlocal references
-  selected=list(filedialog.askopenfilenames(title='选择商品原图',filetypes=[('Images','*.png *.jpg *.jpeg *.webp')]))
-  if selected:references=selected;ref_label.configure(text=f'已选择 {len(references)} 张：'+', '.join(Path(x).name for x in references))
- ttk.Button(win,text='选择商品原图（可多选）',command=choose).pack(pady=5)
+ ttk.Label(win,text='基础货号（上架货号按变体自动加(1)、(2)…）').pack()
+ base=tk.StringVar();ttk.Entry(win,textvariable=base,width=60).pack()
+ from variants import VariantGrid
+ grid=VariantGrid(win,base)
  def create():
   try:
+   records=grid.records()
    with store.lock:
-    store.create_set(sku.get().strip(),facts.get('1.0','end').strip(),references)
-    for task in store.tasks:
-     if task['sku']==sku.get().strip():task['auto_batch']=True
-    store.save()
-   messagebox.showinfo('已创建','整套8图任务已排队，只发送一次；收到8张独立图后自动合成视频。')
+    if any(any(t['sku']==r['article'] for t in store.tasks) for r in records):raise ValueError('部分变体货号已有任务，请勿重复创建')
+    # Validate all references before creating any variant task.
+    for r in records:
+     if not r['references']:raise ValueError(r['article']+' 请选择原图')
+     if len(r['references'])>8:raise ValueError('每个变体最多8张参考图')
+     for ref in r['references']:
+      if Path(ref).stat().st_size>3*1024*1024:raise ValueError('原图单张限3MB')
+      with Image.open(ref) as image:image.verify()
+    previous=list(store.tasks)
+    try:
+     for r in records:
+      store.create_set(r['article'],r['facts'],r['references'])
+      task=next(t for t in store.tasks if t['sku']==r['article'])
+      task.update(base_article=r['base_article'],variant_index=r['index'],variant_parameters=r['values'])
+     store.save()
+    except Exception:
+     store.tasks=previous;store.save();raise
+   messagebox.showinfo('已创建',f"已创建 {len(records)} 个变体；每个变体独立生成8图、视频和文案。")
   except Exception as e:messagebox.showerror('未创建',str(e))
- ttk.Button(win,text='创建并自动制作8图＋8秒视频',command=create).pack(pady=6)
+ ttk.Button(win,text='创建全部变体并自动处理',command=create).pack(pady=6)
  view=ttk.Treeview(win,columns=('sku','progress','status'),show='headings',height=8,selectmode='browse')
- for key,label,width in [('sku','商品SKU',180),('progress','进度',140),('status','状态',460)]:view.heading(key,text=label);view.column(key,width=width,stretch=key=='status')
+ for key,label,width in [('sku','变体货号',180),('progress','进度',140),('status','状态',460)]:view.heading(key,text=label);view.column(key,width=width,stretch=key=='status')
  view.pack(fill='both',expand=True,padx=15)
  visible=[]
  def selected():
