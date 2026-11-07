@@ -1,0 +1,10 @@
+const assert=require('node:assert/strict');require('./uploads.js');
+const u=global.OzonUploads;
+const generic={accept:'',multiple:true},image={accept:'image/*',multiple:false},pdf={accept:'.pdf',multiple:true},disabled={accept:'image/*',disabled:true};
+assert.equal(u.pick([generic,image]),image);
+assert.equal(u.pick([pdf]),null);
+assert.equal(u.pick([disabled,image]),image);
+assert.deepEqual(u.batches(['a','b'],false),[['a'],['b']]);
+assert.deepEqual(u.batches(['a','b'],true),[['a','b']]);
+assert.deepEqual(u.batches(['a'],false),[['a']]);
+console.log('6 upload selection/batching tests passed');

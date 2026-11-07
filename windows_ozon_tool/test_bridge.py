@@ -44,4 +44,11 @@ class Tests(unittest.TestCase):
   t=self.s.claim()
   with self.assertRaises(ValueError):self.s.retry(t['id'])
   self.s.find(t['id'])['state']='needs_attention';self.s.retry(t['id']);self.assertEqual(self.s.claim()['id'],t['id'])
+ def test_cancel_old_product_unblocks_new_product(self):
+  self.s.tasks[0]['state']='needs_attention';self.s.create('NEW','generic')
+  self.s.cancel_product('TEST')
+  self.assertEqual(self.s.claim()['sku'],'NEW')
+ def test_cancel_rejects_running_task(self):
+  self.s.claim()
+  with self.assertRaises(ValueError):self.s.cancel_product('TEST')
 if __name__=='__main__':unittest.main()

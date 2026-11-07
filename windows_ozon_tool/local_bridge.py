@@ -52,6 +52,13 @@ class Store:
   if t['state']!='needs_attention':raise ValueError('仅可恢复异常任务')
   if any(x['state'] in ('claimed','sending','waiting') for x in self.tasks):raise ValueError('还有执行中的任务，请先暂停')
   t.update(state='queued',message='用户确认网页未发送后重新排队');self.save()
+ def cancel_product(self,sku):
+  group=[t for t in self.tasks if t['sku']==sku]
+  if not group:raise ValueError('商品不存在')
+  if any(t['state'] in ('claimed','sending','waiting') for t in group):raise ValueError('请先在扩展停止自动批次，等待任务暂停后再取消')
+  for t in group:
+   if t['state'] in ('queued','needs_attention','review'):t.update(state='cancelled',message='用户取消剩余任务；已有文件保留')
+  self.save()
  def result(self,tid,encoded):
   t=self.find(tid)
   if t['state'] not in ('claimed','sending','waiting'):raise ValueError('任务不接受图片')
@@ -125,7 +132,7 @@ def main():
  import tkinter as tk
  from tkinter import ttk,messagebox,filedialog
  store=Store(DATA);token=secrets.token_urlsafe(32);http=server(store,token);threading.Thread(target=http.serve_forever,daemon=True).start()
- win=tk.Tk();win.title('Ozon Edge 本地服务 v0.4');win.geometry('850x700')
+ win=tk.Tk();win.title('Ozon Edge 本地服务 v0.4.1');win.geometry('850x700')
  ttk.Label(win,text='本地服务已启动。将配对码粘贴至 Edge 扩展；可在下方选择原图，扩展将附加到当前ChatGPT对话。').pack(pady=8)
  code=ttk.Entry(win,width=65);code.insert(0,token);code.pack()
  ttk.Label(win,text='SKU（不含空格）').pack();sku=ttk.Entry(win,width=60);sku.pack()
@@ -174,6 +181,16 @@ def main():
    with store.lock:store.retry(visible[sel[0]]['id'])
   except Exception as e:messagebox.showerror('未恢复',str(e))
  ttk.Button(win,text='所选异常任务未发送，重新排队',command=retry).pack(pady=4)
+ def cancel_product():
+  sel=view.curselection()
+  if not sel:return
+  product=visible[sel[0]]['sku']
+  if not messagebox.askyesno('取消商品任务',f'取消 {product} 的剩余任务？已有图片和视频不会删除。请先停止扩展自动批次。'):return
+  try:
+   with store.lock:store.cancel_product(product)
+  except Exception as e:messagebox.showerror('未取消',str(e))
+ ttk.Button(win,text='取消所选商品剩余任务（保留文件）',command=cancel_product).pack(pady=4)
+
 
  ttk.Label(win,text='遇到 needs_attention：停止自动任务，先人工检查网页；不自动重发。图片在本工具 data/products 下。').pack()
  refresh()
