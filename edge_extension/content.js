@@ -83,10 +83,14 @@ async function copy(task){
   while(Date.now()<until){
    await sleep(1000);const replies=[...document.querySelectorAll('[data-message-author-role="assistant"]')];
    if(replies.length>before&&!document.querySelector('[data-testid="stop-button"]')){
-    const text=replies.at(-1).innerText;const a=text.indexOf('{'),b=text.lastIndexOf('}');
-    if(a>=0&&b>a){try{const value=JSON.parse(text.slice(a,b+1));if(value.title_ru&&value.description_ru&&Array.isArray(value.tags_ru)&&Array.isArray(value.missing_facts)){const r=await chrome.runtime.sendMessage({kind:'copy-result',task_id:task.id,copy:value});if(r?.error)throw Error(r.error);return;}}catch(e){if(e.name!=='SyntaxError')throw e;}}
+    const node=replies.at(-1);const value=globalThis.OzonCopy.parse(node.innerText||node.textContent)||globalThis.OzonCopy.parse((node.closest('article')||node).innerText);
+    if(value){const r=await chrome.runtime.sendMessage({kind:'copy-result',task_id:task.id,copy:value});if(r?.error)throw Error(r.error);return;}
    }
   }throw Error('文案生成超时或JSON无效，未自动重发');
  }catch(e){await chrome.runtime.sendMessage({kind:'copy-failed',task_id:task.id,message:e.message});}
 }
-chrome.runtime.onMessage.addListener((m,sender,reply)=>{if(m.kind==='copy'){copy(m.task);reply({ok:true});return false;}if(m.kind==='recover'){recover(m.task);reply({ok:true});return false;}if(m.kind==='preflight'){reply(preflight());return false;}if(m.kind==='stop'){stop=true;reply({ok:true});}if(m.kind==='start'){run(m.task);reply({ok:true});}return false;});})();
+async function recoverCopy(task){
+ try{const value=globalThis.OzonCopy.latest();if(!value)throw Error('本页未识别到完整俄文JSON，请展开完整回复');const r=await chrome.runtime.sendMessage({kind:'copy-result',task_id:task.id,copy:value});if(r?.error)throw Error(r.error);}
+ catch(e){await chrome.runtime.sendMessage({kind:'copy-failed',task_id:task.id,message:e.message});}
+}
+chrome.runtime.onMessage.addListener((m,sender,reply)=>{if(m.kind==='copy-recover'){recoverCopy(m.task);reply({ok:true});return false;}if(m.kind==='copy'){copy(m.task);reply({ok:true});return false;}if(m.kind==='recover'){recover(m.task);reply({ok:true});return false;}if(m.kind==='preflight'){reply(preflight());return false;}if(m.kind==='stop'){stop=true;reply({ok:true});}if(m.kind==='start'){run(m.task);reply({ok:true});}return false;});})();
