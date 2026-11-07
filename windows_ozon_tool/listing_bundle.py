@@ -75,11 +75,20 @@ def refresh_assets(folder):
  if not target.exists():return
  data=json.loads(target.read_text(encoding='utf-8-sig'));rows=json.loads((folder/'image_manifest.json').read_text(encoding='utf-8-sig'))
  if len(rows)!=8 or [r['order'] for r in rows]!=list(range(1,9)):raise ValueError('更新草稿时图片顺序不完整')
- images=[]
+ images=[];previous={r.get('order'):r for r in data.get('images',[])};changed=False
  for row in rows:
   name=Path(row['file'].replace('\\','/')).name;path=folder/'images'/name
   if hashlib.sha256(path.read_bytes()).hexdigest()!=row['sha256']:raise ValueError('更新草稿时图片校验失败')
-  images.append({'order':row['order'],'role':row['role'],'local_file':'images/'+name,'sha256':row['sha256'],'https_url':None})
+  image={'order':row['order'],'role':row['role'],'local_file':'images/'+name,'sha256':row['sha256'],'https_url':None}
+  old=previous.get(row['order'],{})
+  if all(old.get(k)==image[k] for k in ('order','role','local_file','sha256')):
+   image.update({k:v for k,v in old.items() if k=='https_url' or k.startswith('hosting_')})
+  else:changed=True
+  images.append(image)
  data['images']=images;data['video']={'local_file':'video/product_8s.mp4','exists':(folder/'video'/'product_8s.mp4').exists(),'https_url':None}
+ if changed and data.get('hosting'):
+  count=sum(bool(r.get('https_url')) and r.get('hosting_sha256')==r['sha256'] for r in images)
+  data['hosting']={**data['hosting'],'state':'pending','verified_images':count,'message':'生成图已更新，等待自动补齐新图片链接'}
+  if '图片HTTPS链接待校验' not in data.get('blockers',[]):data.setdefault('blockers',[]).append('图片HTTPS链接待校验')
  data.pop('recollection_pending',None);data['blockers']=[b for b in data.get('blockers',[]) if b!='图片重新采集中']
  tmp=target.with_suffix('.tmp');tmp.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding='utf-8');tmp.replace(target)
