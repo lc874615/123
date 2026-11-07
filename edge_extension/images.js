@@ -9,11 +9,35 @@
  function visibleImage(image){
   const r=image.getBoundingClientRect();return image.complete&&image.naturalWidth>0&&r.width>0&&r.height>0&&r.bottom>0&&r.top<(image.ownerDocument.defaultView?.innerHeight||10000);
  }
+ function structuralGallery(doc,{expected=8,marker='',allowPartial=false}={}){
+  const main=globalThis.OzonConversation.main(doc);if(!main)return null;
+  let anchor=null;
+  if(marker){const walker=doc.createTreeWalker(main,4);let n;while((n=walker.nextNode()))if(n.nodeValue.includes(marker))anchor=n;}
+  if(allowPartial&&marker&&!anchor)return null;
+  const nextUser=anchor?globalThis.OzonConversation.userNodes(doc).find(n=>!!(anchor.compareDocumentPosition(n)&4)):null;
+  const matches=[];
+  for(const button of main.querySelectorAll('button[data-testid="generated-image-preview"]')){
+   if(globalThis.OzonConversation.userOwned(button)||anchor&&!(anchor.compareDocumentPosition(button)&4)||nextUser&&!(button.compareDocumentPosition(nextUser)&4))continue;
+   const preview=button.querySelector('img');if(!preview)continue;
+   if(expected===1&&preview.complete&&preview.naturalWidth>=512&&preview.naturalHeight>=512){matches.push({preview,strip:[preview],structural:true});continue;}
+   for(let root=button.parentElement;root&&root!==main;root=root.parentElement){
+    if(root.querySelectorAll('button[data-testid="generated-image-preview"]').length!==1)break;
+    const strip=root.querySelector('[class*="vertical-scroll-fade-mask"]');if(!strip)continue;
+    const thumbs=[...strip.querySelectorAll('button img')].filter(i=>i.complete&&i.naturalWidth>0&&!globalThis.OzonConversation.userOwned(i));
+    if(thumbs.length===expected||allowPartial&&anchor&&thumbs.length>0&&thumbs.length<expected)matches.push({preview,strip:thumbs,structural:true});
+    break;
+   }
+  }
+  if(matches.length>1)throw Error('当前请求包含多个生成图库，无法确定主图顺序，已暂停');
+  return matches[0]||null;
+ }
  function gallery(doc,{expected=8,marker='',allowPartial=false}={}){
+  const structural=structuralGallery(doc,{expected,marker,allowPartial});if(structural)return structural;
   const main=globalThis.OzonConversation.main(doc);if(!main)return null;
   const all=[...main.querySelectorAll('img')].filter(i=>visibleImage(i)&&!globalThis.OzonConversation.userOwned(i)&&!i.closest('aside,[role="complementary"],#prompt-textarea'));
   let anchor=null;
   if(marker){const walker=doc.createTreeWalker(main,4);let n;while((n=walker.nextNode()))if(n.nodeValue.includes(marker))anchor=n;}
+  if(allowPartial&&marker&&!anchor)return null;
   const images=anchor?all.filter(i=>!!(anchor.compareDocumentPosition(i)&4)):all;
   const large=images.filter(i=>{const r=i.getBoundingClientRect();return r.width>=240&&r.height>=280&&i.naturalWidth>=512&&i.naturalHeight>=512;});
   const found=[];
@@ -35,6 +59,15 @@
  }
  async function readGallery(doc,found,{expected=8,sleep=ms=>new Promise(r=>setTimeout(r,ms)),stopped=()=>false,report=async()=>{},onImage=async()=>{},allowPartial=false}={}){
   const original=found.preview,position=original.getBoundingClientRect(),results=[],hashes=new Set();
+  if(found.structural&&found.strip.every(i=>i.naturalWidth>=512&&i.naturalHeight>=512)){
+   for(let index=0;index<found.strip.length;index++){
+    if(stopped())throw Error('已暂停，已有图片保留');
+    await report('读取生成图库原图 '+(index+1)+'/'+expected+'（不受滚动位置影响）');
+    const value=await bytesFor(found.strip[index]);if(hashes.has(value.digest))throw Error('生成图库中不同位置的图片内容重复');
+    hashes.add(value.digest);results.push(value.base64);await onImage(index,value.base64);
+   }
+   return results.length===expected?results:null;
+  }
   const thumbnails=[];for(const image of found.strip)thumbnails.push(await bytesFor(image));
   for(let index=0;index<found.strip.length;index++){
    if(stopped())throw Error('已暂停，已有图片保留');

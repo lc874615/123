@@ -18,7 +18,7 @@ def task_view(task):
 
 class Store:
  def __init__(self,folder):
-  self.folder=Path(folder);self.folder.mkdir(parents=True,exist_ok=True);self.lock=threading.Lock();self.path=self.folder/'tasks.json';self.tasks=json.loads(self.path.read_text(encoding='utf-8-sig')) if self.path.exists() else []
+  self.folder=Path(folder);self.folder.mkdir(parents=True,exist_ok=True);self.lock=threading.Lock();self.client={};self.path=self.folder/'tasks.json';self.tasks=json.loads(self.path.read_text(encoding='utf-8-sig')) if self.path.exists() else []
   for t in self.tasks:
    if t['state'] in ('claimed','sending','waiting'):t['state']='needs_attention';t['message']='服务重启，请检查网页后人工处理'
    if t.get('copy_state')=='running':t['copy_state']='needs_attention';t['message']='文案任务被重启中断，请保存网页现有结果'
@@ -53,9 +53,22 @@ class Store:
   self.create(sku,facts,references)
   group=[t for t in self.tasks if t['sku']==sku]
   for t in group:t.update(state='cancelled',message='由一次提交整套任务替代')
-  task=dict(group[0]);task.update(id=secrets.token_hex(16),name='00_full_set',state='queued',auto_batch=True,set_mode=True,received_images=[])
+  task=dict(group[0]);task.update(id=secrets.token_hex(16),name='00_full_set',state='queued',message='等待扩展领取任务',auto_batch=True,set_mode=True,received_images=[])
   task['prompt']='请一次完成8张独立的Ozon商品图片，必须是8个独立图片文件，不要拼图，不要把8个画面合成一张。按顺序输出：'+ '；'.join(f'{i+1}. {brief}' for i,(_,brief) in enumerate(TASKS))+ '。第1张是商品主图，展示真实销售数量。每张3:4竖版，自然俄文，风格一致，保持原图外观。严禁虚构尺寸、材质、配件和功能，包装尺寸不能当作商品尺寸。商品事实：'+facts
   self.tasks=[t for t in self.tasks if t['sku']!=sku]+[task];self.save()
+ def blockers(self):
+  return [{'id':t['id'],'sku':t['sku'],'state':t['state'],'copy_state':t.get('copy_state'),'message':t.get('message','')} for t in self.tasks if t['state'] in ('claimed','sending','waiting','needs_attention','review') or t.get('copy_state') in ('running','needs_attention')]
+ def queue_reason(self):
+  blockers=self.blockers()
+  if blockers:
+   t=blockers[0];return '前序任务 '+t['sku']+' 尚未完成：'+t.get('message','')
+  if time.time()-self.client.get('last_seen',0)>75:return '等待扩展连接：请保存配对码，并绑定当前ChatGPT标签'
+  if not self.client.get('auto_enabled'):return '扩展已连接，但自动批次未启用'
+  return '扩展已连接，等待下一次轮询领取（最长约30秒）'
+ def task_status(self,tid):
+  task=next((t for t in self.tasks if t['id']==tid),None)
+  if not task:return {'found':False}
+  return {'found':True,'id':task['id'],'sku':task['sku'],'state':task['state'],'copy_state':task.get('copy_state'),'saved_count':len(task.get('received_images',[])),'expected_images':task.get('expected_images',8),'message':task.get('message','')}
  def recover(self,sku):
   group=[t for t in self.tasks if t['sku']==sku and t.get('set_mode') and t['state'] in ('waiting','needs_attention','claimed','sending')]
   if len(group)!=1:raise ValueError('没有唯一可恢复的整套任务，请核对货号')
@@ -219,10 +232,16 @@ def server(store,token,port=8765):
     if not 0<n<29*1024*1024:raise ValueError('请求大小无效')
     body=json.loads(self.rfile.read(n))
     with store.lock:
-     if self.path=='/poll':
-      active=any(t['state'] in ('claimed','sending','waiting','needs_attention','review') or t.get('copy_state') in ('running','needs_attention') for t in store.tasks)
+     if self.path=='/heartbeat':
+      store.client={'last_seen':time.time(),'auto_enabled':bool(body.get('auto_enabled'))}
+      value={'ok':True,'queue_reason':store.queue_reason(),'blockers':store.blockers()}
+     elif self.path=='/queue-status':value={'blockers':store.blockers(),'queue_reason':store.queue_reason(),'queued_count':sum(t['state']=='queued' for t in store.tasks)}
+     elif self.path=='/task-status':value=store.task_status(body['task_id'])
+     elif self.path=='/poll':
+      store.client={'last_seen':time.time(),'auto_enabled':bool(body.get('auto_enabled',True))}
+      active=bool(store.blockers())
       copy_task=store.next_copy() if not active else None
-      value={'ready':not active and any(t['state']=='queued' and t.get('auto_batch') for t in store.tasks),'copy_sku':copy_task['sku'] if copy_task else None}
+      value={'ready':not active and any(t['state']=='queued' and t.get('auto_batch') for t in store.tasks),'copy_sku':copy_task['sku'] if copy_task else None,'blocked_reason':store.queue_reason() if active else None,'blockers':store.blockers()}
      elif self.path=='/copy-task':
       sku=body['sku']
       if not valid_article(sku):raise ValueError('货号格式无效')
@@ -274,7 +293,7 @@ def main():
  import tkinter as tk
  from tkinter import ttk,messagebox,filedialog
  store=Store(DATA);token=secrets.token_urlsafe(32);http=server(store,token);threading.Thread(target=http.serve_forever,daemon=True).start()
- root=tk.Tk();root.title('Ozon Edge 本地服务 v0.18');root.geometry('1120x850')
+ root=tk.Tk();root.title('Ozon Edge 本地服务 v0.19');root.geometry('1120x850')
  shell=ttk.Frame(root);shell.pack(fill='both',expand=True);shell.rowconfigure(0,weight=1);shell.columnconfigure(0,weight=1)
  canvas=tk.Canvas(shell,highlightthickness=0);canvas.grid(row=0,column=0,sticky='nsew')
  outer_scroll=ttk.Scrollbar(shell,orient='vertical',command=canvas.yview);outer_scroll.grid(row=0,column=1,sticky='ns');canvas.configure(yscrollcommand=outer_scroll.set)
@@ -297,6 +316,7 @@ def main():
   selected=list(filedialog.askopenfilenames(title='选择全组共用详情图参考',filetypes=[('Images','*.png *.jpg *.jpeg *.webp')]))
   if selected:shared_refs=selected;shared_label.configure(text=f'共用详情图参考：已选 {len(selected)} 张')
  ttk.Button(win,text='选择共用详情图参考（全组一次）',command=choose_shared).pack(pady=4)
+ connection=ttk.Label(win,text='等待扩展连接：请保存配对码并绑定ChatGPT标签');connection.pack(pady=4)
  grid=VariantGrid(win,base)
  def create():
   try:
@@ -354,9 +374,12 @@ def main():
  def refresh():
   nonlocal visible
   selection=view.selection()
-  with store.lock:visible=[dict(t) for t in store.tasks]
+  with store.lock:
+   visible=[dict(t) for t in store.tasks];reason=store.queue_reason()
+  connection.configure(text=reason)
   for item in view.get_children():view.delete(item)
   for task in visible:
+   if task['state']=='queued':task['message']=reason
    view.insert('', 'end',iid=task['id'],values=task_view(task))
   if selection and view.exists(selection[0]):view.selection_set(selection[0])
   win.after(1500,refresh)

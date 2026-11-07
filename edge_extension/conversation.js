@@ -12,7 +12,7 @@
   };
   return roots.reduce((best,n)=>score(n)>score(best)?n:best,roots[0]);
  }
- function userOwned(node){return node.closest?.('[data-message-author-role="user"],[data-turn="user"]')!=null;}
+ function userOwned(node){return node.closest?.('[data-message-author-role="user"],[data-turn="user"],[class*="group/user-message"]')!=null;}
  function assistantNodes(doc){
   const roots=[...doc.querySelectorAll('[data-message-author-role="assistant"], [data-turn="assistant"]')];
   // Some page layouts expose markdown siblings outside the role wrapper. Include only
@@ -25,7 +25,7 @@
    if(a===b)return 0;const p=a.compareDocumentPosition?.(b)||0;return p&4?-1:p&2?1:0;
   });
  }
- function userNodes(doc){return [...doc.querySelectorAll('[data-message-author-role="user"], [data-turn="user"]')].filter(n=>!n.querySelector?.('[data-message-author-role="user"], [data-turn="user"]'));}
+ function userNodes(doc){return [...doc.querySelectorAll('[data-message-author-role="user"], [data-turn="user"], [class*="group/user-message"]')].filter(n=>!n.querySelector?.('[data-message-author-role="user"], [data-turn="user"], [class*="group/user-message"]'));}
  function requestReplies(doc,marker){
   const users=userNodes(doc);
   const start=[...users].reverse().find(n=>(n.innerText||n.textContent||'').includes(marker));
@@ -53,6 +53,6 @@
  function assistantImages(root){
   return [...root.querySelectorAll('img')].filter(i=>!userOwned(i)&&!i.closest?.('aside,[role="complementary"],#prompt-textarea'));
  }
- globalThis.OzonConversation={assistantNodes,assistantImages,userOwned,imageScopes,requestReplies,main,contentRoots};
+ globalThis.OzonConversation={assistantNodes,assistantImages,userOwned,imageScopes,requestReplies,main,contentRoots,userNodes};
  if(typeof module!=='undefined')module.exports=globalThis.OzonConversation;
 })();
