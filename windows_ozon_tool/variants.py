@@ -1,7 +1,7 @@
 """Variant columns: stable natural-number suffixes, explicit units, TSV paste."""
 from decimal import Decimal,InvalidOperation
 import re
-FIELDS=[('name','商品名称/用途',''),('color','颜色',''),('size','规格/型号',''),('quantity','每套件数','1'),('material','主体材质',''),('accessory_material','配件/内衬材质',''),('length','商品长(cm)',''),('width','商品宽(cm)',''),('height','商品高(cm)',''),('net_weight','商品净重(g)',''),('pack_length','包装长(cm)',''),('pack_width','包装宽(cm)',''),('pack_height','包装高(cm)',''),('pack_weight','包装总重(g)',''),('cost','每套成本含国内运费(元)',''),('margin','目标净利润率(%)','25'),('stock','库存(套/件)','1000'),('origin','产地',''),('assembly','组装方式(未知留空)',''),('extra','其他真实参数/卖点','')]
+FIELDS=[('name','商品名称/用途',''),('color','颜色',''),('size','规格/型号',''),('quantity','每套件数','1'),('material','主体材质',''),('accessory_material','配件/内衬材质',''),('length','商品长(cm)',''),('width','商品宽(cm)',''),('height','商品高(cm)',''),('net_weight','商品净重(g)',''),('pack_length','包装长(cm)',''),('pack_width','包装宽(cm)',''),('pack_height','包装高(cm)',''),('pack_weight','包装总重(g)',''),('cost','每套成本含国内运费(元)',''),('margin','目标净利润率(%)','25'),('stock','库存(套/件)','1000'),('origin','产地','中国'),('assembly','组装方式(未知留空)',''),('extra','其他真实参数/卖点','')]
 def valid_article(value):return bool(re.fullmatch(r'[\w-]+(?:\([1-9][0-9]*\))?',value)) and len(value)<=80
 
 def article(base,index):
@@ -37,11 +37,11 @@ class VariantGrid:
   ttk.Label(self.frame,text='每行一个变体；双击参数编辑。货号自动生成；主图参考逐变体上传。').pack(anchor='w')
   holder=ttk.Frame(self.frame);holder.pack(fill='both',expand=True);holder.rowconfigure(0,weight=1);holder.columnconfigure(0,weight=1)
   self.tree=ttk.Treeview(holder,columns=('index','article','refs')+tuple(k for k,_,_ in FIELDS),show='tree headings',height=6,selectmode='extended')
-  self.tree.heading('#0',text='主图');self.tree.column('#0',width=85,stretch=False)
-  for key,title,width in [('index','序号',55),('article','货号',160),('refs','主图参考',95)]+[(k,label,170 if k in ('name','extra') else 125) for k,label,_ in FIELDS]:self.tree.heading(key,text=title);self.tree.column(key,width=width,stretch=False)
+  self.tree.heading('#0',text='主图');self.tree.column('#0',width=85,stretch=False,anchor='center')
+  for key,title,width in [('index','序号',55),('article','货号',160),('refs','主图参考',95)]+[(k,label,170 if k in ('name','extra') else 125) for k,label,_ in FIELDS]:self.tree.heading(key,text=title,anchor='center');self.tree.column(key,width=width,stretch=False,anchor='center')
   self.tree.grid(row=0,column=0,sticky='nsew');sx=ttk.Scrollbar(holder,orient='horizontal',command=self.tree.xview);sx.grid(row=1,column=0,sticky='ew');sy=ttk.Scrollbar(holder,orient='vertical',command=self.tree.yview);sy.grid(row=0,column=1,sticky='ns');self.tree.configure(xscrollcommand=sx.set,yscrollcommand=sy.set)
   ttk.Style().configure('Variants.Treeview',rowheight=58);self.tree.configure(style='Variants.Treeview')
-  self.tree.bind('<Double-1>',self.edit);self.tree.bind('<ButtonRelease-1>',self.track);self.tree.bind('<Control-v>',lambda e:self.paste());self.base.trace_add('write',lambda *_:self.refresh());self.add()
+  self.tree.bind('<Button-1>',self.image_click);self.tree.bind('<Double-1>',self.edit);self.tree.bind('<ButtonRelease-1>',self.track);self.tree.bind('<Control-v>',lambda e:self.paste());self.base.trace_add('write',lambda *_:self.refresh());self.add()
  def commit(self):
   if self.editor:
    widget,row,key=self.editor;row['values'][key]=widget.get().strip();self.editor=None;widget.destroy();self.refresh()
@@ -60,17 +60,53 @@ class VariantGrid:
   return [r for r in self.rows if str(r['index']) in self.tree.selection()]
  def remove(self):
   self.commit();ids={r['index'] for r in self.selected()};self.rows=[r for r in self.rows if r['index'] not in ids];self.refresh()
+ def image_click(self,event):
+  item=self.tree.identify_row(event.y);column=self.tree.identify_column(event.x)
+  if item and column=='#0':
+   self.tree.selection_set(item)
+   row=next(r for r in self.rows if str(r['index'])==item)
+   self.tree.after(10,lambda:self.manage_images(row) if row['refs'] else self.choose())
+   return 'break'
+ def thumbnail(self,row):
+  from PIL import Image,ImageOps,ImageTk
+  if row['refs']:
+   with Image.open(row['refs'][0]) as im:self.photos[row['index']]=ImageTk.PhotoImage(ImageOps.contain(im.convert('RGB'),(64,52)))
+  else:self.photos.pop(row['index'],None)
+  self.refresh()
  def choose(self):
   from tkinter import filedialog,messagebox
-  from PIL import Image,ImageOps,ImageTk
   rows=self.selected()
   if len(rows)!=1:messagebox.showinfo('选择变体','请选中一行变体再上传主图参考');return
   paths=list(filedialog.askopenfilenames(filetypes=[('Images','*.png *.jpg *.jpeg *.webp')]))
   if not paths:return
   try:
-   with Image.open(paths[0]) as im:photo=ImageTk.PhotoImage(ImageOps.contain(im.convert('RGB'),(64,52)))
-   rows[0]['refs']=paths;self.photos[rows[0]['index']]=photo;self.refresh()
+   from PIL import Image
+   for path in paths:
+    with Image.open(path) as im:im.verify()
+   rows[0]['refs']=list(dict.fromkeys(rows[0]['refs']+paths));self.thumbnail(rows[0])
   except Exception as e:messagebox.showerror('图片无法读取',str(e))
+ def manage_images(self,row):
+  from PIL import Image,ImageOps,ImageTk
+  dialog=self.tk.Toplevel(self.frame);dialog.title('主图参考：点击图片选中后删除');dialog.geometry('640x420')
+  body=self.ttk.Frame(dialog);body.pack(fill='both',expand=True)
+  selected=set();photos=[]
+  def render():
+   for child in body.winfo_children():child.destroy()
+   photos.clear()
+   for i,path in enumerate(row['refs']):
+    try:
+     with Image.open(path) as im:photo=ImageTk.PhotoImage(ImageOps.contain(im.convert('RGB'),(110,100)))
+     photos.append(photo)
+     def select(p=path):
+      if p in selected:selected.remove(p)
+      else:selected.add(p)
+      render()
+     button=self.tk.Button(body,image=photo,text=('✓ ' if path in selected else '')+__import__('os').path.basename(path),compound='top',command=select,relief='sunken' if path in selected else 'raised');button.grid(row=i//4,column=i%4,padx=5,pady=5)
+    except Exception:self.ttk.Label(body,text='图片不可读').grid(row=i//4,column=i%4)
+  def delete():
+   row['refs']=[p for p in row['refs'] if p not in selected];selected.clear();self.thumbnail(row);render()
+  self.ttk.Button(dialog,text='删除选中参考（不删除原文件）',command=delete).pack(side='bottom',pady=8)
+  render()
  def track(self,event):
   item=self.tree.identify_row(event.y);column=self.tree.identify_column(event.x)
   if item and column.startswith('#') and int(column[1:])>=4:self.focus=(int(item),int(column[1:])-4)
@@ -79,7 +115,7 @@ class VariantGrid:
   if not item or not column.startswith('#') or int(column[1:])<4:return
   key=FIELDS[int(column[1:])-4][0];row=next(r for r in self.rows if str(r['index'])==item);box=self.tree.bbox(item,column)
   if not box:return
-  entry=self.ttk.Entry(self.tree);entry.insert(0,row['values'][key]);entry.place(x=box[0],y=box[1],width=box[2],height=box[3]);entry.focus_set();entry.selection_range(0,'end');self.editor=(entry,row,key)
+  entry=self.ttk.Entry(self.tree,justify='center');entry.insert(0,row['values'][key]);entry.place(x=box[0],y=box[1],width=box[2],height=box[3]);entry.focus_set();entry.selection_range(0,'end');self.editor=(entry,row,key)
   entry.bind('<Return>',lambda e:self.commit());entry.bind('<FocusOut>',lambda e:self.commit())
  def fill_row(self):
   self.commit();index,col=self.focus;source=next((r for r in self.rows if r['index']==index),None)

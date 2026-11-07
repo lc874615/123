@@ -218,7 +218,17 @@ def main():
  import tkinter as tk
  from tkinter import ttk,messagebox,filedialog
  store=Store(DATA);token=secrets.token_urlsafe(32);http=server(store,token);threading.Thread(target=http.serve_forever,daemon=True).start()
- win=tk.Tk();win.title('Ozon Edge 本地服务 v0.9.1');win.geometry('1120x950')
+ root=tk.Tk();root.title('Ozon Edge 本地服务 v0.9.3');root.geometry('1120x850')
+ shell=ttk.Frame(root);shell.pack(fill='both',expand=True);shell.rowconfigure(0,weight=1);shell.columnconfigure(0,weight=1)
+ canvas=tk.Canvas(shell,highlightthickness=0);canvas.grid(row=0,column=0,sticky='nsew')
+ outer_scroll=ttk.Scrollbar(shell,orient='vertical',command=canvas.yview);outer_scroll.grid(row=0,column=1,sticky='ns');canvas.configure(yscrollcommand=outer_scroll.set)
+ win=ttk.Frame(canvas);window=canvas.create_window((0,0),window=win,anchor='nw')
+ win.bind('<Configure>',lambda e:canvas.configure(scrollregion=canvas.bbox('all')))
+ canvas.bind('<Configure>',lambda e:canvas.itemconfigure(window,width=e.width))
+ def wheel(event):
+  if event.widget.winfo_class() not in ('Treeview','Entry','TEntry','Text'):canvas.yview_scroll(-int(event.delta/120),'units')
+ root.bind_all('<MouseWheel>',wheel)
+
  ttk.Label(win,text='本地服务已启动。将配对码粘贴至 Edge 扩展；可在下方选择原图，扩展将附加到当前ChatGPT对话。').pack(pady=8)
  code=ttk.Entry(win,width=65);code.insert(0,token);code.pack()
  ttk.Label(win,text='基础货号（上架货号按变体自动加(1)、(2)…）').pack()
@@ -279,7 +289,7 @@ def main():
   except Exception as e:messagebox.showerror('未创建',str(e))
  ttk.Button(win,text='创建全部变体并自动处理',command=create).pack(pady=6)
  view=ttk.Treeview(win,columns=('sku','progress','status'),show='headings',height=8,selectmode='browse')
- for key,label,width in [('sku','变体货号',180),('progress','进度',140),('status','状态',460)]:view.heading(key,text=label);view.column(key,width=width,stretch=key=='status')
+ for key,label,width in [('sku','变体货号',180),('progress','进度',140),('status','状态',460)]:view.heading(key,text=label,anchor='center');view.column(key,width=width,stretch=key=='status',anchor='center')
  view.pack(fill='both',expand=True,padx=15)
  visible=[]
  def selected():
@@ -368,6 +378,6 @@ def main():
 
  ttk.Label(win,text='遇到 needs_attention：停止自动任务，先人工检查网页；不自动重发。图片在本工具 data/products 下。').pack()
  refresh()
- def close():http.shutdown();win.destroy()
- win.protocol('WM_DELETE_WINDOW',close);win.mainloop()
+ def close():http.shutdown();root.destroy()
+ root.protocol('WM_DELETE_WINDOW',close);root.mainloop()
 if __name__=='__main__':main()
