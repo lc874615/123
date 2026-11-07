@@ -32,15 +32,15 @@ async function run(task){
    if(stop)throw Error('已暂停；请检查网页结果');
    if(task.set_mode&&!document.querySelector('[data-testid="stop-button"]')){
     const sources=new Set();const candidates=[...document.querySelectorAll('main img')].filter(i=>{const src=i.currentSrc||i.src;if(!i.complete||i.naturalWidth<512||i.naturalHeight<512||previousImages.has(src)||sources.has(src))return false;sources.add(src);return true;});
-    if(candidates.length===8){
-     for(let index=0;index<8;index++){
+    if(candidates.length===(task.expected_images||8)){
+     for(let index=0;index<(task.expected_images||8);index++){
       if(stop)throw Error('已暂停，部分图可能已保存');
       const response=await fetch(candidates[index].currentSrc||candidates[index].src,{credentials:'include'});if(!response.ok)throw Error('图片读取失败');const blob=await response.blob();if(blob.size>20*1024*1024)throw Error('图片过大');
       const image_b64=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result.split(',')[1]);r.onerror=reject;r.readAsDataURL(blob);});
       const r=await chrome.runtime.sendMessage({kind:'set-result',task_id:task.id,index,image_b64});if(r?.error)throw Error(r.error);
      }return;
     }
-    if(candidates.length>8)throw Error('检测到超过8张新图片，顺序不明确，已暂停');
+    if(candidates.length>(task.expected_images||8))throw Error('检测到超过8张新图片，顺序不明确，已暂停');
    }
    const replies=[...document.querySelectorAll('[data-message-author-role="assistant"]')];
    if(!task.set_mode&&replies.length>before&&!document.querySelector('[data-testid="stop-button"]')){
@@ -65,7 +65,7 @@ async function recover(task){
   // Thumbnail galleries may expose only the selected full-size image. Fail clearly rather than substitute thumbnails.
   const sources=new Set();const images=all.filter(i=>{const src=i.currentSrc||i.src;if(!i.complete||i.naturalWidth<512||i.naturalHeight<512||sources.has(src))return false;sources.add(src);return true;}).slice(-8);
   if(images.length!==8)throw Error('本页未暴露8张完整图片资源，检测到'+images.length+'张；请展开图片列表后重试，不会重新生成');
-  for(let index=task.saved_count||0;index<8;index++){
+  for(let index=task.saved_count||0;index<(task.expected_images||8);index++){
    const r=await fetch(images[index].currentSrc||images[index].src,{credentials:'include'});if(!r.ok)throw Error('图片资源读取失败');const blob=await r.blob();
    const image_b64=await new Promise((resolve,reject)=>{const f=new FileReader();f.onload=()=>resolve(f.result.split(',')[1]);f.onerror=reject;f.readAsDataURL(blob);});
    const result=await chrome.runtime.sendMessage({kind:'set-result',task_id:task.id,index,image_b64});if(result?.error)throw Error(result.error);

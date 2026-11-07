@@ -54,7 +54,7 @@ class Store:
   task=self.find(tid)
   if not task.get('set_mode') or task['state'] not in ('claimed','sending','waiting'):raise ValueError('整套任务状态无效')
   received=task.setdefault('received_images',[])
-  if index!=len(received) or not 0<=index<8:raise ValueError('图片顺序错误或重复')
+  if index!=len(received) or not 0<=index<task.get('expected_images',8):raise ValueError('图片顺序错误或重复')
   data=base64.b64decode(encoded,validate=True)
   if len(data)>20*1024*1024:raise ValueError('图片过大')
   with Image.open(io.BytesIO(data)) as im:im.verify();fmt=im.format
@@ -67,6 +67,9 @@ class Store:
   folder=self.folder/'products'/task['sku']/'images';folder.mkdir(parents=True,exist_ok=True)
   path=folder/f'{TASKS[index][0]}.{ext}';path.write_bytes(data)
   received.append({'file':str(path),'sha256':digest,'role':'primary' if index==0 else 'gallery','order':index+1})
+  if task.get('gallery_source') and len(received)==1:
+   from product_group import reuse_gallery
+   reuse_gallery(folder.parent,task)
   task.update(state='saved' if len(received)==8 else 'waiting',message=f'已保存 {len(received)}/8 张独立图片');self.save()
   if len(received)==8:
    (folder.parent/'image_manifest.json').write_text(json.dumps(received,ensure_ascii=False,indent=2),encoding='utf-8')
@@ -122,6 +125,13 @@ class Store:
     from listing_bundle import prepare
     folder=self.folder/'products'/task['sku']
     if not (folder/'listing_bundle.json').exists():prepare(folder,task)
+    if task.get('copy_leader') and task['copy_leader']!=task['sku']:
+     leader_path=self.folder/'products'/task['copy_leader']/'listing_bundle.json'
+     if leader_path.exists():
+      leader=json.loads(leader_path.read_text(encoding='utf-8-sig'))
+      if leader['copy'].get('title_ru'):
+       bundle=json.loads((folder/'listing_bundle.json').read_text(encoding='utf-8-sig'));bundle['copy']={**leader['copy'],'sku':task['sku']};bundle['copy_source']=task['copy_leader'];bundle['copy_review_status']='pending_human_review';bundle['blockers']=[b for b in bundle['blockers'] if b!='俄文文案待生成'];(folder/'listing_bundle.json').write_text(json.dumps(bundle,ensure_ascii=False,indent=2),encoding='utf-8');task['copy_state']='done';self.save()
+     continue
     bundle=json.loads((folder/'listing_bundle.json').read_text(encoding='utf-8-sig'))
     if bundle['copy'].get('title_ru'):task['copy_state']='done';self.save();continue
     return task
@@ -186,6 +196,8 @@ def server(store,token,port=8765):
       sku=body['sku']
       if not valid_article(sku):raise ValueError('货号格式无效')
       value=save_copy(store.folder/'products'/sku,body['copy'])
+      from category_match import suggest
+      threading.Thread(target=suggest,args=(store.folder/'products'/sku,),daemon=True).start()
       for task in store.tasks:
        if task['sku']==sku:task.update(copy_state='done',message='8图、视频、俄文文案及草稿已完成；待定价、类目和托管')
       store.save()
@@ -231,6 +243,8 @@ def main():
       store.create_set(r['article'],r['facts'],r['references'])
       task=next(t for t in store.tasks if t['sku']==r['article'])
       task.update(base_article=r['base_article'],variant_index=r['index'],variant_parameters=r['values'])
+     from product_group import configure
+     configure(store.tasks,records[0]['base_article'])
      store.save()
     except Exception:
      store.tasks=previous;store.save();raise
@@ -300,6 +314,28 @@ def main():
    if os.name=='nt':os.startfile(str(target.parent))
   except Exception as e:messagebox.showerror('未准备',str(e))
  ttk.Button(win,text='准备所选商品上架草稿并打开文件夹',command=listing).pack(pady=4)
+ def category_editor():
+  task=selected()
+  if not task:return
+  path=DATA/'products'/task['sku']/'listing_bundle.json'
+  if not path.exists():messagebox.showerror('提示','请等待生成上架草稿');return
+  data=json.loads(path.read_text(encoding='utf-8-sig'));dialog=tk.Toplevel(win);dialog.title('类目确认/修改')
+  ttk.Label(dialog,text=data.get('category_match_status','尚未推荐；可手动填写官方类目与类型ID')).pack()
+  candidates=data.get('category_candidates',[]);choice=ttk.Combobox(dialog,values=[c['path'] for c in candidates],width=80,state='readonly');choice.pack()
+  cat=tk.StringVar(value=str(data.get('category',{}).get('description_category_id') or ''));typ=tk.StringVar(value=str(data.get('category',{}).get('type_id') or ''))
+  ttk.Label(dialog,text='类目ID（可手动修改）').pack();ttk.Entry(dialog,textvariable=cat).pack();ttk.Label(dialog,text='商品类型ID').pack();ttk.Entry(dialog,textvariable=typ).pack()
+  def pick(e):
+   c=candidates[choice.current()];cat.set(str(c['description_category_id']));typ.set(str(c['type_id']))
+  choice.bind('<<ComboboxSelected>>',pick)
+  def confirm():
+   try:
+    c=int(cat.get());t=int(typ.get())
+    if min(c,t)<=0:raise ValueError('ID须为正整数')
+    latest=json.loads(path.read_text(encoding='utf-8-sig'));latest['category']={'description_category_id':c,'type_id':t,'confirmed':True,'attributes_revalidation_required':True};path.write_text(json.dumps(latest,ensure_ascii=False,indent=2),encoding='utf-8');dialog.destroy()
+   except Exception as e:messagebox.showerror('未保存',str(e))
+  ttk.Button(dialog,text='确认此类目（发布前仍核验必填属性）',command=confirm).pack()
+ ttk.Button(win,text='确认或修改所选商品类目',command=category_editor).pack(pady=4)
+
 
 
 
