@@ -32,6 +32,26 @@
    }}
   }return null;
  }
+ function recover(doc,sku){
+  const exact=latest(doc,{sku});if(exact)return {copy:exact};
+  // An unlabelled historical response needs an explicit selection, not a guessed product binding.
+  const selectors=['[data-message-author-role="assistant"]','main article .markdown','main .markdown'];
+  const candidates=[],seen=new Set();
+  for(const sel of selectors){
+   for(const node of [...doc.querySelectorAll(sel)].reverse()){
+    for(const block of [node,...node.querySelectorAll('pre,code')]){
+     for(const text of [block.innerText,block.textContent]){
+      for(const value of parseAll(text).reverse()){
+       if(value.sku!=null)continue;
+       const key=JSON.stringify(value);if(seen.has(key))continue;seen.add(key);candidates.push(value);
+       if(candidates.length===10)return {candidates};
+      }
+     }
+    }
+   }
+  }
+  return {candidates};
+ }
  function snapshot(doc=document){const values=new Set();for(const node of doc.querySelectorAll('[data-message-author-role="assistant"],main article .markdown')){for(const text of [node.innerText,node.textContent])for(const v of parseAll(text))values.add(JSON.stringify(v));}return values;}
- globalThis.OzonCopy={parse,parseAll,latest,snapshot};
+ globalThis.OzonCopy={parse,parseAll,latest,snapshot,recover};
 })();

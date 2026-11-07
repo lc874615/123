@@ -7,7 +7,7 @@ def configure(tasks,base):
  model='M-'+secrets.token_hex(6).upper()
  all_facts='\n'.join(t['sku']+'：'+t['facts'] for t in group)
  for i,t in enumerate(group):
-  t.update(model=model,group_facts=all_facts,copy_leader=group[0]['sku'])
+  t.update(model=model,group_facts=all_facts,group_variants=[{'sku':r['sku'],'variant_parameters':r.get('variant_parameters',{}),'facts':r['facts']} for r in group],copy_leader=group[0]['sku'])
   if i:
    t['expected_images']=1;t['gallery_source']=group[0]['sku']
    t['prompt']='仅生成一张独立商品主图，3:4竖版，自然俄文，准确展示本变体颜色、规格和销售数量。严禁使用其他变体外观。当前变体：'+t['facts']

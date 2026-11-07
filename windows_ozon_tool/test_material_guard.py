@@ -19,6 +19,9 @@ class Tests(unittest.TestCase):
   data={'facts':'主体材质：纸板；配件/内衬材质：聚丙烯'}
   validate(data,{'description_ru':'Корпус — картон. Подкладка — полипропилен.'})
   with self.assertRaises(ValueError):validate(data,{'description_ru':'Корпус — полипропилен.'})
+ def test_shared_copy_all_variant_body_materials(self):
+  data=self.data();data['group_variants']=[{'variant_parameters':{'material':'纸板','accessory_material':'聚丙烯'}}]
+  validate(data,{'description_ru':'Основной материал: полипропилен или картон в зависимости от варианта.'})
  def test_saved_bundle_with_lining_can_be_saved_again(self):
   with tempfile.TemporaryDirectory() as tmp:
    folder=Path(tmp);target=folder/'listing_bundle.json';target.write_text(json.dumps(self.data()),encoding='utf-8')

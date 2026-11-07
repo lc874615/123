@@ -93,9 +93,9 @@ async function copy(task){
  }catch(e){await chrome.runtime.sendMessage({kind:'copy-failed',task_id:task.id,message:e.message});}
 }
 function extractCopy(task){
- const value=globalThis.OzonCopy.latest(document,{sku:task.sku,bindLatest:true});
- if(!value)throw Error('最后一条回复中未找到匹配货号的完整文案JSON；请展开文案或使用备用粘贴，无需重新生成');
- return {copy:value};
+ const result=globalThis.OzonCopy.recover(document,task.sku);
+ if(!result.copy&&!result.candidates?.length)throw Error('未找到可读取的完整文案JSON；请滚动到文案回复使其加载，或使用备用粘贴，无需重新生成');
+ return result;
 }
 
 chrome.runtime.onMessage.addListener((m,sender,reply)=>{if(m.kind==='copy-extract-v013'){try{reply(extractCopy(m.task));}catch(e){reply({error:e.message});}return false;}if(m.kind==='copy'){copy(m.task);reply({ok:true});return false;}if(m.kind==='recover'){recover(m.task);reply({ok:true});return false;}if(m.kind==='preflight'){reply(preflight());return false;}if(m.kind==='stop'){stop=true;reply({ok:true});}if(m.kind==='start'){run(m.task);reply({ok:true});}return false;});})();

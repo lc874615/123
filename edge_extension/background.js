@@ -31,12 +31,17 @@ chrome.runtime.onMessage.addListener((m,sender,reply)=>{(async()=>{
    await status('正在读取本页文案并保存');
    await chrome.scripting.executeScript({target:{tabId:tab.id},files:['composer.js','uploads.js','copy_parser.js','images.js','content.js']});
    const extracted=await bounded(chrome.tabs.sendMessage(tab.id,{kind:'copy-extract-v013',task:current}),10000,'网页提取超时，请刷新ChatGPT页面后重试');
+   if(extracted?.candidates?.length){
+    const message='已找到无货号文案，请在下方选择并核对后保存';
+    const copySku=current.sku;await api('/copy-failed',{sku:copySku,message});busy=false;current=null;await persist();await status(message);
+    return {status:message,sku:copySku,candidates:extracted.candidates};
+   }
    if(!extracted?.copy)throw Error(extracted?.error||'网页脚本版本未更新，请刷新ChatGPT页面后重试');
-   await api('/copy-result',{sku:m.sku,copy:extracted.copy});
+   await api('/copy-result',{sku:current.sku,copy:extracted.copy});
    busy=false;current=null;await persist();
    const message='俄文文案已保存至本地草稿，待审核';await status(message);return {status:message};
   }catch(e){
-   await api('/copy-failed',{sku:m.sku,message:e.message}).catch(()=>{});
+   await api('/copy-failed',{sku:current.sku,message:e.message}).catch(()=>{});
    busy=false;current=null;await persist();throw e;
   }
  }

@@ -20,7 +20,10 @@ def materials(data):
 
 ROLE=re.compile(r'(?P<body>корпус\w*|основн\w*\s+материал\w*|материал\s+изделия|主体材质)|(?P<accessory>подклад\w*|вставк\w*|внутренн\w*\s+сло\w*|内衬|配件)',re.I)
 def conflict(data,value):
- body,accessory=materials(data);allowed=body|accessory
+ body,accessory=materials(data)
+ for variant in data.get('group_variants',[]):
+  other_body,other_accessory=materials(variant);body|=other_body;accessory|=other_accessory
+ allowed=body|accessory
  if not allowed:return None
  text=value.get('title_ru','')+'\n'+value.get('description_ru','')
  # Unscoped mentions are valid if that material is present anywhere in the actual product.

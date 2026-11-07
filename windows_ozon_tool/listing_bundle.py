@@ -2,6 +2,10 @@
 import json,hashlib
 from pathlib import Path
 
+def copy_prompt_for(task):
+ copy_facts=task.get('group_facts') or task.get('facts','')
+ return '以下为同一商品全部变体，标题、简介和标签统一一套。标题以全组共同商品名称、用途和共同卖点为主，不得只写某一个变体的颜色或尺寸。简介完整覆盖全部变体，颜色、尺寸、材质和套装数量差异按选项分别说明，明确购买时选择一个变体，不得写成所有颜色或规格一并发货。标签统一覆盖全组真实用途和变体相关长尾词，不得重复堆砌。根据以下商品事实生成俄文Ozon标题、简介和标签。自然覆盖相关长尾词，禁止重复堆词和编造承重、认证、功能、品牌。品牌固定无品牌（Нет бренда），不要将品牌列为缺失项。严格区分主体材质和配件/内衬材质，例如主体为聚丙烯而内衬为纸板时，两者均可描述，但不得将纸板写成主体材质。未知部件材质不得推测。未知留空。只输出JSON：title_ru、description_ru、tags_ru数组、missing_facts数组。商品事实：'+copy_facts
+
 def prepare(folder,task):
  folder=Path(folder);manifest=folder/'image_manifest.json'
  if not manifest.exists():raise ValueError('未找到8图清单')
@@ -19,9 +23,9 @@ def prepare(folder,task):
   checked.append({'order':row['order'],'role':'primary' if row['order']==1 else 'gallery','local_file':'images/'+path.name,'sha256':digest,'https_url':None})
  facts=task.get('facts') or task.get('prompt','').split('商品事实：')[-1]
  copy_facts=task.get('group_facts',facts)
- copy_prompt='以下为同一商品全部变体，标题、简介和标签统一一套。只描述共同属性，差异按选项分别说明，不要把某一颜色或尺寸当作全部规格。根据以下商品事实生成俄文Ozon标题、简介和标签。自然覆盖相关长尾词，禁止重复堆词和编造承重、认证、功能、品牌。品牌固定无品牌（Нет бренда），不要将品牌列为缺失项。严格区分主体材质和配件/内衬材质，例如主体为聚丙烯而内衬为纸板时，两者均可描述，但不得将纸板写成主体材质。未知部件材质不得推测。未知留空。只输出JSON：title_ru、description_ru、tags_ru数组、missing_facts数组。商品事实：'+copy_facts
+ copy_prompt=copy_prompt_for(task)
  (folder/'copy_prompt.txt').write_text(copy_prompt,encoding='utf-8')
- bundle={'sku':task['sku'],'offer_id':task['sku'],'base_article':task.get('base_article',task['sku']),'model':task.get('model'),'variant_index':task.get('variant_index'),'variant_parameters':task.get('variant_parameters',{}),'brand':'Нет бренда','stock':int(task.get('variant_parameters',{}).get('stock','1000')),'facts':facts,'images':checked,'video':{'local_file':'video/product_8s.mp4','exists':(folder/'video'/'product_8s.mp4').exists(),'https_url':None},'copy':{'title_ru':None,'description_ru':None,'tags_ru':[]},'category':{'description_category_id':None,'type_id':None},'price_cny':None,'status':'draft','blockers':['俄文文案待生成','类目及必填属性待匹配','实际定价待核验','图片HTTPS托管未配置']}
+ bundle={'sku':task['sku'],'offer_id':task['sku'],'base_article':task.get('base_article',task['sku']),'model':task.get('model'),'variant_index':task.get('variant_index'),'variant_parameters':task.get('variant_parameters',{}),'brand':'Нет бренда','stock':int(task.get('variant_parameters',{}).get('stock','1000')),'facts':facts,'group_facts':task.get('group_facts',facts),'group_variants':task.get('group_variants',[]),'images':checked,'video':{'local_file':'video/product_8s.mp4','exists':(folder/'video'/'product_8s.mp4').exists(),'https_url':None},'copy':{'title_ru':None,'description_ru':None,'tags_ru':[]},'category':{'description_category_id':None,'type_id':None},'price_cny':None,'status':'draft','blockers':['俄文文案待生成','类目及必填属性待匹配','实际定价待核验','图片HTTPS托管未配置']}
  target=folder/'listing_bundle.json'
  if target.exists():raise ValueError('上架草稿已存在，保留已有编辑，未覆盖')
  target.write_text(json.dumps(bundle,ensure_ascii=False,indent=2),encoding='utf-8');return target

@@ -186,12 +186,21 @@ def server(store,token,port=8765):
      elif self.path=='/copy-task':
       sku=body['sku']
       if not valid_article(sku):raise ValueError('货号格式无效')
+      selected=next((t for t in store.tasks if t['sku']==sku),None)
+      if not selected:raise ValueError('货号不存在')
+      sku=selected.get('copy_leader',sku)
+      group=[t for t in store.tasks if t.get('copy_leader',t['sku'])==sku]
+      context={'group_facts':'\n'.join(t['sku']+'：'+t['facts'] for t in group),'group_variants':[{'sku':t['sku'],'facts':t['facts'],'variant_parameters':t.get('variant_parameters',{})} for t in group]}
       folder=store.folder/'products'/sku
       if not (folder/'listing_bundle.json').exists():raise ValueError('请先在本地准备上架草稿')
+      from listing_bundle import copy_prompt_for
+      (folder/'copy_prompt.txt').write_text(copy_prompt_for(context),encoding='utf-8')
+      bundle_path=folder/'listing_bundle.json';bundle=json.loads(bundle_path.read_text(encoding='utf-8-sig'));bundle.update(context)
+      temp=bundle_path.with_suffix('.tmp');temp.write_text(json.dumps(bundle,ensure_ascii=False,indent=2),encoding='utf-8');temp.replace(bundle_path)
       for task in store.tasks:
        if task['sku']==sku:task['copy_state']='running'
       store.save()
-      value={'id':'copy:'+sku,'sku':sku,'prompt':'本次变体货号：'+sku+'。只依据下列当前资料，不得沿用历史商品材质。主体材质与配件/内衬材质分别对应，不得混写，也不要因内衬含纸板就把主体写成纸板。输出JSON必须额外包含sku字段，值为'+sku+'。'+(folder/'copy_prompt.txt').read_text(encoding='utf-8')}
+      value={'id':'copy:'+sku,'sku':sku,'prompt':'本次商品组文案保存货号：'+sku+'。只依据下列当前资料，不得沿用历史商品材质。主体材质与配件/内衬材质分别对应，不得混写，也不要因内衬含纸板就把主体写成纸板。输出JSON必须额外包含sku字段，值为'+sku+'。'+(folder/'copy_prompt.txt').read_text(encoding='utf-8')}
      elif self.path=='/copy-failed':
       sku=body['sku']
       for task in store.tasks:
@@ -224,7 +233,7 @@ def main():
  import tkinter as tk
  from tkinter import ttk,messagebox,filedialog
  store=Store(DATA);token=secrets.token_urlsafe(32);http=server(store,token);threading.Thread(target=http.serve_forever,daemon=True).start()
- root=tk.Tk();root.title('Ozon Edge 本地服务 v0.14');root.geometry('1120x850')
+ root=tk.Tk();root.title('Ozon Edge 本地服务 v0.15');root.geometry('1120x850')
  shell=ttk.Frame(root);shell.pack(fill='both',expand=True);shell.rowconfigure(0,weight=1);shell.columnconfigure(0,weight=1)
  canvas=tk.Canvas(shell,highlightthickness=0);canvas.grid(row=0,column=0,sticky='nsew')
  outer_scroll=ttk.Scrollbar(shell,orient='vertical',command=canvas.yview);outer_scroll.grid(row=0,column=1,sticky='ns');canvas.configure(yscrollcommand=outer_scroll.set)

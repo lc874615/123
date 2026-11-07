@@ -15,3 +15,6 @@ test('old page script gives explicit refresh error and releases task',async()=>{
 test('local validation failure is returned to panel',async()=>{
  const r=await run({copy:{}},{saveError:'材质冲突'});assert.equal(r.response.error,'材质冲突');assert.equal(r.state.status,'材质冲突');assert.equal(r.state.activeTask,undefined);
 });
+test('unlabelled copy candidates return for explicit confirmation without saving',async()=>{
+ const r=await run({candidates:[{title_ru:'Корзина'}]});assert.match(r.response.status,/选择/);assert.equal(r.response.candidates.length,1);assert.equal(r.state.activeTask,undefined);assert.ok(!r.calls.some(x=>x.endsWith('/copy-result')));
+});
