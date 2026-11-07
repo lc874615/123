@@ -10,6 +10,17 @@ chrome.runtime.onMessage.addListener((m,sender,reply)=>{(async()=>{
   const tab=await chrome.tabs.get(m.tabId);if(!tab.url||new URL(tab.url).origin!=='https://chatgpt.com')throw Error('请先打开ChatGPT商品对话');
   await chrome.storage.local.set({autoTab:tab.id,autoEnabled:true});await chrome.alarms.create('ozon-poll',{periodInMinutes:0.5});await status('自动批次已启用：本地创建商品后将自动开始。');setTimeout(poll,100);return {status:'已绑定，等待本地任务'};
  }
+ if(m.kind==='copy'){
+  if(busy)throw Error('请先完成或停止当前作图任务');
+  const tab=await chrome.tabs.get(m.tabId);if(!tab.url||new URL(tab.url).origin!=='https://chatgpt.com')throw Error('请打开商品ChatGPT对话');
+  current=await api('/copy-task',{sku:m.sku});runTab=tab.id;busy=true;await persist();
+  await chrome.scripting.executeScript({target:{tabId:tab.id},files:['composer.js','uploads.js','content.js']});await chrome.tabs.sendMessage(tab.id,{kind:'copy',task:current});return {status:'正在生成俄文文案'};
+ }
+ if(m.kind==='copy-failed'){if(sender.tab?.id!==runTab||!current||m.task_id!==current.id)throw Error('任务不匹配');busy=false;current=null;await persist();await status(m.message);return {ok:true};}
+ if(m.kind==='copy-result'){
+  if(sender.tab?.id!==runTab||!current||m.task_id!==current.id)throw Error('文案任务不匹配');
+  await api('/copy-result',{sku:current.id.slice(5),copy:m.copy});busy=false;current=null;await persist();await status('俄文文案已保存至本地草稿，待审核');return {ok:true};
+ }
  if(m.kind==='recover'){
   const tab=await chrome.tabs.get(m.tabId);if(!tab.url||new URL(tab.url).origin!=='https://chatgpt.com')throw Error('请打开已生成图片的商品对话');
   current=await api('/recover',{sku:m.sku});runTab=tab.id;busy=true;await persist();

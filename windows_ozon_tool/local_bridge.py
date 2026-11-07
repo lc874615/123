@@ -151,6 +151,17 @@ def server(store,token,port=8765):
      if self.path=='/poll':
       active=any(t['state'] in ('claimed','sending','waiting','needs_attention','review') for t in store.tasks)
       value={'ready':not active and any(t['state']=='queued' and t.get('auto_batch') for t in store.tasks)}
+     elif self.path=='/copy-task':
+      sku=body['sku']
+      if not re.fullmatch(r'[\w-]{1,80}',sku):raise ValueError('SKU格式无效')
+      folder=store.folder/'products'/sku
+      if not (folder/'listing_bundle.json').exists():raise ValueError('请先在本地准备上架草稿')
+      value={'id':'copy:'+sku,'prompt':(folder/'copy_prompt.txt').read_text(encoding='utf-8')}
+     elif self.path=='/copy-result':
+      from listing_bundle import save_copy
+      sku=body['sku']
+      if not re.fullmatch(r'[\w-]{1,80}',sku):raise ValueError('SKU格式无效')
+      value=save_copy(store.folder/'products'/sku,body['copy'])
      elif self.path=='/recover':value=store.recover(body['sku'])
      elif self.path=='/claim':value=store.claim()
      elif self.path=='/set-result':value=store.set_result(body['task_id'],body['index'],body['image_b64'])

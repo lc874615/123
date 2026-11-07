@@ -72,4 +72,21 @@ async function recover(task){
   }
  }catch(e){await tell(task,'needs_attention',e.message).catch(()=>{});}
 }
-chrome.runtime.onMessage.addListener((m,sender,reply)=>{if(m.kind==='recover'){recover(m.task);reply({ok:true});return false;}if(m.kind==='preflight'){reply(preflight());return false;}if(m.kind==='stop'){stop=true;reply({ok:true});}if(m.kind==='start'){run(m.task);reply({ok:true});}return false;});})();
+async function copy(task){
+ try{
+  const editor=findEditor();if(!editor)throw Error('未找到输入框');
+  if(editor.textContent.trim()||editor.value?.trim())throw Error('输入框已有内容，未覆盖');
+  const before=document.querySelectorAll('[data-message-author-role="assistant"]').length;
+  editor.focus();if(editor instanceof HTMLTextAreaElement){Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(editor,task.prompt);editor.dispatchEvent(new Event('input',{bubbles:true}));}else document.execCommand('insertText',false,task.prompt);
+  await sleep(1000);const button=globalThis.OzonComposer.findSend(editor);if(!button)throw Error('未找到可用发送按钮');button.click();
+  const until=Date.now()+180000;
+  while(Date.now()<until){
+   await sleep(1000);const replies=[...document.querySelectorAll('[data-message-author-role="assistant"]')];
+   if(replies.length>before&&!document.querySelector('[data-testid="stop-button"]')){
+    const text=replies.at(-1).innerText;const a=text.indexOf('{'),b=text.lastIndexOf('}');
+    if(a>=0&&b>a){try{const value=JSON.parse(text.slice(a,b+1));if(value.title_ru&&value.description_ru&&Array.isArray(value.tags_ru)&&Array.isArray(value.missing_facts)){const r=await chrome.runtime.sendMessage({kind:'copy-result',task_id:task.id,copy:value});if(r?.error)throw Error(r.error);return;}}catch(e){if(e.name!=='SyntaxError')throw e;}}
+   }
+  }throw Error('文案生成超时或JSON无效，未自动重发');
+ }catch(e){await chrome.runtime.sendMessage({kind:'copy-failed',task_id:task.id,message:e.message});}
+}
+chrome.runtime.onMessage.addListener((m,sender,reply)=>{if(m.kind==='copy'){copy(m.task);reply({ok:true});return false;}if(m.kind==='recover'){recover(m.task);reply({ok:true});return false;}if(m.kind==='preflight'){reply(preflight());return false;}if(m.kind==='stop'){stop=true;reply({ok:true});}if(m.kind==='start'){run(m.task);reply({ok:true});}return false;});})();

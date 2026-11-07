@@ -24,3 +24,16 @@ def prepare(folder,task):
  target=folder/'listing_bundle.json'
  if target.exists():raise ValueError('上架草稿已存在，保留已有编辑，未覆盖')
  target.write_text(json.dumps(bundle,ensure_ascii=False,indent=2),encoding='utf-8');return target
+
+def save_copy(folder,value):
+ folder=Path(folder);target=folder/'listing_bundle.json'
+ data=json.loads(target.read_text(encoding='utf-8-sig'))
+ for key in ('title_ru','description_ru'):
+  if not isinstance(value.get(key),str) or not value[key].strip():raise ValueError('文案字段无效 '+key)
+ for key in ('tags_ru','missing_facts'):
+  if not isinstance(value.get(key),list) or any(not isinstance(t,str) for t in value[key]):raise ValueError('文案列表无效 '+key)
+ if len(value['title_ru'])>500 or len(value['description_ru'])>20000 or len(value['tags_ru'])>50:raise ValueError('文案超出本地校验上限')
+ if data['copy'].get('title_ru'):raise ValueError('文案已有内容，不自动覆盖')
+ data['copy']=value;data['copy_review_status']='pending_human_review';data['blockers']=[x for x in data['blockers'] if x!='俄文文案待生成']
+ tmp=target.with_suffix('.tmp');tmp.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding='utf-8');tmp.replace(target)
+ return {'saved':True,'review_status':'pending_human_review'}
