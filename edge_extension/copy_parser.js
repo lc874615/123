@@ -13,8 +13,8 @@
   }return null;
  }
  function latest(doc=document){
-  const selectors=['[data-message-author-role="assistant"]','main article .markdown','main .markdown','main article'];
-  for(const sel of selectors){const nodes=[...doc.querySelectorAll(sel)];for(let i=nodes.length-1;i>=0;i--){const v=parse(nodes[i].innerText||nodes[i].textContent);if(v)return v;}}
+  const selectors=['[data-message-author-role="assistant"]','main article .markdown','main .markdown','main article','[data-testid^="conversation-turn"]','[role="main"]','main'];
+  for(const sel of selectors){const nodes=[...doc.querySelectorAll(sel)];for(let i=nodes.length-1;i>=0;i--){const node=nodes[i];const blocks=[...node.querySelectorAll('pre,code')].reverse();for(const b of [node,...blocks]){for(const text of [b.innerText,b.textContent]){const v=parse(text);if(v)return v;}}}}
   return null;
  }
  globalThis.OzonCopy={parse,latest};

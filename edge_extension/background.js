@@ -16,6 +16,12 @@ chrome.runtime.onMessage.addListener((m,sender,reply)=>{(async()=>{
   current=await api('/copy-task',{sku:m.sku});runTab=tab.id;busy=true;await persist();
   await chrome.scripting.executeScript({target:{tabId:tab.id},files:['composer.js','uploads.js','copy_parser.js','content.js']});await chrome.tabs.sendMessage(tab.id,{kind:'copy',task:current});return {status:'正在生成俄文文案'};
  }
+ if(m.kind==='copy-paste'){
+  if(sender.tab)throw Error('只能从扩展面板提交粘贴文案');
+  await api('/copy-result',{sku:m.sku,copy:m.copy});
+  if(current?.id==='copy:'+m.sku){busy=false;current=null;await persist();}
+  await status('文案已保存至本地草稿，待审核');return {status:'文案已保存至本地草稿，待审核'};
+ }
  if(m.kind==='copy-recover'){
   const tab=await chrome.tabs.get(m.tabId);if(!tab.url||new URL(tab.url).origin!=='https://chatgpt.com')throw Error('请打开含现有文案的ChatGPT商品对话');
   if(current&&current.id!=='copy:'+m.sku)throw Error('另一个任务尚未完成，请先停止');

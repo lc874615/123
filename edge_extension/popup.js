@@ -10,3 +10,5 @@ document.querySelector('#recover').onclick=async()=>{const [tab]=await chrome.ta
 document.querySelector('#copy').onclick=async()=>{const [tab]=await chrome.tabs.query({active:true,currentWindow:true});const r=await chrome.runtime.sendMessage({kind:'copy',tabId:tab.id,sku:document.querySelector('#sku').value.trim()});status.textContent=r.error||r.status;};
 
 document.querySelector('#copy-recover').onclick=async()=>{const [tab]=await chrome.tabs.query({active:true,currentWindow:true});const r=await chrome.runtime.sendMessage({kind:'copy-recover',tabId:tab.id,sku:document.querySelector('#sku').value.trim()});status.textContent=r.error||r.status;};
+
+document.querySelector('#copy-paste').onclick=async()=>{try{const copy=globalThis.OzonCopy.parse(document.querySelector('#copy-json').value);if(!copy)throw Error('JSON不完整或缺少标题、简介、标签、缺失参数字段');const r=await chrome.runtime.sendMessage({kind:'copy-paste',sku:document.querySelector('#sku').value.trim(),copy});status.textContent=r.error||r.status;}catch(e){status.textContent=e.message;}};
