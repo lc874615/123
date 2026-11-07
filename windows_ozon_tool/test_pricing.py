@@ -59,6 +59,45 @@ class PricingTests(unittest.TestCase):
    path=Path(tmp)/'products'/'TEST'/'listing_bundle.json';write(path,self.bundle());service.calculate_all()
    (service.root/'fx.json').unlink();service.calculate_all()
    self.assertIsNone(read(path)['price_cny']);self.assertIn('自动定价未完成',read(path)['blockers'])
+ def test_missing_sources_then_import_recovers_null_estimate(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   service=PricingService(tmp)
+   for name in ('FIRST','SECOND'):
+    path=Path(tmp)/'products'/name/'listing_bundle.json';write(path,self.bundle())
+   service.calculate_all()
+   self.assertIsNone(read(path)['auto_pricing'])
+   for name,value in self.configs().items():write(service.root/(name+'.json'),value)
+   service.calculate_all()
+   for name in ('FIRST','SECOND'):
+    saved=read(Path(tmp)/'products'/name/'listing_bundle.json')
+    self.assertIsNotNone(saved['price_cny']);self.assertIsNotNone(saved['auto_pricing'])
+ def test_null_category_and_parameters_stay_pending(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   service=PricingService(tmp)
+   for name,value in self.configs().items():write(service.root/(name+'.json'),value)
+   path=Path(tmp)/'products'/'OLD'/'listing_bundle.json'
+   value=self.bundle();value.update(category=None,variant_parameters=None,auto_pricing=None,blockers=None);write(path,value)
+   service.calculate_all();self.assertIn('等待匹配',read(path)['pricing_status'])
+   good=Path(tmp)/'products'/'NEW'/'listing_bundle.json';write(good,self.bundle());service.calculate_all()
+   self.assertIsNotNone(read(good)['price_cny'])
+ def test_one_bad_legacy_estimate_does_not_block_other_variants(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   service=PricingService(tmp)
+   for name,value in self.configs().items():write(service.root/(name+'.json'),value)
+   bad=Path(tmp)/'products'/'BAD'/'listing_bundle.json'
+   value=self.bundle();value['auto_pricing']=[];write(bad,value)
+   good=Path(tmp)/'products'/'GOOD'/'listing_bundle.json';write(good,self.bundle())
+   service.calculate_all()
+   self.assertIsNotNone(read(good)['price_cny']);self.assertIn('BAD',service.status)
+   self.assertEqual(read(bad)['auto_pricing'],[])
+ def test_manual_price_with_null_estimate_preserved_on_recovery(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   service=PricingService(tmp)
+   for name,value in self.configs().items():write(service.root/(name+'.json'),value)
+   path=Path(tmp)/'products'/'MANUAL'/'listing_bundle.json'
+   value=self.bundle();value.update(auto_pricing=None,price_cny='999');write(path,value)
+   service.calculate_all();saved=read(path)
+   self.assertEqual(saved['price_cny'],'999');self.assertIsNotNone(saved['auto_pricing'])
  def test_no_unverified_commission_fallback(self):
   with tempfile.TemporaryDirectory() as tmp:
    bundle=self.bundle();bundle['category']['name']='unknown'

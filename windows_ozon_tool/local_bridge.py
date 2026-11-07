@@ -411,7 +411,7 @@ def main():
  import tkinter as tk
  from tkinter import ttk,messagebox,filedialog
  store=Store(DATA);token=secrets.token_urlsafe(32);http=server(store,token);threading.Thread(target=http.serve_forever,daemon=True).start()
- root=tk.Tk();root.title('Ozon Edge 本地服务 v0.26.1');root.geometry('1120x850')
+ root=tk.Tk();root.title('Ozon Edge 本地服务 v0.26.2');root.geometry('1120x850')
  shell=ttk.Frame(root);shell.pack(fill='both',expand=True);shell.rowconfigure(0,weight=1);shell.columnconfigure(0,weight=1)
  canvas=tk.Canvas(shell,highlightthickness=0);canvas.grid(row=0,column=0,sticky='nsew')
  outer_scroll=ttk.Scrollbar(shell,orient='vertical',command=canvas.yview);outer_scroll.grid(row=0,column=1,sticky='ns');canvas.configure(yscrollcommand=outer_scroll.set)
@@ -454,8 +454,13 @@ def main():
    info.insert('end','\nOGL边界已确认按表中文字：重量及货值按文字，三边之和含上限。\n售价单位人民币；利润率=净利润/售价。每套成本不乘套装件数。\n计入rFBS佣金、OGL运输、贴单1元、尾程2.2%、提现1.2%、收单2%。\n央行汇率仅作参考；显示的售价为估算，提交上架前确认。\n内置佣金下载为2025-12-01版本；如有更新，请导入新的官方表。')
   def run(action):
    def work():
-    try:action();pricing.calculate_all();root.after(0,show)
-    except Exception as e:root.after(0,lambda text=str(e):messagebox.showerror('定价来源更新失败',text,parent=dialog))
+    try:action()
+    except Exception as e:
+     root.after(0,lambda text=str(e):messagebox.showerror('定价来源更新失败',text,parent=dialog));return
+    # The source is already saved. Refresh it even if a product cannot be priced.
+    root.after(0,show)
+    try:pricing.calculate_all()
+    except Exception as e:root.after(0,lambda text=str(e):messagebox.showerror('来源已保存，商品定价未完成',text,parent=dialog))
    threading.Thread(target=work,daemon=True).start()
   def choose(kind):
    path=filedialog.askopenfilename(parent=dialog,title='导入'+kind,filetypes=[('Excel','*.xlsx')])

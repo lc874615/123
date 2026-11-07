@@ -70,7 +70,7 @@ class PricingService:
   with self.source_lock:
    path=self.root/'type_mapping.json';value=read(path) if path.exists() else {};value[str(type_id)]=type_name;write(path,value)
  def quote(self,bundle,configs,mapping):
-  params=bundle.get('variant_parameters',{});category=bundle.get('category',{})
+  params=bundle.get('variant_parameters') or {};category=bundle.get('category') or {}
   if not category.get('type_id'):raise ValueError('等待匹配商品类目/类型')
   name=mapping.get(str(category['type_id'])) or category.get('name','')
   bands=select_commission(configs['commissions'],name)
@@ -89,10 +89,11 @@ class PricingService:
  def _calculate_all(self):
   try:configs,mapping=self.sources();source_error=None
   except Exception as exc:configs=None;mapping={};source_error=str(exc)
-  done=0;pending=0
+  done=0;pending=0;failures=[]
   for path in (self.data/'products').glob('*/listing_bundle.json'):
    try:
     with self.lock:bundle=read(path)
+    if not isinstance(bundle,dict):raise ValueError('商品草稿必须是JSON对象')
     inputs={k:bundle.get(k) for k in ('variant_parameters','category')}
     fingerprint=hashlib.sha256(json.dumps([inputs,configs,mapping,source_error],sort_keys=True,default=str).encode()).hexdigest()
     if bundle.get('pricing_fingerprint')==fingerprint:continue
@@ -104,18 +105,21 @@ class PricingService:
      latest=read(path)
      if {k:latest.get(k) for k in inputs}!=inputs:continue
      # A manually edited price is preserved; automatic estimates are separately retained.
-     prior=latest.get('auto_pricing',{}).get('price_cny')
+     previous=latest.get('auto_pricing')
+     if previous is not None and not isinstance(previous,dict):raise ValueError('历史估价格式异常，请检查该商品草稿')
+     prior=(previous or {}).get('price_cny')
      manual=latest.get('price_cny') is not None and str(latest['price_cny'])!=str(prior)
      latest.update(pricing_fingerprint=fingerprint,pricing_status=error or ('自动估算，类目待确认' if not result['category_confirmed'] else '自动估算完成，待上架确认'))
      latest['auto_pricing']=result
      latest.pop('pricing_confirmed_fingerprint',None)
      if not manual:latest['price_cny']=result['price_cny'] if result else None
-     blockers=[x for x in latest.get('blockers',[]) if x not in ('实际定价待核验','自动定价未完成','售价估算待确认')]
+     blockers=[x for x in (latest.get('blockers') or []) if x not in ('实际定价待核验','自动定价未完成','售价估算待确认')]
      blockers.append('售价估算待确认' if result else '自动定价未完成');latest['blockers']=blockers
      write(path,latest)
     done+=bool(result);pending+=not bool(result)
-   except (OSError,ValueError) as exc:self.status='定价更新失败：'+str(exc)
-  if done or pending:self.status=f'本轮定价完成 {done}，待补充 {pending}'
+   except (OSError,ValueError,TypeError,KeyError,AttributeError) as exc:failures.append(path.parent.name+'：'+str(exc))
+  if failures:self.status=f'本轮定价完成 {done}，待补充 {pending}；失败 {len(failures)}：'+failures[0][:160]
+  elif done or pending:self.status=f'本轮定价完成 {done}，待补充 {pending}'
  def worker(self,stop):
   while not stop.is_set():
    try:
