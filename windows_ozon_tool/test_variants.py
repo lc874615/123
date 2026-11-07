@@ -12,4 +12,11 @@ class Tests(unittest.TestCase):
    with self.assertRaises(ValueError):facts({'name':'test','margin':value})
  def test_no_invented_unknown(self):
   text=facts({'name':'test','material':'steel'});self.assertNotIn('净重',text);self.assertIn('品牌：无品牌',text)
+ def test_column_bulk_fill(self):
+  from variants import column_updates
+  self.assertEqual(column_updates('中国',3),['中国']*3)
+  self.assertEqual(column_updates('红\n蓝\n绿',3),['红','蓝','绿'])
+  self.assertEqual(column_updates('',2),['',''])
+  with self.assertRaises(ValueError):column_updates('红\n蓝',3)
+  with self.assertRaises(ValueError):column_updates('红\t蓝',2)
 if __name__=='__main__':unittest.main()

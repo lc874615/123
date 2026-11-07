@@ -26,6 +26,15 @@ def facts(values):
  if not values.get('name','').strip():raise ValueError('请填写商品名称/用途')
  return '；'.join(parts)+'；品牌：无品牌'
 
+def column_updates(text,count):
+ if count<1:raise ValueError('请先增加或选中变体')
+ if '\t' in text:raise ValueError('此窗口只填写一列，请勿粘贴多列数据')
+ values=text.split('\n')
+ values=[v.rstrip('\r').strip() for v in values]
+ if len(values)==1:return values*count
+ if len(values)!=count:raise ValueError(f'输入{len(values)}行，但目标有{count}个变体；未修改任何数据')
+ return values
+
 class VariantGrid:
  def __init__(self,parent,base):
   import tkinter as tk
@@ -38,7 +47,7 @@ class VariantGrid:
   holder=ttk.Frame(self.frame);holder.pack(fill='both',expand=True);holder.rowconfigure(0,weight=1);holder.columnconfigure(0,weight=1)
   self.tree=ttk.Treeview(holder,columns=('index','article','refs')+tuple(k for k,_,_ in FIELDS),show='tree headings',height=6,selectmode='extended')
   self.tree.heading('#0',text='主图');self.tree.column('#0',width=85,stretch=False,anchor='center')
-  for key,title,width in [('index','序号',55),('article','货号',160),('refs','主图参考',95)]+[(k,label,170 if k in ('name','extra') else 125) for k,label,_ in FIELDS]:self.tree.heading(key,text=title,anchor='center');self.tree.column(key,width=width,stretch=False,anchor='center')
+  for key,title,width in [('index','序号',55),('article','货号',160),('refs','主图参考',95)]+[(k,label,170 if k in ('name','extra') else 125) for k,label,_ in FIELDS]:self.tree.heading(key,text=title+(' ▾批量' if key in {k for k,_,_ in FIELDS} else ''),anchor='center',command=(lambda k=key:self.bulk_column(k)) if key in {k for k,_,_ in FIELDS} else (lambda:None));self.tree.column(key,width=width,stretch=False,anchor='center')
   self.tree.grid(row=0,column=0,sticky='nsew');sx=ttk.Scrollbar(holder,orient='horizontal',command=self.tree.xview);sx.grid(row=1,column=0,sticky='ew');sy=ttk.Scrollbar(holder,orient='vertical',command=self.tree.yview);sy.grid(row=0,column=1,sticky='ns');self.tree.configure(xscrollcommand=sx.set,yscrollcommand=sy.set)
   ttk.Style().configure('Variants.Treeview',rowheight=58);self.tree.configure(style='Variants.Treeview')
   self.tree.bind('<Button-1>',self.image_click);self.tree.bind('<Double-1>',self.edit);self.tree.bind('<ButtonRelease-1>',self.track);self.tree.bind('<Control-v>',lambda e:self.paste());self.base.trace_add('write',lambda *_:self.refresh());self.add()
@@ -124,6 +133,25 @@ class VariantGrid:
   if len(targets)<2:targets=self.rows
   for row in targets:row['values'][key]=source['values'][key]
   self.refresh()
+ def bulk_column(self,key):
+  self.commit()
+  from tkinter import messagebox
+  label=next(title for k,title,_ in FIELDS if k==key)
+  dialog=self.tk.Toplevel(self.frame);dialog.title('批量填写：'+label);dialog.geometry('460x440')
+  scope=self.tk.StringVar(value='all')
+  self.ttk.Label(dialog,text='当前列：'+label).pack(pady=8)
+  self.ttk.Radiobutton(dialog,text='全部变体',variable=scope,value='all').pack(anchor='w',padx=18)
+  self.ttk.Radiobutton(dialog,text='仅选中变体（按表格顺序）',variable=scope,value='selected').pack(anchor='w',padx=18)
+  self.ttk.Label(dialog,text='输入一行：统一填写；输入多行：逐行对应变体。\n留空并应用可清空该列。').pack(pady=6)
+  text=self.tk.Text(dialog,height=10);text.pack(fill='both',expand=True,padx=14)
+  def apply():
+   targets=self.rows if scope.get()=='all' else self.selected()
+   try:
+    updates=column_updates(text.get('1.0','end-1c'),len(targets))
+    for row,value in zip(targets,updates):row['values'][key]=value
+    self.refresh();dialog.destroy()
+   except ValueError as e:messagebox.showerror('未应用',str(e),parent=dialog)
+  self.ttk.Button(dialog,text='应用到本列',command=apply).pack(pady=10)
  def paste(self):
   from tkinter import messagebox
   self.commit()
