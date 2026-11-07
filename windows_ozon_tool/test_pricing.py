@@ -77,7 +77,7 @@ class PricingTests(unittest.TestCase):
    for name,value in self.configs().items():write(service.root/(name+'.json'),value)
    path=Path(tmp)/'products'/'OLD'/'listing_bundle.json'
    value=self.bundle();value.update(category=None,variant_parameters=None,auto_pricing=None,blockers=None);write(path,value)
-   service.calculate_all();self.assertIn('等待匹配',read(path)['pricing_status'])
+   service.calculate_all();self.assertIn('尚未匹配',read(path)['pricing_status'])
    good=Path(tmp)/'products'/'NEW'/'listing_bundle.json';write(good,self.bundle());service.calculate_all()
    self.assertIsNotNone(read(good)['price_cny'])
  def test_one_bad_legacy_estimate_does_not_block_other_variants(self):
@@ -98,6 +98,17 @@ class PricingTests(unittest.TestCase):
    value=self.bundle();value.update(auto_pricing=None,price_cny='999');write(path,value)
    service.calculate_all();saved=read(path)
    self.assertEqual(saved['price_cny'],'999');self.assertIsNotNone(saved['auto_pricing'])
+ def test_selected_commission_row_disambiguates_same_type(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   service=PricingService(tmp);config=self.configs()
+   config['commissions']['records'].append({'type_ru':'test','brand':'All','rates':['.2','.2','.2'],'source_row':4})
+   mapping={'123':{'type_name':'test','source_row':4,'commission_sha256':'test'}}
+   result=service.quote(self.bundle(),config,mapping)
+   self.assertEqual(result['commission_rate'],'0.2');self.assertIn('4',result['commission_source'])
+ def test_changed_commission_workbook_invalidates_selected_row(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   mapping={'123':{'type_name':'test','source_row':3,'commission_sha256':'old'}}
+   with self.assertRaisesRegex(ValueError,'佣金表已更新'):PricingService(tmp).quote(self.bundle(),self.configs(),mapping)
  def test_no_unverified_commission_fallback(self):
   with tempfile.TemporaryDirectory() as tmp:
    bundle=self.bundle();bundle['category']['name']='unknown'

@@ -66,14 +66,18 @@ class PricingService:
   date=dt.date.fromisoformat(configs['fx']['date'])
   if not 0<=(dt.datetime.now(dt.timezone.utc).date()-date).days<=7:raise ValueError('央行汇率超过7天，请更新后定价')
   return configs,overrides
- def map_type(self,type_id,type_name):
+ def map_type(self,type_id,type_name,source_row=None,commission_sha256=None):
   with self.source_lock:
-   path=self.root/'type_mapping.json';value=read(path) if path.exists() else {};value[str(type_id)]=type_name;write(path,value)
+   path=self.root/'type_mapping.json';value=read(path) if path.exists() else {};value[str(type_id)]={'type_name':type_name,'source_row':source_row,'commission_sha256':commission_sha256} if source_row is not None else type_name;write(path,value)
  def quote(self,bundle,configs,mapping):
   params=bundle.get('variant_parameters') or {};category=bundle.get('category') or {}
-  if not category.get('type_id'):raise ValueError('等待匹配商品类目/类型')
-  name=mapping.get(str(category['type_id'])) or category.get('name','')
-  bands=select_commission(configs['commissions'],name)
+  if not category.get('type_id'):raise ValueError('尚未匹配商品类目/类型：'+bundle.get('category_match_status','请连接Ozon API重新匹配，或打开类目窗口选择') )
+  selected=mapping.get(str(category['type_id']))
+  if isinstance(selected,dict):
+   if selected.get('commission_sha256')!=configs['commissions']['sha256']:raise ValueError('佣金表已更新，请重新确认中文列表中对应的佣金类型')
+   name=selected['type_name'];record=selected['source_row']
+  else:name=selected or category.get('name','');record=None
+  bands=select_commission(configs['commissions'],name,record)
   required=('cost','margin','pack_weight','pack_length','pack_width','pack_height')
   if any(not str(params.get(k,'')).strip() for k in required):raise ValueError('请完整填写每套成本、目标利润率、包装重量及三边')
   package=Package(*(params[k] for k in ('pack_weight','pack_length','pack_width','pack_height')))
@@ -94,7 +98,7 @@ class PricingService:
    try:
     with self.lock:bundle=read(path)
     if not isinstance(bundle,dict):raise ValueError('商品草稿必须是JSON对象')
-    inputs={k:bundle.get(k) for k in ('variant_parameters','category')}
+    inputs={k:bundle.get(k) for k in ('variant_parameters','category','category_match_status')}
     fingerprint=hashlib.sha256(json.dumps([inputs,configs,mapping,source_error],sort_keys=True,default=str).encode()).hexdigest()
     if bundle.get('pricing_fingerprint')==fingerprint:continue
     try:
@@ -123,6 +127,10 @@ class PricingService:
  def worker(self,stop):
   while not stop.is_set():
    try:
+    from category_match import repair_groups
+    repair_groups(self.data/'products',self.lock)
+   except Exception as exc:self.status='类目补查失败：'+str(exc)[:120]
+   try:
     path=self.root/'fx.json';old=read(path) if path.exists() else {}
     if old.get('fetched_at','')[:10]!=dt.datetime.now(dt.timezone.utc).date().isoformat():self.update_fx()
    except Exception as exc:self.status='央行汇率更新失败：'+str(exc)[:120]
@@ -130,4 +138,6 @@ class PricingService:
    # Network retries are bounded to once every ten minutes; local inputs checked every 15s.
    for _ in range(40):
     if stop.wait(15):return
+    try:repair_groups(self.data/'products',self.lock,allow_network=False)
+    except (OSError,ValueError):pass
     self.calculate_all()

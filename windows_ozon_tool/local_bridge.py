@@ -411,7 +411,7 @@ def main():
  import tkinter as tk
  from tkinter import ttk,messagebox,filedialog
  store=Store(DATA);token=secrets.token_urlsafe(32);http=server(store,token);threading.Thread(target=http.serve_forever,daemon=True).start()
- root=tk.Tk();root.title('Ozon Edge 本地服务 v0.26.2');root.geometry('1120x850')
+ root=tk.Tk();root.title('Ozon Edge 本地服务 v0.26.3');root.geometry('1120x850')
  shell=ttk.Frame(root);shell.pack(fill='both',expand=True);shell.rowconfigure(0,weight=1);shell.columnconfigure(0,weight=1)
  canvas=tk.Canvas(shell,highlightthickness=0);canvas.grid(row=0,column=0,sticky='nsew')
  outer_scroll=ttk.Scrollbar(shell,orient='vertical',command=canvas.yview);outer_scroll.grid(row=0,column=1,sticky='ns');canvas.configure(yscrollcommand=outer_scroll.set)
@@ -554,40 +554,61 @@ def main():
   try:
    with store.lock:store.delete_task(task['id'])
   except Exception as e:messagebox.showerror('未删除',str(e))
- def pricing_details():
-  task=selected()
+ def pricing_details(task=None):
+  task=task or selected()
   if not task:return
   path=DATA/'products'/task['sku']/'listing_bundle.json'
   if not path.exists():messagebox.showinfo('定价','等待素材完成及草稿创建');return
   bundle=read_pricing(path);dialog=tk.Toplevel(root);dialog.title(task['sku']+' 售价明细');dialog.geometry('780x600')
   text=tk.Text(dialog,wrap='word');text.pack(fill='both',expand=True)
-  result=bundle.get('auto_pricing')
-  text.insert('end',bundle.get('pricing_status','等待定价')+'\n')
-  if result:
-   text.insert('end','建议售价：¥'+result['price_cny']+'\n预计净利润：¥'+result['profit_cny']+'\n预计净利率：'+format(float(result['net_margin'])*100,'.2f')+'%\n物流渠道：'+result['logistics_tier']+'\n')
-   labels={'product_cost':'每套成本（含国内运费）','ogl_transport':'OGL运输','label':'贴单','commission':'rFBS佣金','last_mile':'尾程','withdrawal':'提现','acquiring':'收单'}
-   for key,value in result['fees_cny'].items():text.insert('end',labels.get(key,key)+'：¥'+value+'\n')
-   text.insert('end','\n参考汇率：'+result['fx']['rub_per_cny']+' RUB/CNY\n日期：'+result['fx']['date']+'\n来源：'+result['fx'].get('url','')+'\n佣金版本：'+result['commission_version']+'\n'+result['commission_source']+'\n运费来源：'+result['logistics_source']+'\n'+result.get('boundary_policy_note','')+'\n\n以上为参考汇率下的估算，实际结算与运输账单可能不同。')
-  text.configure(state='disabled')
+  result=None;rendered=None
+  def render_details():
+   nonlocal bundle,result,rendered
+   fresh=read_pricing(path)
+   if fresh==rendered:return
+   bundle=fresh;rendered=fresh
+   position=text.yview()[0]
+   text.configure(state='normal');text.delete('1.0','end')
+   result=bundle.get('auto_pricing')
+   text.insert('end',bundle.get('pricing_status','等待定价')+'\n类目状态：'+bundle.get('category_match_status','尚未推荐')+'\n')
+   if result:
+    text.insert('end','建议售价：¥'+result['price_cny']+'\n预计净利润：¥'+result['profit_cny']+'\n预计净利率：'+format(float(result['net_margin'])*100,'.2f')+'%\n物流渠道：'+result['logistics_tier']+'\n')
+    labels={'product_cost':'每套成本（含国内运费）','ogl_transport':'OGL运输','label':'贴单','commission':'rFBS佣金','last_mile':'尾程','withdrawal':'提现','acquiring':'收单'}
+    for key,value in result['fees_cny'].items():text.insert('end',labels.get(key,key)+'：¥'+value+'\n')
+    text.insert('end','\n参考汇率：'+result['fx']['rub_per_cny']+' RUB/CNY\n日期：'+result['fx']['date']+'\n来源：'+result['fx'].get('url','')+'\n佣金版本：'+result['commission_version']+'\n'+result['commission_source']+'\n运费来源：'+result['logistics_source']+'\n'+result.get('boundary_policy_note','')+'\n\n以上为参考汇率下的估算，实际结算与运输账单可能不同。')
+   text.configure(state='disabled');text.yview_moveto(position)
+  render_details()
   def select_type():
    try:
     cfg=read_pricing(pricing.root/'commissions.json')
-    names=sorted({r['type_ru'] for r in cfg['records'] if r['brand'].casefold()=='all'})
-    picker=tk.Toplevel(dialog);picker.title('选择佣金表中的商品类型')
-    query=tk.StringVar();ttk.Entry(picker,textvariable=query,width=60).pack()
-    box=tk.Listbox(picker,width=90,height=15,exportselection=False);box.pack()
+    from category_search import commission_options
+    picker=tk.Toplevel(dialog);picker.title('中文搜索官方佣金类型');picker.geometry('1100x520');picker.minsize(850,420)
+    ttk.Label(picker,text='输入中文或俄文关键词，可搜索商品类型及所属类目；中文来自官方佣金表。此处仅设置佣金对应关系。').pack(pady=6)
+    query=tk.StringVar();entry=ttk.Entry(picker,textvariable=query,width=70);entry.pack(pady=4);entry.focus_set()
+    frame=ttk.Frame(picker);frame.pack(fill='both',expand=True,padx=8)
+    cols=('zh','ru','category','low','mid','high')
+    box=ttk.Treeview(frame,columns=cols,show='headings',selectmode='browse')
+    for col,label,width in [('zh','中文类型',210),('ru','俄文原名',230),('category','所属类目（中文）',230),('low','≤1500卢布',100),('mid','1500.01–5000卢布',140),('high','>5000卢布',100)]:
+     box.heading(col,text=label);box.column(col,width=width,anchor='center',stretch=True)
+    scroll=ttk.Scrollbar(frame,orient='vertical',command=box.yview);scroll.pack(side='right',fill='y');box.configure(yscrollcommand=scroll.set);box.pack(fill='both',expand=True)
+    count=ttk.Label(picker);count.pack(pady=4);choices={}
     def filter_names(*args):
-     box.delete(0,'end')
-     for name in names:
-      if query.get().casefold() in name.casefold():box.insert('end',name)
+     nonlocal choices
+     box.delete(*box.get_children());choices={str(r['source_row']):r for r in commission_options(cfg,query.get())}
+     for iid,row in choices.items():
+      rates=[format(float(rate)*100,'.2f')+'%' for rate in row['rates']]
+      box.insert('','end',iid=iid,values=(row.get('type_zh') or '暂无官方中文',row['type_ru'],row.get('category_zh') or row.get('category_ru',''),*rates))
+     count.configure(text='匹配 '+str(len(choices))+' 项；佣金表版本：'+cfg.get('effective_note',''))
     query.trace_add('write',filter_names);filter_names()
     def apply():
-     if not box.curselection():return
-     type_id=bundle.get('category',{}).get('type_id')
-     if not type_id:messagebox.showerror('未匹配','请先确认商品类目及类型');return
-     pricing.map_type(type_id,box.get(box.curselection()[0]));picker.destroy()
+     if not box.selection():messagebox.showinfo('请选择','先选择一项商品类型',parent=picker);return
+     type_id=(read_pricing(path).get('category') or {}).get('type_id')
+     if not type_id:messagebox.showerror('尚未匹配上架类目','请先点击下方入口匹配并确认上架类目，再选择佣金类型。',parent=picker);return
+     row=choices[box.selection()[0]]
+     pricing.map_type(type_id,row['type_ru'],row['source_row'],cfg['sha256']);picker.destroy()
      threading.Thread(target=pricing.calculate_all,daemon=True).start()
-    ttk.Button(picker,text='确认该类型对应的官方佣金',command=apply).pack()
+    ttk.Button(picker,text='确认所选类型及该行佣金',command=apply).pack(pady=4)
+    ttk.Button(picker,text='先匹配 / 确认上架类目',command=lambda:category_editor(task)).pack(pady=4)
    except Exception as e:messagebox.showerror('无法选择',str(e))
   def confirm_price():
    try:
@@ -603,7 +624,19 @@ def main():
      write_pricing(path,latest)
     messagebox.showinfo('已确认','已确认此变体售价；成本、类目、运费或汇率变化后需重新确认。',parent=dialog)
    except Exception as e:messagebox.showerror('未确认',str(e),parent=dialog)
-  ttk.Button(dialog,text='确认所选变体售价',command=confirm_price).pack(pady=4)
+  confirm_button=ttk.Button(dialog,text='确认所选变体售价',command=confirm_price);confirm_button.pack(pady=4)
+  ttk.Button(dialog,text='匹配 / 确认 / 修改本变体及同组类目',command=lambda:category_editor(task)).pack(pady=4)
+  ttk.Button(dialog,text='连接Ozon API / 重新匹配类目',command=connect_category).pack(pady=4)
+  def refresh_details():
+   dialog.destroy();pricing_details(task)
+  ttk.Button(dialog,text='刷新售价与处理进度',command=refresh_details).pack(pady=4)
+  def update_details():
+   if not dialog.winfo_exists():return
+   try:
+    render_details();confirm_button.configure(state='normal' if result and (bundle.get('category') or {}).get('confirmed') else 'disabled')
+   except (OSError,ValueError):confirm_button.configure(state='disabled')
+   dialog.after(1500,update_details)
+  update_details()
   ttk.Button(dialog,text='佣金无法匹配时，选择官方商品类型',command=select_type).pack(pady=4)
  ttk.Button(win,text='查看所选变体售价明细 / 佣金类型',command=pricing_details).pack(pady=4)
  ttk.Button(win,text='删除选中任务（保留素材文件）',command=delete).pack(pady=4)
@@ -654,15 +687,42 @@ def main():
    if os.name=='nt':os.startfile(str(target.parent))
   except Exception as e:messagebox.showerror('未准备',str(e))
  ttk.Button(win,text='准备所选商品上架草稿并打开文件夹',command=listing).pack(pady=4)
- def category_editor():
-  task=selected()
+ def connect_category():
+  import os
+  dialog=tk.Toplevel(root);dialog.title('连接Ozon API与类目匹配')
+  ttk.Label(dialog,text='填写卖家后台的Client-Id和Api-Key，用于读取官方类目树。\n仅在本次运行保留，不写入商品文件，不提交商品。').pack(padx=12,pady=8)
+  client=tk.StringVar(value=os.environ.get('OZON_CLIENT_ID',''));key=tk.StringVar(value=os.environ.get('OZON_API_KEY',''))
+  ttk.Label(dialog,text='Client-Id').pack();ttk.Entry(dialog,textvariable=client,width=55).pack()
+  ttk.Label(dialog,text='Api-Key').pack();ttk.Entry(dialog,textvariable=key,show='*',width=55).pack()
+  status=ttk.Label(dialog,text='已有类目和已确认的手动修改将保留');status.pack(pady=6)
+  def connect():
+   if not client.get().strip() or not key.get().strip():messagebox.showerror('未连接','请填写Client-Id和Api-Key',parent=dialog);return
+   os.environ['OZON_CLIENT_ID']=client.get().strip();os.environ['OZON_API_KEY']=key.get().strip()
+   button.configure(state='disabled');status.configure(text='正在补查所有未匹配商品组，请稍候…')
+   def work():
+    try:
+     from category_match import repair_groups
+     repair_groups(DATA/'products',store.lock);pricing.calculate_all()
+     root.after(0,lambda:status.configure(text='补查完成；请打开类目窗口确认。失败原因显示在各商品类目状态中。'))
+    except Exception:root.after(0,lambda:status.configure(text='匹配未完成，请检查连接后重试；已有素材保留。'))
+    finally:root.after(0,lambda:button.configure(state='normal'))
+   threading.Thread(target=work,daemon=True).start()
+  button=ttk.Button(dialog,text='连接并补查未匹配商品',command=connect);button.pack(pady=8)
+ ttk.Button(win,text='连接Ozon API / 重新匹配类目',command=connect_category).pack(pady=4)
+ def category_editor(task=None):
+  task=task or selected()
   if not task:return
   path=DATA/'products'/task['sku']/'listing_bundle.json'
   if not path.exists():messagebox.showerror('提示','请等待生成上架草稿');return
   data=json.loads(path.read_text(encoding='utf-8-sig'));dialog=tk.Toplevel(win);dialog.title('类目确认/修改')
   ttk.Label(dialog,text=data.get('category_match_status','尚未推荐；可手动填写官方类目与类型ID')).pack()
-  candidates=data.get('category_candidates',[]);choice=ttk.Combobox(dialog,values=[c['path'] for c in candidates],width=80,state='readonly');choice.pack()
-  cat=tk.StringVar(value=str(data.get('category',{}).get('description_category_id') or ''));typ=tk.StringVar(value=str(data.get('category',{}).get('type_id') or ''))
+  candidates=data.get('category_candidates') or [];current=data.get('category') or {}
+  if current.get('type_id') and not any(x.get('type_id')==current['type_id'] for x in candidates):candidates=[dict(current,path=current.get('path') or current.get('name') or str(current['type_id']))]+candidates
+  from category_search import category_label
+  try:commission_config=read_pricing(pricing.root/'commissions.json')
+  except (OSError,ValueError):commission_config={}
+  choice=ttk.Combobox(dialog,values=[category_label(c,commission_config) for c in candidates],width=80,state='readonly');choice.pack()
+  cat=tk.StringVar(value=str(current.get('description_category_id') or ''));typ=tk.StringVar(value=str(current.get('type_id') or ''))
   ttk.Label(dialog,text='类目ID（可手动修改）').pack();ttk.Entry(dialog,textvariable=cat).pack();ttk.Label(dialog,text='商品类型ID').pack();ttk.Entry(dialog,textvariable=typ).pack()
   def pick(e):
    c=candidates[choice.current()];cat.set(str(c['description_category_id']));typ.set(str(c['type_id']))
@@ -671,10 +731,15 @@ def main():
    try:
     c=int(cat.get());t=int(typ.get())
     if min(c,t)<=0:raise ValueError('ID须为正整数')
-    with store.lock:
-     latest=json.loads(path.read_text(encoding='utf-8-sig'));latest['category']={**next((x for x in candidates if x['description_category_id']==c and x['type_id']==t),{}),'description_category_id':c,'type_id':t,'confirmed':True,'attributes_revalidation_required':True};temp=path.with_suffix('.category.tmp');temp.write_text(json.dumps(latest,ensure_ascii=False,indent=2),encoding='utf-8');temp.replace(path)
+    from category_match import confirm_group
+    category={**next((x for x in candidates if x['description_category_id']==c and x['type_id']==t),{}),'description_category_id':c,'type_id':t}
+    confirm_group(path.parent,category,apply_group=apply_group.get(),lock=store.lock)
+    threading.Thread(target=pricing.calculate_all,daemon=True).start()
     dialog.destroy()
    except Exception as e:messagebox.showerror('未保存',str(e))
+  apply_group=tk.BooleanVar(value=True)
+  ttk.Checkbutton(dialog,text='同时应用于同组尚未确认的变体（保留已单独确认的类目）',variable=apply_group).pack(pady=6)
+  ttk.Button(dialog,text='连接Ozon API / 重新匹配类目',command=connect_category).pack(pady=4)
   ttk.Button(dialog,text='确认此类目（发布前仍核验必填属性）',command=confirm).pack()
  ttk.Button(win,text='确认或修改所选商品类目',command=category_editor).pack(pady=4)
 
