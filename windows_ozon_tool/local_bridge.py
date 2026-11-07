@@ -419,7 +419,7 @@ def main():
  import tkinter as tk
  from tkinter import ttk,messagebox,filedialog
  store=Store(DATA);token=secrets.token_urlsafe(32);http=server(store,token);threading.Thread(target=http.serve_forever,daemon=True).start()
- root=tk.Tk();root.title('Ozon Edge 本地服务 v0.28');root.geometry('1120x850')
+ root=tk.Tk();root.title('Ozon Edge 本地服务 v0.29');root.geometry('1120x850')
  shell=ttk.Frame(root);shell.pack(fill='both',expand=True);shell.rowconfigure(0,weight=1);shell.columnconfigure(0,weight=1)
  canvas=tk.Canvas(shell,highlightthickness=0);canvas.grid(row=0,column=0,sticky='nsew')
  outer_scroll=ttk.Scrollbar(shell,orient='vertical',command=canvas.yview);outer_scroll.grid(row=0,column=1,sticky='ns');canvas.configure(yscrollcommand=outer_scroll.set)
@@ -462,6 +462,9 @@ def main():
  from attribute_service import AttributeService
  attributes=AttributeService(DATA,store.lock,active_skus=hosting_skus)
  threading.Thread(target=attributes.worker,args=(pricing_stop,),daemon=True).start()
+ from publication_service import PublicationService
+ publication=PublicationService(DATA,store.lock)
+ threading.Thread(target=publication.worker,args=(pricing_stop,),daemon=True).start()
  def hosting_settings():
   import os,webbrowser
   dialog=tk.Toplevel(root);dialog.title('腾讯云COS图片托管');dialog.geometry('780x650')
@@ -748,7 +751,7 @@ def main():
   folder=DATA/'products'/task['sku'];path=folder/'listing_bundle.json'
   if not path.exists():messagebox.showinfo('等待草稿','请先等待素材和文案完成');return
   from category_match import group_key
-  from listing_editor import open_editor
+  from group_editor import open_editor
   with store.lock:
    current=read_pricing(path)
    if not isinstance(current,dict):messagebox.showerror('草稿无效','当前草稿不是JSON对象，请检查本地文件；原文件保留。');return
@@ -759,8 +762,11 @@ def main():
      try:candidate=read_pricing(target)
      except (OSError,ValueError):continue
      if isinstance(candidate,dict) and group_key(candidate)==key:folders.append(target.parent)
-  open_editor(root,folder,attributes,folders,lambda:category_editor(task),lambda:pricing_details(task),connect_category)
- ttk.Button(win,text='上架草稿 / 必填属性 / 整组提交预览',command=listing_editor).pack(pady=4)
+  def show_price(index=0):
+   with store.lock:item=next((dict(t) for t in store.tasks if t['sku']==folders[index].name),None)
+   if item:pricing_details(item)
+  open_editor(root,folder,attributes,folders,lambda:category_editor(task),show_price,connect_category,pricing=pricing,store=store,publication=publication)
+ ttk.Button(win,text='整组编辑预览 / 仓库库存 / 提交上架',command=listing_editor).pack(pady=4)
  def retry_video():
   task=selected()
   if not task:return
@@ -834,6 +840,6 @@ def main():
 
  ttk.Label(win,text='遇到 needs_attention：停止自动任务，先人工检查网页；不自动重发。图片在本工具 data/products 下。').pack()
  refresh()
- def close():pricing_stop.set();hosting.wake.set();video_hosting.wake.set();attributes.wake.set();http.shutdown();root.destroy()
+ def close():pricing_stop.set();hosting.wake.set();video_hosting.wake.set();attributes.wake.set();publication.wake.set();http.shutdown();root.destroy()
  root.protocol('WM_DELETE_WINDOW',close);root.mainloop()
 if __name__=='__main__':main()

@@ -1,5 +1,5 @@
 """Read-only live Ozon category schemas and evidence-backed local attributes."""
-import hashlib,json,os,threading,time,urllib.error,urllib.request
+import copy,hashlib,json,os,threading,time,urllib.error,urllib.request
 from pathlib import Path
 from decimal import Decimal
 from pricing_service import read,write
@@ -42,6 +42,11 @@ def suggested_value(field,bundle):
  if name in ('размер','规格','размер изделия'):return p.get('size')
  for key,words in [('length',('длина, см','商品长(cm)')),('width',('ширина, см','商品宽(cm)')),('height',('высота, см','商品高(cm)'))]:
   if name in words:return p.get(key)
+ from group_service import binding
+ link=binding(field)
+ if link and p.get(link[0]):
+  try:return str(Decimal(p[link[0]])/link[1])
+  except Exception:return None
  return None
 
 def validate_values(field,values):
@@ -65,7 +70,7 @@ def validate_values(field,values):
 
 class AttributeService:
  def __init__(self,data,lock=None,caller=api,active_skus=None):
-  self.data=Path(data);self.root=self.data/'attributes';self.root.mkdir(parents=True,exist_ok=True);self.lock=lock or threading.Lock();self.io_lock=threading.RLock();self.caller=caller;self.active_skus=active_skus;self.status='等待类目确认后读取必填属性';self.wake=threading.Event();self.retry_at={}
+  self.data=Path(data);self.root=self.data/'attributes';self.root.mkdir(parents=True,exist_ok=True);self.lock=lock or threading.Lock();self.io_lock=threading.RLock();self.caller=caller;self.active_skus=active_skus;self.schema_cache={};self.status='等待类目确认后读取必填属性';self.wake=threading.Event();self.retry_at={}
  def dictionary(self,bundle,field,query='',last_value_id=0):
   category,type_id=category_key(bundle);base={'attribute_id':field['id'],'description_category_id':category,'type_id':type_id}
   with self.io_lock:
@@ -77,20 +82,61 @@ class AttributeService:
    for row in response['result']:
     if isinstance(row.get('id'),int) and row['id']>0:known[str(row['id'])]=row
    write(path,known);return response
- def refresh(self,path):
+ def migrate(self,bundle,old,fields):
+  previous={field_key(f):f for f in old.get('fields',[])};values={};pending={};old_values=old.get('values') or {}
+  for field in fields:
+   key=field_key(field);prior=previous.get(key)
+   if prior is None:
+    candidates=[f for f in old.get('fields',[]) if (f.get('name_ru') or f.get('name','')).strip().casefold()==(field.get('name_ru') or field.get('name','')).strip().casefold()]
+    if len(candidates)==1:prior=candidates[0]
+   if prior is None:continue
+   kept=old_values.get(field_key(prior))
+   if not kept:continue
+   if field.get('dictionary_id'):
+    matched=[]
+    for value in kept:
+     label=value.get('value','')
+     try:
+      result=self.dictionary(bundle,field,label)['result'] if len(label.strip())>=2 else []
+      matches={r['id']:r for r in result if str(r.get('value','')).strip().casefold()==label.strip().casefold()}
+      if len(matches)!=1:
+       result=self.dictionary(bundle,field)['result'];matches={r['id']:r for r in result if str(r.get('value','')).strip().casefold()==label.strip().casefold()}
+      if len(matches)!=1:break
+      row=next(iter(matches.values()));matched.append({'dictionary_value_id':row['id'],'value':row['value']})
+     except ValueError:break
+    if len(matched)==len(kept):
+     try:validate_values(field,matched);values[key]=matched;continue
+     except ValueError:pass
+   elif not prior.get('dictionary_id') and str(prior.get('type','')).casefold()==str(field.get('type','')).casefold() and (prior.get('name_ru') or prior.get('name','')).strip().casefold()==(field.get('name_ru') or field.get('name','')).strip().casefold():
+    try:validate_values(field,kept);values[key]=copy.deepcopy(kept);continue
+    except ValueError:pass
+   pending[key]=copy.deepcopy(kept)
+  return values,pending
+ def refresh(self,path,force=True):
   path=Path(path)
   with self.lock:bundle=read(path)
   category,type_id=category_key(bundle)
   if not (bundle.get('category') or {}).get('confirmed'):raise ValueError('类目仍待确认，请先确认或修改类目')
   with self.io_lock:
    base={'description_category_id':category,'type_id':type_id}
-   zh=self.caller('/v1/description-category/attribute',{**base,'language':'ZH_HANS'})['result'];ru=self.caller('/v1/description-category/attribute',{**base,'language':'RU'})['result'];russian={field_key(f):f for f in ru}
+   cached=self.schema_cache.get((category,type_id))
+   if not force and cached and time.time()-cached[0]<60:zh,ru=copy.deepcopy(cached[1:])
+   else:
+    zh=self.caller('/v1/description-category/attribute',{**base,'language':'ZH_HANS'})['result'];ru=self.caller('/v1/description-category/attribute',{**base,'language':'RU'})['result'];self.schema_cache[(category,type_id)]=(time.time(),copy.deepcopy(zh),copy.deepcopy(ru))
+   russian={field_key(f):f for f in ru}
    fields=[{**f,'name_ru':russian.get(field_key(f),{}).get('name',f.get('name',''))} for f in zh]
    if not fields:raise ValueError('该类目未返回属性，暂不视为校验通过')
    digest=hashlib.sha256(json.dumps([category,type_id,fields],ensure_ascii=False,sort_keys=True).encode()).hexdigest()
-   old=bundle.get('attribute_draft') or {};same=old.get('schema_hash')==digest
+   old=bundle.get('attribute_draft') or bundle.get('attribute_history') or {};same=old.get('schema_hash')==digest
    source=source_fingerprint(bundle);manual=set(old.get('manual_keys') or []);unchanged=old.get('source_fingerprint')==source
-   values={k:v for k,v in (old.get('values') or {}).items() if unchanged or k in manual} if same else {};suggestions={}
+   values={k:v for k,v in (old.get('values') or {}).items() if unchanged or k in manual} if same else {};pending=copy.deepcopy(old.get('migration_pending') or {}) if same else {}
+   if not same and old:values,pending=self.migrate(bundle,old,fields)
+   archive=(bundle.get('attribute_archives') or {}).get(str(category)+':'+str(type_id))
+   if not same and archive:
+    restored,unresolved=self.migrate(bundle,archive,[f for f in fields if field_key(f) not in values])
+    values.update(restored);pending.update(unresolved);manual.update(k for k in restored if k in (archive.get('manual_keys') or []))
+    for k in restored:pending.pop(k,None)
+   suggestions={}
    for field in fields:
     key=field_key(field)
     if key in values or field['id'] in (8229,21841,21837,21845):continue
@@ -106,7 +152,8 @@ class AttributeService:
      proposed=[{'value':str(v)} for v in (suggestion if isinstance(suggestion,list) else [suggestion])]
      try:validate_values(field,proposed);values[key]=proposed
      except ValueError:pass
-   state={'category_key':[category,type_id],'schema_hash':digest,'fields':fields,'values':values,'suggestions':suggestions,'fetched_at':time.time(),'confirmed':bool(same and unchanged and old.get('confirmed')),'source_fingerprint':source,'manual_keys':sorted(manual) if same else []}
+   for k in values:pending.pop(k,None)
+   state={'category_key':[category,type_id],'schema_hash':digest,'fields':fields,'values':values,'suggestions':suggestions,'fetched_at':time.time(),'confirmed':bool(same and unchanged and old.get('confirmed')),'source_fingerprint':source,'manual_keys':sorted(manual) if same else [k for k in values if k in manual],'migration_pending':pending}
    with self.lock:
     latest=read(path)
     if category_key(latest)!=(category,type_id) or source_fingerprint(latest)!=source or not latest['category'].get('confirmed'):raise ValueError('读取期间类目已变化，请重新读取')
@@ -118,23 +165,34 @@ class AttributeService:
      state['manual_keys']=current.get('manual_keys') or []
      state['confirmed']=bool(current.get('source_fingerprint')==source and current.get('confirmed'))
      if state['confirmed']:state['confirmed_values_hash']=current.get('confirmed_values_hash')
-    latest['attribute_draft']=state
+    if old.get('category_key'):
+     archive_key=':'.join(str(v) for v in old['category_key']);latest.setdefault('attribute_archives',{})[archive_key]=old
+    latest['attribute_draft']=state;latest.pop('attribute_history',None)
     if not state.get('confirmed') and '必填属性待核对' not in latest.get('blockers',[]):latest.setdefault('blockers',[]).append('必填属性待核对')
     write(path,latest)
    return state
- def save_values(self,path,key,values):
-  path=Path(path)
+ def prepare_values(self,bundle,key,values):
+  state=bundle.get('attribute_draft') or {}
+  if list(category_key(bundle))!=state.get('category_key'):raise ValueError('类目已变化，请重新读取属性')
+  field=next((f for f in state['fields'] if field_key(f)==key),None)
+  if field is None:raise ValueError('此属性不属于当前官方类目')
+  if not values:return []
+  validate_values(field,values)
+  if field.get('dictionary_id'):
+   category,type_id=category_key(bundle);known_path=self.root/f'{category}-{type_id}-{field["id"]}.json';known=read(known_path) if known_path.exists() else {}
+   if any(str(v['dictionary_value_id']) not in known for v in values):raise ValueError('字典值未经当前类目官方接口验证，请重新选择')
+   values=[{'dictionary_value_id':v['dictionary_value_id'],'value':known[str(v['dictionary_value_id'])]['value']} for v in values]
+  return values
+ def save_values(self,path,key,values):return self.save_many([(path,key,values)])
+ def save_many(self,changes):
+  prepared=[]
   with self.lock:
-   bundle=read(path);state=bundle.get('attribute_draft') or {}
-   if list(category_key(bundle))!=state.get('category_key'):raise ValueError('类目已变化，请重新读取属性')
-   field=next((f for f in state['fields'] if field_key(f)==key),None)
-   if field is None:raise ValueError('此属性不属于当前官方类目')
-   validate_values(field,values)
-   if field.get('dictionary_id'):
-    category,type_id=category_key(bundle);known_path=self.root/f'{category}-{type_id}-{field["id"]}.json';known=read(known_path) if known_path.exists() else {}
-    if any(str(v['dictionary_value_id']) not in known for v in values):raise ValueError('字典值未经当前类目官方接口验证，请重新选择')
-    values=[{'dictionary_value_id':v['dictionary_value_id'],'value':known[str(v['dictionary_value_id'])]['value']} for v in values]
-   state.setdefault('values',{})[key]=values;state['manual_keys']=sorted(set(state.get('manual_keys') or [])|{key});state['confirmed']=False;bundle['attribute_draft']=state;write(path,bundle)
+   for name,key,values in changes:
+    path=Path(name);bundle=read(path);values=self.prepare_values(bundle,key,values);state=bundle['attribute_draft']
+    state.setdefault('values',{})[key]=values;state['manual_keys']=sorted(set(state.get('manual_keys') or [])|{key});state['confirmed']=False
+    (state.get('migration_pending') or {}).pop(key,None);prepared.append((path,bundle))
+   for path,bundle in prepared:write(path,bundle)
+  return len(prepared)
  def confirm(self,path,vat,currency_confirmed):return self.confirm_many([path],vat,currency_confirmed)
  def confirm_many(self,paths,vat,currency_confirmed,expected=None):
   from listing_preview import attribute_errors
