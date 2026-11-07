@@ -1,6 +1,6 @@
 let copyCandidates=[],candidateSku='';
 const status=document.querySelector('#status');
-chrome.storage.local.get(['pairToken','status']).then(x=>{document.querySelector('#token').value=x.pairToken||'';if(x.status)status.textContent=x.status;});
+chrome.storage.local.get(['pairToken','status','lastSku','activeTask']).then(x=>{document.querySelector('#token').value=x.pairToken||'';if(x.status)status.textContent=x.status;document.querySelector('#sku').value=x.activeTask?.sku||x.lastSku||'';});
 document.querySelector('#pair').onclick=async()=>{await chrome.storage.local.set({pairToken:document.querySelector('#token').value.trim()});status.textContent='配对码已保存在本机扩展中。';};
 document.querySelector('#run').onclick=async()=>{const [tab]=await chrome.tabs.query({active:true,currentWindow:true});try{const r=await chrome.runtime.sendMessage({kind:'enable',tabId:tab.id});status.textContent=r.error||r.status;}catch(e){status.textContent=e.message;}};
 document.querySelector('#stop').onclick=async()=>{const r=await chrome.runtime.sendMessage({kind:'stop'});status.textContent=r.status||r.error;};
@@ -38,3 +38,11 @@ document.querySelector('#copy-choice-save').onclick=async()=>{
   if(!r.error)document.querySelector('#copy-choice').hidden=true;
  }catch(e){status.textContent=e.message;}finally{button.disabled=false;}
 };
+
+document.querySelector('#diagnose').onclick=async()=>{
+ try{const [tab]=await chrome.tabs.query({active:true,currentWindow:true});const result=await chrome.runtime.sendMessage({kind:'diagnose',tabId:tab.id});if(result.error)throw Error(result.error);
+  const url=URL.createObjectURL(new Blob([JSON.stringify(result.diagnostic,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='ozon-page-diagnostic.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),5000);status.textContent='诊断文件已导出，不包含配对码、完整图片网址或文案内容';
+ }catch(e){status.textContent=e.message;}
+};
+
+document.querySelector('#sku').addEventListener('change',()=>chrome.storage.local.set({lastSku:document.querySelector('#sku').value.trim()}));

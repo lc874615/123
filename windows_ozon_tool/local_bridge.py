@@ -50,7 +50,7 @@ class Store:
  def recover(self,sku):
   group=[t for t in self.tasks if t['sku']==sku and t.get('set_mode') and t['state'] in ('waiting','needs_attention','claimed','sending')]
   if len(group)!=1:raise ValueError('没有唯一可恢复的整套任务，请核对货号')
-  task=group[0];task.update(state='waiting',message='用户请求从现有网页恢复保存，不重新生成');self.save();return {'id':task['id'],'set_mode':True,'saved_count':len(task.get('received_images',[])),'expected_images':task.get('expected_images',8)}
+  task=group[0];task.update(state='waiting',message='用户请求从现有网页恢复保存，不重新生成');self.save();return {'id':task['id'],'sku':task['sku'],'set_mode':True,'saved_count':len(task.get('received_images',[])),'expected_images':task.get('expected_images',8)}
  def set_result(self,tid,index,encoded):
   task=self.find(tid)
   if not task.get('set_mode') or task['state'] not in ('claimed','sending','waiting','saved'):raise ValueError('整套任务状态无效')
@@ -265,7 +265,7 @@ def main():
  import tkinter as tk
  from tkinter import ttk,messagebox,filedialog
  store=Store(DATA);token=secrets.token_urlsafe(32);http=server(store,token);threading.Thread(target=http.serve_forever,daemon=True).start()
- root=tk.Tk();root.title('Ozon Edge 本地服务 v0.16');root.geometry('1120x850')
+ root=tk.Tk();root.title('Ozon Edge 本地服务 v0.17');root.geometry('1120x850')
  shell=ttk.Frame(root);shell.pack(fill='both',expand=True);shell.rowconfigure(0,weight=1);shell.columnconfigure(0,weight=1)
  canvas=tk.Canvas(shell,highlightthickness=0);canvas.grid(row=0,column=0,sticky='nsew')
  outer_scroll=ttk.Scrollbar(shell,orient='vertical',command=canvas.yview);outer_scroll.grid(row=0,column=1,sticky='ns');canvas.configure(yscrollcommand=outer_scroll.set)

@@ -6,7 +6,7 @@ function findEditor(){
  for(const sel of selectors){const found=[...document.querySelectorAll(sel)].filter(e=>e.getClientRects().length&&!e.disabled&&e.getAttribute('aria-hidden')!=='true');if(found.length===1)return found[0];}
  return null;
 }
-function preflight(){const e=findEditor();return {version:'0.16.0',ready:!!e&&!document.querySelector('[data-testid="stop-button"]'),url:location.origin+location.pathname,message:e?'输入框已识别':'未找到可见输入框。请在普通ChatGPT文字对话中刷新页面，点击输入区后重试；不能在图片查看器或其他应用中执行。'};}
+function preflight(){const e=findEditor();return {version:'0.17.0',ready:!!e&&!document.querySelector('[data-testid="stop-button"]'),url:location.origin+location.pathname,message:e?'输入框已识别':'未找到可见输入框。请在普通ChatGPT文字对话中刷新页面，点击输入区后重试；不能在图片查看器或其他应用中执行。'};}
 async function run(task){
  if(running)throw Error('本页正在执行任务');running=true;stop=false;
  try{
@@ -28,12 +28,13 @@ async function run(task){
   while(Date.now()<sendDeadline&&!stop){editor=findEditor();if(editor)send=globalThis.OzonComposer.findSend(editor);if(send)break;await sleep(300);}
   if(!send)throw Error('未识别到唯一可用发送按钮；提示词已保留，请人工检查。未自动发送');
   await tell(task,'sending','即将发送，异常时不会自动重发');send.click();await tell(task,'waiting','已点击发送，等待新回复生成图片');
-  const deadline=Date.now()+20*60*1000;
+  const deadline=Date.now()+20*60*1000;let lastReport=0;
   while(Date.now()<deadline){
    if(stop)throw Error('已暂停；请检查网页结果');
    if(task.set_mode&&!document.querySelector('[data-testid="stop-button"]')){
-    const images=await globalThis.OzonImages.collect(document,{expected:task.expected_images||8,previous:previousImages,before:oldReplies,marker:'【OZON_TASK:'+task.id+'】'});
+    const images=await globalThis.OzonImages.collect(document,{expected:task.expected_images||8,previous:previousImages,before:oldReplies,marker:'【OZON_TASK:'+task.id+'】',sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message)});
     if(images){await saveSet(task,images);return;}
+    if(Date.now()-lastReport>30000){lastReport=Date.now();await tell(task,'waiting','等待采集：助手区域'+globalThis.OzonConversation.assistantNodes(document).length+'个、页面图片'+document.querySelectorAll('main img,[role="main"] img').length+'张。若网页已生成8张，请导出页面诊断；不会重发');}
 
    }
    const replies=[...document.querySelectorAll('[data-message-author-role="assistant"]')];
@@ -64,7 +65,7 @@ async function saveSet(task,images){
 async function recover(task){
  if(running)throw Error('本页正在执行任务');running=true;stop=false;
  try{
-  const images=await globalThis.OzonImages.collect(document,{expected:task.expected_images||8,marker:'【OZON_TASK:'+task.id+'】'});
+  const images=await globalThis.OzonImages.collect(document,{expected:task.expected_images||8,marker:'【OZON_TASK:'+task.id+'】',sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message)});
   if(!images)throw Error('本页未收齐完整原图，请展开当前回复的图片列表后重试；不会重新生成');
   await saveSet(task,images);
  }catch(e){await tell(task,'needs_attention',e.message).catch(()=>{});}finally{running=false;}
@@ -96,7 +97,7 @@ async function copy(task){
 }
 function extractCopy(task){
  const result=globalThis.OzonCopy.recover(document,task.sku);
- if(!result.copy&&!result.candidates?.length)throw Error('未找到可读取的完整文案JSON；请滚动到文案回复使其加载，或使用备用粘贴，无需重新生成');
+ if(!result.copy&&!result.candidates?.length)throw Error('未读取到匹配文案：助手区域'+globalThis.OzonConversation.assistantNodes(document).length+'个、页面完整JSON '+globalThis.OzonCopy.parseAll(document.querySelector('main,[role="main"]')?.innerText||'').length+'个。请导出页面诊断，无需重新生成');
  return result;
 }
 

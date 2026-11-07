@@ -6,7 +6,66 @@
   if(strip.length===expected)return strip;
   return full;
  }
- async function collect(doc,{expected=8,previous=new Set(),before=new Set(),marker=''}={}){
+ function visibleImage(image){
+  const r=image.getBoundingClientRect();return image.complete&&image.naturalWidth>0&&r.width>0&&r.height>0&&r.bottom>0&&r.top<(image.ownerDocument.defaultView?.innerHeight||10000);
+ }
+ function gallery(doc,{expected=8,marker=''}={}){
+  const main=doc.querySelector('main,[role="main"]');if(!main)return null;
+  const all=[...main.querySelectorAll('img')].filter(i=>visibleImage(i)&&!globalThis.OzonConversation.userOwned(i)&&!i.closest('aside,[role="complementary"],#prompt-textarea'));
+  let anchor=null;
+  if(marker){const walker=doc.createTreeWalker(main,4);let n;while((n=walker.nextNode()))if(n.nodeValue.includes(marker))anchor=n;}
+  const images=anchor?all.filter(i=>!!(anchor.compareDocumentPosition(i)&4)):all;
+  const large=images.filter(i=>{const r=i.getBoundingClientRect();return r.width>=240&&r.height>=280&&i.naturalWidth>=512&&i.naturalHeight>=512;});
+  const found=[];
+  for(const preview of large){
+   const p=preview.getBoundingClientRect();
+   const strip=images.filter(i=>{const r=i.getBoundingClientRect();return i!==preview&&r.width>=20&&r.width<=120&&r.height>=25&&r.height<=180&&r.left>=p.right-8&&r.left<=p.right+110&&r.top>=p.top-25&&r.bottom<=p.bottom+30;}).sort((a,b)=>a.getBoundingClientRect().top-b.getBoundingClientRect().top);
+   if(strip.length===expected&&strip.every((i,n)=>!n||i.getBoundingClientRect().top>=strip[n-1].getBoundingClientRect().bottom-3))found.push({preview,strip});
+  }
+  if(found.length>1)throw Error('发现多个可见图库，请滚动到当前任务的图库后重试，未猜测图片顺序');
+  return found[0]||null;
+ }
+ async function bytesFor(image){
+  const response=await fetch(image.currentSrc||image.src,{credentials:'include'});if(!response.ok)throw Error('原图读取失败，HTTP '+response.status);
+  const blob=await response.blob();if(blob.size>20*1024*1024)throw Error('图片超过20MB');
+  const bytes=await blob.arrayBuffer();const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),x=>x.toString(16).padStart(2,'0')).join('');
+  const base64=await new Promise((resolve,reject)=>{const f=new FileReader();f.onload=()=>resolve(f.result.split(',')[1]);f.onerror=reject;f.readAsDataURL(blob);});
+  const bitmap=await createImageBitmap(blob);const canvas=document.createElement('canvas');canvas.width=32;canvas.height=32;const ctx=canvas.getContext('2d');ctx.drawImage(bitmap,0,0,32,32);const pixels=ctx.getImageData(0,0,32,32).data;bitmap.close();
+  return {digest,base64,pixels};
+ }
+ async function readGallery(doc,found,{expected=8,sleep=ms=>new Promise(r=>setTimeout(r,ms)),stopped=()=>false,report=async()=>{}}={}){
+  const original=found.preview,position=original.getBoundingClientRect(),results=[],hashes=new Set();
+  const thumbnails=[];for(const image of found.strip)thumbnails.push(await bytesFor(image));
+  for(let index=0;index<found.strip.length;index++){
+   if(stopped())throw Error('已暂停，已有图片保留');
+   await report('已识别'+expected+'张生成图缩略图，正在读取原图 '+(index+1)+'/'+expected);
+   const thumb=found.strip[index],target=thumb.closest('button,[role="button"]')||thumb;
+   target.click();let ready=null,stable='',repeats=0;const deadline=Date.now()+15000;
+   while(Date.now()<deadline){
+    await sleep(250);if(stopped())throw Error('已暂停');
+    const candidates=[...doc.querySelectorAll('main img,[role="main"] img')].filter(i=>{const r=i.getBoundingClientRect();return visibleImage(i)&&i.naturalWidth>=512&&i.naturalHeight>=512&&r.width>=240&&Math.abs(r.left-position.left)<35&&Math.abs(r.top-position.top)<60&&!globalThis.OzonConversation.userOwned(i);});
+    if(candidates.length!==1)continue;
+    const selected=candidates[0],src=selected.currentSrc||selected.src;
+    const key=src+'|'+selected.naturalWidth+'|'+selected.naturalHeight;
+    repeats=key===stable?repeats+1:1;stable=key;
+    // A lazy image may retain the previous preview while the next one downloads.
+    if(repeats<3)continue;
+    const value=await bytesFor(selected);
+    if(hashes.has(value.digest))continue;
+    const distances=thumbnails.map(t=>{let error=0;for(let k=0;k<t.pixels.length;k+=4)for(let c=0;c<3;c++)error+=Math.abs(t.pixels[k+c]-value.pixels[k+c]);return error/(32*32*3);});
+    const nearest=distances.indexOf(Math.min(...distances));
+    if(nearest!==index||distances[index]>20)continue;
+    ready=value;break;
+   }
+   if(!ready)throw Error('第'+(index+1)+'张原图未加载或仍是上一张；已暂停，不会把缩略图当原图保存');
+   hashes.add(ready.digest);results.push(ready.base64);
+  }
+  if(results.length!==expected)throw Error('图库原图数量不完整');
+  return results;
+ }
+ async function collect(doc,{expected=8,previous=new Set(),before=new Set(),marker='',sleep,stopped,report}={}){
+  const found=gallery(doc,{expected,marker});
+  if(found)return readGallery(doc,found,{expected,sleep,stopped,report});
   const scopes=globalThis.OzonConversation.imageScopes(doc,{before,marker});
   const nodes=[];
   for(const scope of scopes){
@@ -29,6 +88,6 @@
   }
   return null;
  }
- globalThis.OzonImages={ordered,collect};
- if(typeof module!=='undefined')module.exports={ordered,collect};
+ globalThis.OzonImages={ordered,collect,gallery,readGallery};
+ if(typeof module!=='undefined')module.exports={ordered,collect,gallery,readGallery};
 })();
