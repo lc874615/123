@@ -191,7 +191,7 @@ def server(store,token,port=8765):
       for task in store.tasks:
        if task['sku']==sku:task['copy_state']='running'
       store.save()
-      value={'id':'copy:'+sku,'sku':sku,'prompt':'本次变体货号：'+sku+'。只依据下列当前资料，不得沿用历史商品材质。输出JSON必须额外包含sku字段，值为'+sku+'。'+(folder/'copy_prompt.txt').read_text(encoding='utf-8')}
+      value={'id':'copy:'+sku,'sku':sku,'prompt':'本次变体货号：'+sku+'。只依据下列当前资料，不得沿用历史商品材质。主体材质与配件/内衬材质分别对应，不得混写，也不要因内衬含纸板就把主体写成纸板。输出JSON必须额外包含sku字段，值为'+sku+'。'+(folder/'copy_prompt.txt').read_text(encoding='utf-8')}
      elif self.path=='/copy-failed':
       sku=body['sku']
       for task in store.tasks:
@@ -224,7 +224,7 @@ def main():
  import tkinter as tk
  from tkinter import ttk,messagebox,filedialog
  store=Store(DATA);token=secrets.token_urlsafe(32);http=server(store,token);threading.Thread(target=http.serve_forever,daemon=True).start()
- root=tk.Tk();root.title('Ozon Edge 本地服务 v0.13');root.geometry('1120x850')
+ root=tk.Tk();root.title('Ozon Edge 本地服务 v0.14');root.geometry('1120x850')
  shell=ttk.Frame(root);shell.pack(fill='both',expand=True);shell.rowconfigure(0,weight=1);shell.columnconfigure(0,weight=1)
  canvas=tk.Canvas(shell,highlightthickness=0);canvas.grid(row=0,column=0,sticky='nsew')
  outer_scroll=ttk.Scrollbar(shell,orient='vertical',command=canvas.yview);outer_scroll.grid(row=0,column=1,sticky='ns');canvas.configure(yscrollcommand=outer_scroll.set)

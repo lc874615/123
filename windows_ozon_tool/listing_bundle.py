@@ -19,7 +19,7 @@ def prepare(folder,task):
   checked.append({'order':row['order'],'role':'primary' if row['order']==1 else 'gallery','local_file':'images/'+path.name,'sha256':digest,'https_url':None})
  facts=task.get('facts') or task.get('prompt','').split('商品事实：')[-1]
  copy_facts=task.get('group_facts',facts)
- copy_prompt='以下为同一商品全部变体，标题、简介和标签统一一套。只描述共同属性，差异按选项分别说明，不要把某一颜色或尺寸当作全部规格。根据以下商品事实生成俄文Ozon标题、简介和标签。自然覆盖相关长尾词，禁止重复堆词和编造承重、认证、功能、品牌。品牌固定无品牌（Нет бренда），不要将品牌列为缺失项。未知留空。只输出JSON：title_ru、description_ru、tags_ru数组、missing_facts数组。商品事实：'+copy_facts
+ copy_prompt='以下为同一商品全部变体，标题、简介和标签统一一套。只描述共同属性，差异按选项分别说明，不要把某一颜色或尺寸当作全部规格。根据以下商品事实生成俄文Ozon标题、简介和标签。自然覆盖相关长尾词，禁止重复堆词和编造承重、认证、功能、品牌。品牌固定无品牌（Нет бренда），不要将品牌列为缺失项。严格区分主体材质和配件/内衬材质，例如主体为聚丙烯而内衬为纸板时，两者均可描述，但不得将纸板写成主体材质。未知部件材质不得推测。未知留空。只输出JSON：title_ru、description_ru、tags_ru数组、missing_facts数组。商品事实：'+copy_facts
  (folder/'copy_prompt.txt').write_text(copy_prompt,encoding='utf-8')
  bundle={'sku':task['sku'],'offer_id':task['sku'],'base_article':task.get('base_article',task['sku']),'model':task.get('model'),'variant_index':task.get('variant_index'),'variant_parameters':task.get('variant_parameters',{}),'brand':'Нет бренда','stock':int(task.get('variant_parameters',{}).get('stock','1000')),'facts':facts,'images':checked,'video':{'local_file':'video/product_8s.mp4','exists':(folder/'video'/'product_8s.mp4').exists(),'https_url':None},'copy':{'title_ru':None,'description_ru':None,'tags_ru':[]},'category':{'description_category_id':None,'type_id':None},'price_cny':None,'status':'draft','blockers':['俄文文案待生成','类目及必填属性待匹配','实际定价待核验','图片HTTPS托管未配置']}
  target=folder/'listing_bundle.json'
@@ -35,15 +35,13 @@ def save_copy(folder,value):
   if not isinstance(value.get(key),list) or any(not isinstance(t,str) for t in value[key]):raise ValueError('文案列表无效 '+key)
  if len(value['title_ru'])>500 or len(value['description_ru'])>20000 or len(value['tags_ru'])>50:raise ValueError('文案超出本地校验上限')
  if value.get('sku')!=data['sku']:raise ValueError('文案SKU不匹配或缺失，拒绝历史文案；请生成带SKU的新文案')
- material_text=(value['title_ru']+' '+value['description_ru']).lower()
- if '聚丙烯' in data['facts'] and ('картон' in material_text or 'бумаг' in material_text):raise ValueError('材质冲突：商品为聚丙烯，文案含纸板或纸材')
- if '纸板' in data['facts'] and 'полипропилен' in material_text:raise ValueError('材质冲突：商品为纸板，文案含聚丙烯')
+ from material_guard import validate,conflict
+ validate(data,value)
  value=dict(value);value['missing_facts']=[x for x in value['missing_facts'] if x.strip().lower() not in ('бренд','brand','品牌')]
  if data['copy']==value:return {'saved':True,'review_status':data.get('copy_review_status','pending_human_review')}
  if data['copy'].get('title_ru'):
   old=data['copy'];oldtext=(old.get('title_ru','')+' '+old.get('description_ru','')).lower()
-  conflict=('聚丙烯' in data['facts'] and 'картон' in oldtext) or ('纸板' in data['facts'] and 'полипропилен' in oldtext)
-  if not conflict:raise ValueError('文案已有内容，不自动覆盖')
+  if not conflict(data,old):raise ValueError('文案已有内容，不自动覆盖')
   backup=folder/'copy_before_material_fix.json'
   if not backup.exists():backup.write_text(json.dumps(old,ensure_ascii=False,indent=2),encoding='utf-8')
  data['copy']=value;data['copy_review_status']='pending_human_review';data['blockers']=[x for x in data['blockers'] if x!='俄文文案待生成']
