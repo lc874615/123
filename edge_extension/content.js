@@ -31,16 +31,9 @@ async function run(task){
   while(Date.now()<deadline){
    if(stop)throw Error('已暂停；请检查网页结果');
    if(task.set_mode&&!document.querySelector('[data-testid="stop-button"]')){
-    const sources=new Set();const candidates=[...document.querySelectorAll('main img')].filter(i=>{const src=i.currentSrc||i.src;if(!i.complete||i.naturalWidth<512||i.naturalHeight<512||previousImages.has(src)||sources.has(src))return false;sources.add(src);return true;});
-    if(candidates.length===(task.expected_images||8)){
-     for(let index=0;index<(task.expected_images||8);index++){
-      if(stop)throw Error('已暂停，部分图可能已保存');
-      const response=await fetch(candidates[index].currentSrc||candidates[index].src,{credentials:'include'});if(!response.ok)throw Error('图片读取失败');const blob=await response.blob();if(blob.size>20*1024*1024)throw Error('图片过大');
-      const image_b64=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result.split(',')[1]);r.onerror=reject;r.readAsDataURL(blob);});
-      const r=await chrome.runtime.sendMessage({kind:'set-result',task_id:task.id,index,image_b64});if(r?.error)throw Error(r.error);
-     }return;
-    }
-    if(candidates.length>(task.expected_images||8))throw Error('检测到超过8张新图片，顺序不明确，已暂停');
+    const images=await globalThis.OzonImages.collect(document,{expected:task.expected_images||8,previous:previousImages});
+    if(images){await saveSet(task,images);return;}
+
    }
    const replies=[...document.querySelectorAll('[data-message-author-role="assistant"]')];
    if(!task.set_mode&&replies.length>before&&!document.querySelector('[data-testid="stop-button"]')){
@@ -59,19 +52,23 @@ async function run(task){
   throw Error(task.set_mode?'未收齐8张独立图片（可能只返回单图或拼图）；已暂停，不自动重发':'等待超时，请检查验证、限额或网页变化；不会重发');
  }catch(e){await tell(task,'needs_attention',e.message).catch(()=>{});}finally{running=false;}
 }
-async function recover(task){
- try{
-  const all=[...document.querySelectorAll('main img')];
-  // Thumbnail galleries may expose only the selected full-size image. Fail clearly rather than substitute thumbnails.
-  const sources=new Set();const images=all.filter(i=>{const src=i.currentSrc||i.src;if(!i.complete||i.naturalWidth<512||i.naturalHeight<512||sources.has(src))return false;sources.add(src);return true;}).slice(-8);
-  if(images.length!==8)throw Error('本页未暴露8张完整图片资源，检测到'+images.length+'张；请展开图片列表后重试，不会重新生成');
-  for(let index=task.saved_count||0;index<(task.expected_images||8);index++){
-   const r=await fetch(images[index].currentSrc||images[index].src,{credentials:'include'});if(!r.ok)throw Error('图片资源读取失败');const blob=await r.blob();
-   const image_b64=await new Promise((resolve,reject)=>{const f=new FileReader();f.onload=()=>resolve(f.result.split(',')[1]);f.onerror=reject;f.readAsDataURL(blob);});
-   const result=await chrome.runtime.sendMessage({kind:'set-result',task_id:task.id,index,image_b64});if(result?.error)throw Error(result.error);
-  }
- }catch(e){await tell(task,'needs_attention',e.message).catch(()=>{});}
+async function saveSet(task,images){
+ // Re-submit the prefix too: the bridge checks its hashes before accepting a resumed sequence.
+ for(let index=0;index<images.length;index++){
+  if(stop)throw Error('已暂停，已有图片保留');
+  const result=await chrome.runtime.sendMessage({kind:'set-result',task_id:task.id,index,image_b64:images[index]});
+  if(result?.error)throw Error(result.error);
+ }
 }
+async function recover(task){
+ if(running)throw Error('本页正在执行任务');running=true;stop=false;
+ try{
+  const images=await globalThis.OzonImages.collect(document,{expected:task.expected_images||8});
+  if(!images)throw Error('本页未收齐完整原图，请展开当前回复的图片列表后重试；不会重新生成');
+  await saveSet(task,images);
+ }catch(e){await tell(task,'needs_attention',e.message).catch(()=>{});}finally{running=false;}
+}
+
 async function copy(task){
  stop=false;
  try{

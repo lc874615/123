@@ -50,12 +50,13 @@ class Store:
  def recover(self,sku):
   group=[t for t in self.tasks if t['sku']==sku and t.get('set_mode') and t['state'] in ('waiting','needs_attention','claimed','sending')]
   if len(group)!=1:raise ValueError('没有唯一可恢复的整套任务，请核对货号')
-  task=group[0];task.update(state='waiting',message='用户请求从现有网页恢复保存，不重新生成');self.save();return {'id':task['id'],'set_mode':True,'saved_count':len(task.get('received_images',[]))}
+  task=group[0];task.update(state='waiting',message='用户请求从现有网页恢复保存，不重新生成');self.save();return {'id':task['id'],'set_mode':True,'saved_count':len(task.get('received_images',[])),'expected_images':task.get('expected_images',8)}
  def set_result(self,tid,index,encoded):
   task=self.find(tid)
-  if not task.get('set_mode') or task['state'] not in ('claimed','sending','waiting'):raise ValueError('整套任务状态无效')
+  if not task.get('set_mode') or task['state'] not in ('claimed','sending','waiting','saved'):raise ValueError('整套任务状态无效')
   received=task.setdefault('received_images',[])
-  if index!=len(received) or not 0<=index<task.get('expected_images',8):raise ValueError('图片顺序错误或重复')
+  if type(index) is not int or not 0<=index<task.get('expected_images',8):raise ValueError('图片序号无效')
+  if index>len(received):raise ValueError('图片顺序错误')
   data=base64.b64decode(encoded,validate=True)
   if len(data)>20*1024*1024:raise ValueError('图片过大')
   with Image.open(io.BytesIO(data)) as im:im.verify();fmt=im.format
@@ -64,7 +65,11 @@ class Store:
   ext={'PNG':'png','JPEG':'jpg','WEBP':'webp'}.get(fmt)
   if not ext:raise ValueError('图片格式无效')
   digest=hashlib.sha256(data).hexdigest()
-  if any(x['sha256']==digest for x in received):raise ValueError('检测到重复图片')
+  if index<len(received):
+   if received[index]['sha256']!=digest:raise ValueError('恢复图片与已保存顺序不一致，已有文件保留')
+   return {'saved_count':len(received),'complete':task['state']=='saved'}
+  if index!=len(received) or task['state']=='saved':raise ValueError('图片顺序错误')
+  if any(x['sha256']==digest for x in received):raise ValueError('不同图片位置内容重复，已保留文件，请检查图片列表')
   folder=self.folder/'products'/task['sku']/'images';folder.mkdir(parents=True,exist_ok=True)
   path=folder/f'{TASKS[index][0]}.{ext}';path.write_bytes(data)
   received.append({'file':str(path),'sha256':digest,'role':'primary' if index==0 else 'gallery','order':index+1})
@@ -219,7 +224,7 @@ def main():
  import tkinter as tk
  from tkinter import ttk,messagebox,filedialog
  store=Store(DATA);token=secrets.token_urlsafe(32);http=server(store,token);threading.Thread(target=http.serve_forever,daemon=True).start()
- root=tk.Tk();root.title('Ozon Edge 本地服务 v0.10');root.geometry('1120x850')
+ root=tk.Tk();root.title('Ozon Edge 本地服务 v0.11');root.geometry('1120x850')
  shell=ttk.Frame(root);shell.pack(fill='both',expand=True);shell.rowconfigure(0,weight=1);shell.columnconfigure(0,weight=1)
  canvas=tk.Canvas(shell,highlightthickness=0);canvas.grid(row=0,column=0,sticky='nsew')
  outer_scroll=ttk.Scrollbar(shell,orient='vertical',command=canvas.yview);outer_scroll.grid(row=0,column=1,sticky='ns');canvas.configure(yscrollcommand=outer_scroll.set)

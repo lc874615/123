@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Ozon 本地作图助手",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "连接本地工具，在你当前的 ChatGPT 标签页执行单张作图任务。",
   "permissions": [
     "activeTab",

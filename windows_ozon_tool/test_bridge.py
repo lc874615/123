@@ -62,6 +62,17 @@ class Tests(unittest.TestCase):
  def test_set_rejects_wrong_index(self):
   other=Store(Path(self.tmp.name)/'set');other.create_set('SET','generic');task=other.claim()
   with self.assertRaises(ValueError):other.set_result(task['id'],1,'')
+ def test_set_resume_checks_prefix_and_is_idempotent(self):
+  other=Store(Path(self.tmp.name)/'resume');other.create_set('SET','generic');task=other.claim()
+  def encoded(color):
+   b=io.BytesIO();Image.new('RGB',(600,800),color).save(b,format='PNG');return base64.b64encode(b.getvalue()).decode()
+  first=encoded('red');second=encoded('blue')
+  other.set_result(task['id'],0,first)
+  self.assertEqual(other.set_result(task['id'],0,first)['saved_count'],1)
+  with self.assertRaisesRegex(ValueError,'顺序不一致'):other.set_result(task['id'],0,second)
+  with self.assertRaisesRegex(ValueError,'内容重复'):other.set_result(task['id'],1,first)
+  self.assertEqual(len(other.find(task['id'])['received_images']),1)
+  self.assertEqual(other.recover('SET')['expected_images'],8)
  def test_delete_preserves_files_and_blocks_active(self):
   task=self.s.claim()
   with self.assertRaises(ValueError):self.s.delete_task(task['id'])
