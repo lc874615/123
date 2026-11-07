@@ -411,7 +411,7 @@ def main():
  import tkinter as tk
  from tkinter import ttk,messagebox,filedialog
  store=Store(DATA);token=secrets.token_urlsafe(32);http=server(store,token);threading.Thread(target=http.serve_forever,daemon=True).start()
- root=tk.Tk();root.title('Ozon Edge 本地服务 v0.25');root.geometry('1120x850')
+ root=tk.Tk();root.title('Ozon Edge 本地服务 v0.26');root.geometry('1120x850')
  shell=ttk.Frame(root);shell.pack(fill='both',expand=True);shell.rowconfigure(0,weight=1);shell.columnconfigure(0,weight=1)
  canvas=tk.Canvas(shell,highlightthickness=0);canvas.grid(row=0,column=0,sticky='nsew')
  outer_scroll=ttk.Scrollbar(shell,orient='vertical',command=canvas.yview);outer_scroll.grid(row=0,column=1,sticky='ns');canvas.configure(yscrollcommand=outer_scroll.set)
@@ -436,6 +436,36 @@ def main():
  ttk.Button(win,text='选择共用详情图参考（全组一次）',command=choose_shared).pack(pady=4)
  connection=ttk.Label(win,text='等待扩展连接：请保存配对码并绑定ChatGPT标签');connection.pack(pady=4)
  grid=VariantGrid(win,base)
+ from pricing_service import PricingService,read as read_pricing
+ pricing=PricingService(DATA,store.lock);pricing_stop=threading.Event()
+ threading.Thread(target=pricing.worker,args=(pricing_stop,),daemon=True).start()
+ pricing_label=ttk.Label(win,text='自动售价：等待导入定价来源');pricing_label.pack(pady=3)
+ def pricing_settings():
+  dialog=tk.Toplevel(root);dialog.title('自动定价设置与来源');dialog.geometry('760x470')
+  info=tk.Text(dialog,height=13,wrap='word');info.pack(fill='both',expand=True,padx=10,pady=8)
+  def show():
+   info.delete('1.0','end')
+   for name,label in [('ogl','OGL运输表'),('commissions','rFBS佣金表'),('fx','央行汇率')]:
+    path=pricing.root/(name+'.json')
+    if not path.exists():info.insert('end',label+'：未配置\n');continue
+    value=read_pricing(path)
+    text=(value.get('filename','')+' '+value.get('effective_note','')) if name!='fx' else value['rub_per_cny']+' RUB/CNY，日期 '+value['date']+'\n'+value['source']+' '+value['url']
+    info.insert('end',label+'：'+text+'\n')
+   info.insert('end','\nOGL边界已确认按表中文字：重量及货值按文字，三边之和含上限。\n售价单位人民币；利润率=净利润/售价。每套成本不乘套装件数。\n计入rFBS佣金、OGL运输、贴单1元、尾程2.2%、提现1.2%、收单2%。\n央行汇率仅作参考；显示的售价为估算，提交上架前确认。\n内置佣金下载为2025-12-01版本；如有更新，请导入新的官方表。')
+  def run(action):
+   def work():
+    try:action();pricing.calculate_all();root.after(0,show)
+    except Exception as e:root.after(0,lambda text=str(e):messagebox.showerror('定价来源更新失败',text,parent=dialog))
+   threading.Thread(target=work,daemon=True).start()
+  def choose(kind):
+   path=filedialog.askopenfilename(parent=dialog,title='导入'+kind,filetypes=[('Excel','*.xlsx')])
+   if path:run(lambda:pricing.import_ogl(path) if kind=='OGL' else pricing.import_commissions(path))
+  ttk.Button(dialog,text='导入本地OGL计算表（一次配置）',command=lambda:choose('OGL')).pack(pady=3)
+  ttk.Button(dialog,text='导入官方rFBS佣金表',command=lambda:choose('佣金')).pack(pady=3)
+  ttk.Button(dialog,text='下载官方佣金表（2025-12-01版）',command=lambda:run(pricing.update_commissions)).pack(pady=3)
+  ttk.Button(dialog,text='立即获取央行参考汇率',command=lambda:run(pricing.update_fx)).pack(pady=3)
+  show()
+ ttk.Button(win,text='自动定价设置 / 运费表 / 央行汇率',command=pricing_settings).pack(pady=3)
  def create():
   try:
    records=grid.records()
@@ -483,8 +513,8 @@ def main():
   except Exception as e:messagebox.showerror('未创建',str(e))
  ttk.Label(win,text='每个变体：01固定为独立主图；02—08沿用首变体的7张详情图').pack(pady=3)
  ttk.Button(win,text='创建全部变体并自动处理',command=create).pack(pady=6)
- view=ttk.Treeview(win,columns=('sku','progress','status'),show='headings',height=8,selectmode='browse')
- for key,label,width in [('sku','变体货号',180),('progress','进度',140),('status','状态',460)]:view.heading(key,text=label,anchor='center');view.column(key,width=width,stretch=key=='status',anchor='center')
+ view=ttk.Treeview(win,columns=('sku','progress','price','status'),show='headings',height=8,selectmode='browse')
+ for key,label,width in [('sku','变体货号',180),('progress','进度',140),('price','售价估算（元）',140),('status','状态',460)]:view.heading(key,text=label,anchor='center');view.column(key,width=width,stretch=key=='status',anchor='center')
  view.pack(fill='both',expand=True,padx=15)
  visible=[]
  def selected():
@@ -496,10 +526,21 @@ def main():
   with store.lock:
    visible=[dict(t) for t in store.tasks];reason=store.queue_reason()
   connection.configure(text=reason)
+  fx_note=''
+  try:
+   fx=read_pricing(pricing.root/'fx.json');fx_note=' | 俄罗斯央行 '+fx['date']+'：1元='+fx['rub_per_cny']+'卢布'
+  except (OSError,ValueError,KeyError):pass
+  pricing_label.configure(text='自动售价：'+pricing.status+fx_note)
   for item in view.get_children():view.delete(item)
   for task in visible:
    if task['state']=='queued':task['message']=reason
-   view.insert('', 'end',iid=task['id'],values=task_view(task))
+   price='等待草稿'
+   path=DATA/'products'/task['sku']/'listing_bundle.json'
+   try:
+    bundle=read_pricing(path);price=bundle.get('price_cny') or '待补充'
+   except (OSError,ValueError):pass
+   sku,progress,status=task_view(task)
+   view.insert('', 'end',iid=task['id'],values=(sku,progress,price,status))
   if selection and view.exists(selection[0]):view.selection_set(selection[0])
   win.after(1500,refresh)
  def delete():
@@ -508,6 +549,58 @@ def main():
   try:
    with store.lock:store.delete_task(task['id'])
   except Exception as e:messagebox.showerror('未删除',str(e))
+ def pricing_details():
+  task=selected()
+  if not task:return
+  path=DATA/'products'/task['sku']/'listing_bundle.json'
+  if not path.exists():messagebox.showinfo('定价','等待素材完成及草稿创建');return
+  bundle=read_pricing(path);dialog=tk.Toplevel(root);dialog.title(task['sku']+' 售价明细');dialog.geometry('780x600')
+  text=tk.Text(dialog,wrap='word');text.pack(fill='both',expand=True)
+  result=bundle.get('auto_pricing')
+  text.insert('end',bundle.get('pricing_status','等待定价')+'\n')
+  if result:
+   text.insert('end','建议售价：¥'+result['price_cny']+'\n预计净利润：¥'+result['profit_cny']+'\n预计净利率：'+format(float(result['net_margin'])*100,'.2f')+'%\n物流渠道：'+result['logistics_tier']+'\n')
+   labels={'product_cost':'每套成本（含国内运费）','ogl_transport':'OGL运输','label':'贴单','commission':'rFBS佣金','last_mile':'尾程','withdrawal':'提现','acquiring':'收单'}
+   for key,value in result['fees_cny'].items():text.insert('end',labels.get(key,key)+'：¥'+value+'\n')
+   text.insert('end','\n参考汇率：'+result['fx']['rub_per_cny']+' RUB/CNY\n日期：'+result['fx']['date']+'\n来源：'+result['fx'].get('url','')+'\n佣金版本：'+result['commission_version']+'\n'+result['commission_source']+'\n运费来源：'+result['logistics_source']+'\n'+result.get('boundary_policy_note','')+'\n\n以上为参考汇率下的估算，实际结算与运输账单可能不同。')
+  text.configure(state='disabled')
+  def select_type():
+   try:
+    cfg=read_pricing(pricing.root/'commissions.json')
+    names=sorted({r['type_ru'] for r in cfg['records'] if r['brand'].casefold()=='all'})
+    picker=tk.Toplevel(dialog);picker.title('选择佣金表中的商品类型')
+    query=tk.StringVar();ttk.Entry(picker,textvariable=query,width=60).pack()
+    box=tk.Listbox(picker,width=90,height=15,exportselection=False);box.pack()
+    def filter_names(*args):
+     box.delete(0,'end')
+     for name in names:
+      if query.get().casefold() in name.casefold():box.insert('end',name)
+    query.trace_add('write',filter_names);filter_names()
+    def apply():
+     if not box.curselection():return
+     type_id=bundle.get('category',{}).get('type_id')
+     if not type_id:messagebox.showerror('未匹配','请先确认商品类目及类型');return
+     pricing.map_type(type_id,box.get(box.curselection()[0]));picker.destroy()
+     threading.Thread(target=pricing.calculate_all,daemon=True).start()
+    ttk.Button(picker,text='确认该类型对应的官方佣金',command=apply).pack()
+   except Exception as e:messagebox.showerror('无法选择',str(e))
+  def confirm_price():
+   try:
+    pricing.calculate_all()
+    with store.lock:
+     latest=read_pricing(path)
+     if not latest.get('auto_pricing'):raise ValueError('当前没有可确认的自动估算')
+     if not latest.get('category',{}).get('confirmed'):raise ValueError('请先确认商品类目，再确认售价')
+     latest['pricing_confirmed_fingerprint']=latest['pricing_fingerprint']
+     latest['blockers']=[b for b in latest.get('blockers',[]) if b!='售价估算待确认']
+     latest['pricing_status']='售价已确认'
+     from pricing_service import write as write_pricing
+     write_pricing(path,latest)
+    messagebox.showinfo('已确认','已确认此变体售价；成本、类目、运费或汇率变化后需重新确认。',parent=dialog)
+   except Exception as e:messagebox.showerror('未确认',str(e),parent=dialog)
+  ttk.Button(dialog,text='确认所选变体售价',command=confirm_price).pack(pady=4)
+  ttk.Button(dialog,text='佣金无法匹配时，选择官方商品类型',command=select_type).pack(pady=4)
+ ttk.Button(win,text='查看所选变体售价明细 / 佣金类型',command=pricing_details).pack(pady=4)
  ttk.Button(win,text='删除选中任务（保留素材文件）',command=delete).pack(pady=4)
  def recollect():
   task=selected()
@@ -574,7 +667,7 @@ def main():
     c=int(cat.get());t=int(typ.get())
     if min(c,t)<=0:raise ValueError('ID须为正整数')
     with store.lock:
-     latest=json.loads(path.read_text(encoding='utf-8-sig'));latest['category']={'description_category_id':c,'type_id':t,'confirmed':True,'attributes_revalidation_required':True};temp=path.with_suffix('.category.tmp');temp.write_text(json.dumps(latest,ensure_ascii=False,indent=2),encoding='utf-8');temp.replace(path)
+     latest=json.loads(path.read_text(encoding='utf-8-sig'));latest['category']={**next((x for x in candidates if x['description_category_id']==c and x['type_id']==t),{}),'description_category_id':c,'type_id':t,'confirmed':True,'attributes_revalidation_required':True};temp=path.with_suffix('.category.tmp');temp.write_text(json.dumps(latest,ensure_ascii=False,indent=2),encoding='utf-8');temp.replace(path)
     dialog.destroy()
    except Exception as e:messagebox.showerror('未保存',str(e))
   ttk.Button(dialog,text='确认此类目（发布前仍核验必填属性）',command=confirm).pack()
@@ -585,6 +678,6 @@ def main():
 
  ttk.Label(win,text='遇到 needs_attention：停止自动任务，先人工检查网页；不自动重发。图片在本工具 data/products 下。').pack()
  refresh()
- def close():http.shutdown();root.destroy()
+ def close():pricing_stop.set();http.shutdown();root.destroy()
  root.protocol('WM_DELETE_WINDOW',close);root.mainloop()
 if __name__=='__main__':main()

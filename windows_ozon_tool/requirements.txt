@@ -1,2 +1,4 @@
 Pillow>=10.4,<13
 imageio-ffmpeg>=0.5,<1
+
+openpyxl>=3.1,<4
