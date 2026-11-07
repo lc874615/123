@@ -75,6 +75,7 @@ async function copy(task){
   const editor=findEditor();if(!editor)throw Error('未找到输入框');
   if(editor.textContent.trim()||editor.value?.trim())throw Error('输入框已有内容，未覆盖');
   const excluded=globalThis.OzonCopy.snapshot();
+  const beforeCopy=new Set(document.querySelectorAll('[data-message-author-role="assistant"]'));
   const main=document.querySelector('main,[role="main"]');const oldText=main?.innerText||'';
   editor.focus();if(editor instanceof HTMLTextAreaElement){Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(editor,task.prompt);editor.dispatchEvent(new Event('input',{bubbles:true}));}else{document.execCommand('insertText',false,task.prompt);editor.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:task.prompt}));}
   await sleep(1000);const button=globalThis.OzonComposer.findSend(editor);if(!button)throw Error('未找到可用发送按钮');button.click();
@@ -83,7 +84,7 @@ async function copy(task){
    await sleep(1000);if(stop)throw Error('文案任务已暂停；生成可能仍在继续，请保存现有结果');
    changed=changed||(main?.innerText||'')!==oldText;
    if(document.querySelector('[data-testid="stop-button"]'))continue;
-   const value=globalThis.OzonCopy.latest(document,{exclude:excluded,sku:task.sku});
+   const value=globalThis.OzonCopy.latest(document,{exclude:excluded,sku:task.sku,before:beforeCopy});
    if(value){const signature=JSON.stringify(value);repeats=signature===stable?repeats+1:1;stable=signature;
     if(repeats>=3){const r=await chrome.runtime.sendMessage({kind:'copy-result',task_id:task.id,copy:value});if(r?.error)throw Error(r.error);return;}
    }else{stable='';repeats=0;}
@@ -92,7 +93,7 @@ async function copy(task){
  }catch(e){await chrome.runtime.sendMessage({kind:'copy-failed',task_id:task.id,message:e.message});}
 }
 async function recoverCopy(task){
- try{const value=globalThis.OzonCopy.latest(document,{sku:task.sku});if(!value)throw Error('本页没有与当前SKU匹配的文案，请生成一次带SKU的文案，不需要重做图片');const r=await chrome.runtime.sendMessage({kind:'copy-result',task_id:task.id,copy:value});if(r?.error)throw Error(r.error);}
+ try{const value=globalThis.OzonCopy.latest(document,{sku:task.sku,bindLatest:true});if(!value)throw Error('未找到含当前货号的完整文案JSON；请使用备用粘贴并核对货号，无需重做图片');const r=await chrome.runtime.sendMessage({kind:'copy-result',task_id:task.id,copy:value});if(r?.error)throw Error(r.error);}
  catch(e){await chrome.runtime.sendMessage({kind:'copy-failed',task_id:task.id,message:e.message});}
 }
 chrome.runtime.onMessage.addListener((m,sender,reply)=>{if(m.kind==='copy-recover'){recoverCopy(m.task);reply({ok:true});return false;}if(m.kind==='copy'){copy(m.task);reply({ok:true});return false;}if(m.kind==='recover'){recover(m.task);reply({ok:true});return false;}if(m.kind==='preflight'){reply(preflight());return false;}if(m.kind==='stop'){stop=true;reply({ok:true});}if(m.kind==='start'){run(m.task);reply({ok:true});}return false;});})();
