@@ -111,6 +111,20 @@ class Store:
    if len(group)==8 and all(x['state']=='saved' for x in group):
     threading.Thread(target=self.render_video,args=(t['sku'],),daemon=True).start()
   return {'saved':str(path),'state':t['state']}
+ def delete_task(self,tid):
+  task=self.find(tid)
+  if task['state'] in ('claimed','sending','waiting') or task.get('copy_state')=='running':raise ValueError('任务正在运行，请先停止后再删除')
+  self.tasks=[t for t in self.tasks if t['id']!=tid];self.save()
+ def next_copy(self):
+  for task in self.tasks:
+   if task.get('set_mode') and task.get('video') and not task.get('copy_state'):
+    from listing_bundle import prepare
+    folder=self.folder/'products'/task['sku']
+    if not (folder/'listing_bundle.json').exists():prepare(folder,task)
+    bundle=json.loads((folder/'listing_bundle.json').read_text(encoding='utf-8-sig'))
+    if bundle['copy'].get('title_ru'):task['copy_state']='done';self.save();continue
+    return task
+  return None
  def render_video(self,sku):
   from video import make_video
   with self.lock:group=sorted([dict(x) for x in self.tasks if x['sku']==sku],key=lambda x:x['name'])
@@ -150,18 +164,25 @@ def server(store,token,port=8765):
     with store.lock:
      if self.path=='/poll':
       active=any(t['state'] in ('claimed','sending','waiting','needs_attention','review') for t in store.tasks)
-      value={'ready':not active and any(t['state']=='queued' and t.get('auto_batch') for t in store.tasks)}
+      copy_task=store.next_copy() if not active else None
+      value={'ready':not active and any(t['state']=='queued' and t.get('auto_batch') for t in store.tasks),'copy_sku':copy_task['sku'] if copy_task else None}
      elif self.path=='/copy-task':
       sku=body['sku']
       if not re.fullmatch(r'[\w-]{1,80}',sku):raise ValueError('SKU格式无效')
       folder=store.folder/'products'/sku
       if not (folder/'listing_bundle.json').exists():raise ValueError('请先在本地准备上架草稿')
+      for task in store.tasks:
+       if task['sku']==sku:task['copy_state']='running'
+      store.save()
       value={'id':'copy:'+sku,'prompt':(folder/'copy_prompt.txt').read_text(encoding='utf-8')}
      elif self.path=='/copy-result':
       from listing_bundle import save_copy
       sku=body['sku']
       if not re.fullmatch(r'[\w-]{1,80}',sku):raise ValueError('SKU格式无效')
       value=save_copy(store.folder/'products'/sku,body['copy'])
+      for task in store.tasks:
+       if task['sku']==sku:task.update(copy_state='done',message='8图、视频、俄文文案及草稿已完成；待定价、类目和托管')
+      store.save()
      elif self.path=='/recover':value=store.recover(body['sku'])
      elif self.path=='/claim':value=store.claim()
      elif self.path=='/set-result':value=store.set_result(body['task_id'],body['index'],body['image_b64'])
@@ -201,37 +222,52 @@ def main():
    messagebox.showinfo('已创建','整套8图任务已排队，只发送一次；收到8张独立图后自动合成视频。')
   except Exception as e:messagebox.showerror('未创建',str(e))
  ttk.Button(win,text='创建并自动制作8图＋8秒视频',command=create).pack(pady=6)
- view=tk.Listbox(win,height=12);view.pack(fill='both',expand=True,padx=15)
+ view=ttk.Treeview(win,columns=('sku','progress','status'),show='headings',height=8,selectmode='browse')
+ for key,label,width in [('sku','商品SKU',180),('progress','进度',140),('status','状态',460)]:view.heading(key,text=label);view.column(key,width=width,stretch=key=='status')
+ view.pack(fill='both',expand=True,padx=15)
  visible=[]
+ def selected():
+  ids=view.selection()
+  return next((t for t in visible if ids and t['id']==ids[0]),None)
  def refresh():
   nonlocal visible
-  selected=view.curselection();tid=visible[selected[0]]['id'] if selected and selected[0]<len(visible) else None
+  selection=view.selection()
   with store.lock:visible=[dict(t) for t in store.tasks]
-  view.delete(0,'end')
-  for i,t in enumerate(visible):
-   view.insert('end',f"{t['sku']} / {t['name']} / {t['state']} / {t.get('message','')}")
-   if t['id']==tid:view.selection_set(i)
+  for item in view.get_children():view.delete(item)
+  labels={'queued':'排队中','saved':'图片已保存','cancelled':'已取消','needs_attention':'需处理','waiting':'处理中','claimed':'已领取','sending':'发送中','review':'待审核','approved':'已审核'}
+  for task in visible:
+   count=len(task.get('received_images',[]));progress=f'{count}/8 图' if task.get('set_mode') else task['name']
+   state='全部素材就绪' if task.get('copy_state')=='done' else labels.get(task['state'],task['state'])
+   view.insert('', 'end',iid=task['id'],values=(task['sku'],progress,state))
+  if selection and view.exists(selection[0]):view.selection_set(selection[0])
   win.after(1500,refresh)
+ def delete():
+  task=selected()
+  if not task:return
+  try:
+   with store.lock:store.delete_task(task['id'])
+  except Exception as e:messagebox.showerror('未删除',str(e))
+ ttk.Button(win,text='删除选中任务（保留素材文件）',command=delete).pack(pady=4)
  def approve():
-  sel=view.curselection()
-  if not sel:return
+  task=selected()
+  if not task:return
   with store.lock:
-   t=store.find(visible[sel[0]]['id'])
+   t=store.find(task['id'])
    if t['state']!='review':messagebox.showinfo('提示','仅可确认已保存并待审核的图片。异常请先在网页处理。');return
    t['state']='approved';store.save()
  ttk.Button(win,text='所选图片已人工检查，允许下一张',command=approve).pack(pady=6)
  def retry():
-  sel=view.curselection()
-  if not sel:return
+  task=selected()
+  if not task:return
   if not messagebox.askyesno('检查网页后恢复','请先在扩展中暂停并刷新ChatGPT。确认此任务没有发送、没有生成结果，才重新排队。是否确认？'):return
   try:
-   with store.lock:store.retry(visible[sel[0]]['id'])
+   with store.lock:store.retry(task['id'])
   except Exception as e:messagebox.showerror('未恢复',str(e))
  ttk.Button(win,text='所选异常任务未发送，重新排队',command=retry).pack(pady=4)
  def cancel_product():
-  sel=view.curselection()
-  if not sel:return
-  product=visible[sel[0]]['sku']
+  task=selected()
+  if not task:return
+  product=task['sku']
   if not messagebox.askyesno('取消商品任务',f'取消 {product} 的剩余任务？已有图片和视频不会删除。请先停止扩展自动批次。'):return
   try:
    with store.lock:store.cancel_product(product)
@@ -240,10 +276,10 @@ def main():
  def listing():
   from listing_bundle import prepare
   import os
-  sel=view.curselection()
-  if not sel:return
+  task=selected()
+  if not task:return
   try:
-   task=visible[sel[0]]
+   task=selected()
    target=prepare(DATA/'products'/task['sku'],task)
    messagebox.showinfo('草稿已准备',str(target)+'\n已保留素材与主图顺序；尚未提交Ozon。')
    if os.name=='nt':os.startfile(str(target.parent))

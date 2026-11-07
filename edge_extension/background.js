@@ -60,7 +60,11 @@ chrome.runtime.onMessage.addListener((m,sender,reply)=>{(async()=>{
 async function poll(){
  await restore();
  const x=await chrome.storage.local.get(['autoEnabled','autoTab']);if(!x.autoEnabled||busy)return;
- try{const q=await api('/poll',{});if(!q.ready)return;
+ try{const q=await api('/poll',{});if(q.copy_sku){
+ const tab=await chrome.tabs.get(x.autoTab);if(!tab.url||new URL(tab.url).origin!=='https://chatgpt.com')throw Error('绑定页面已关闭');
+ current=await api('/copy-task',{sku:q.copy_sku});runTab=tab.id;busy=true;await persist();
+ await chrome.scripting.executeScript({target:{tabId:tab.id},files:['composer.js','uploads.js','copy_parser.js','content.js']});await chrome.tabs.sendMessage(tab.id,{kind:'copy',task:current});await status('图片及视频完成，自动生成俄文文案');return;
+ }if(!q.ready)return;
  const tab=await chrome.tabs.get(x.autoTab);if(!tab.url||new URL(tab.url).origin!=='https://chatgpt.com')throw Error('绑定标签已关闭或离开ChatGPT');
  // Reuse the same guarded run path, without sending a runtime message to ourselves.
  await runAuto(tab);

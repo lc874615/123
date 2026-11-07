@@ -62,4 +62,8 @@ class Tests(unittest.TestCase):
  def test_set_rejects_wrong_index(self):
   other=Store(Path(self.tmp.name)/'set');other.create_set('SET','generic');task=other.claim()
   with self.assertRaises(ValueError):other.set_result(task['id'],1,'')
+ def test_delete_preserves_files_and_blocks_active(self):
+  task=self.s.claim()
+  with self.assertRaises(ValueError):self.s.delete_task(task['id'])
+  self.s.find(task['id'])['state']='cancelled';self.s.delete_task(task['id']);self.assertEqual(len(self.s.tasks),7)
 if __name__=='__main__':unittest.main()
