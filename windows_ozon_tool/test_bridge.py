@@ -51,4 +51,15 @@ class Tests(unittest.TestCase):
  def test_cancel_rejects_running_task(self):
   self.s.claim()
   with self.assertRaises(ValueError):self.s.cancel_product('TEST')
+ def test_set_mode_orders_primary_and_video(self):
+  from unittest.mock import patch
+  other=Store(Path(self.tmp.name)/'set');other.create_set('SET','generic product');task=other.claim();self.assertTrue(task['set_mode']);self.assertEqual(len(other.tasks),1)
+  with patch('threading.Thread') as thread:
+   for i in range(8):
+    b=io.BytesIO();Image.new('RGB',(600,800),(i*20,0,0)).save(b,format='PNG');other.set_result(task['id'],i,base64.b64encode(b.getvalue()).decode())
+   thread.assert_called_once()
+  t=other.find(task['id']);self.assertEqual(t['state'],'saved');self.assertEqual(t['received_images'][0]['role'],'primary');self.assertEqual(len(t['received_images']),8)
+ def test_set_rejects_wrong_index(self):
+  other=Store(Path(self.tmp.name)/'set');other.create_set('SET','generic');task=other.claim()
+  with self.assertRaises(ValueError):other.set_result(task['id'],1,'')
 if __name__=='__main__':unittest.main()

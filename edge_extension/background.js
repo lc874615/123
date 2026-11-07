@@ -15,8 +15,9 @@ chrome.runtime.onMessage.addListener((m,sender,reply)=>{(async()=>{
   catch(e){if(current)await api('/event',{task_id:current.id,state:'needs_attention',message:e.message}).catch(()=>{});busy=false;current=null;throw e;}
  }
  if(m.kind==='stop'){await chrome.storage.local.set({autoEnabled:false});await chrome.alarms.clear('ozon-poll');if(runTab!==null)await chrome.tabs.sendMessage(runTab,{kind:'stop'}).catch(()=>{});if(current)await api('/event',{task_id:current.id,state:'needs_attention',message:'用户暂停；请检查网页，禁止直接重发。'});busy=false;current=null;await status('已请求暂停，网页中的生成可能仍在继续。');return {status:'已暂停'};}
- if(['result','event'].includes(m.kind)){
+ if(['result','set-result','event'].includes(m.kind)){
   if(sender.tab?.id!==runTab||!current||m.task_id!==current.id)throw Error('任务与标签页不匹配');
+  if(m.kind==='set-result'){const r=await api('/set-result',{task_id:current.id,index:m.index,image_b64:m.image_b64});if(r.saved_count===8){busy=false;current=null;await status('8张图已保存，第1张为主图；本地正在合成8秒视频。');}return {ok:true};}
   if(m.kind==='result'){await api('/result',{task_id:current.id,image_b64:m.image_b64});busy=false;current=null;await status('图片已保存，自动继续下一张；全部完成后本地合成视频。');setTimeout(poll,3000);return {ok:true};}
   await api('/event',{task_id:current.id,state:m.state,message:m.message});await status(m.message);
   if(m.state==='needs_attention'){busy=false;current=null;await chrome.storage.local.set({autoEnabled:false});}return {ok:true};

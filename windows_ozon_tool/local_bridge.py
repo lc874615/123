@@ -38,6 +38,35 @@ class Store:
   for name,brief in TASKS:
    self.tasks.append({'id':secrets.token_hex(16),'sku':sku,'name':name,'state':'queued','references':refs,'prompt':'根据本对话已上传原图制作一张独立Ozon商品图，3:4竖版，自然俄文。保持外观一致，禁止虚构属性、数量或尺寸。包装尺寸不得作为商品尺寸。任务：'+brief+'。商品事实：'+facts})
   self.save()
+ def create_set(self,sku,facts,references=None):
+  self.create(sku,facts,references)
+  group=[t for t in self.tasks if t['sku']==sku]
+  for t in group:t.update(state='cancelled',message='由一次提交整套任务替代')
+  task=dict(group[0]);task.update(id=secrets.token_hex(16),name='00_full_set',state='queued',auto_batch=True,set_mode=True,received_images=[])
+  task['prompt']='请一次完成8张独立的Ozon商品图片，必须是8个独立图片文件，不要拼图，不要把8个画面合成一张。按顺序输出：'+ '；'.join(f'{i+1}. {brief}' for i,(_,brief) in enumerate(TASKS))+ '。第1张是商品主图，展示真实销售数量。每张3:4竖版，自然俄文，风格一致，保持原图外观。严禁虚构尺寸、材质、配件和功能，包装尺寸不能当作商品尺寸。商品事实：'+facts
+  self.tasks=[t for t in self.tasks if t['sku']!=sku]+[task];self.save()
+ def set_result(self,tid,index,encoded):
+  task=self.find(tid)
+  if not task.get('set_mode') or task['state'] not in ('claimed','sending','waiting'):raise ValueError('整套任务状态无效')
+  received=task.setdefault('received_images',[])
+  if index!=len(received) or not 0<=index<8:raise ValueError('图片顺序错误或重复')
+  data=base64.b64decode(encoded,validate=True)
+  if len(data)>20*1024*1024:raise ValueError('图片过大')
+  with Image.open(io.BytesIO(data)) as im:im.verify();fmt=im.format
+  with Image.open(io.BytesIO(data)) as im:
+   if min(im.size)<512:raise ValueError('图片分辨率不足')
+  ext={'PNG':'png','JPEG':'jpg','WEBP':'webp'}.get(fmt)
+  if not ext:raise ValueError('图片格式无效')
+  digest=hashlib.sha256(data).hexdigest()
+  if any(x['sha256']==digest for x in received):raise ValueError('检测到重复图片')
+  folder=self.folder/'products'/task['sku']/'images';folder.mkdir(parents=True,exist_ok=True)
+  path=folder/f'{TASKS[index][0]}.{ext}';path.write_bytes(data)
+  received.append({'file':str(path),'sha256':digest,'role':'primary' if index==0 else 'gallery','order':index+1})
+  task.update(state='saved' if len(received)==8 else 'waiting',message=f'已保存 {len(received)}/8 张独立图片');self.save()
+  if len(received)==8:
+   (folder.parent/'image_manifest.json').write_text(json.dumps(received,ensure_ascii=False,indent=2),encoding='utf-8')
+   threading.Thread(target=self.render_video,args=(task['sku'],),daemon=True).start()
+  return {'saved_count':len(received)}
  def claim(self):
   if any(t['state'] in ('claimed','sending','waiting','needs_attention','review') for t in self.tasks):raise ValueError('请先审核上一任务或处理异常，不能继续发送')
   t=next((t for t in self.tasks if t['state']=='queued'),None)
@@ -82,7 +111,8 @@ class Store:
   from video import make_video
   with self.lock:group=sorted([dict(x) for x in self.tasks if x['sku']==sku],key=lambda x:x['name'])
   try:
-   output=make_video([x['file'] for x in group],self.folder/'products'/sku/'video'/'product_8s.mp4')
+   files=[x['file'] for x in group[0]['received_images']] if len(group)==1 and group[0].get('set_mode') else [x['file'] for x in group]
+   output=make_video(files,self.folder/'products'/sku/'video'/'product_8s.mp4')
    with self.lock:
     for x in self.tasks:
      if x['sku']==sku:x.update(video=output,message='8张图片及8秒视频已完成，待上架前审核')
@@ -118,6 +148,7 @@ def server(store,token,port=8765):
       active=any(t['state'] in ('claimed','sending','waiting','needs_attention','review') for t in store.tasks)
       value={'ready':not active and any(t['state']=='queued' and t.get('auto_batch') for t in store.tasks)}
      elif self.path=='/claim':value=store.claim()
+     elif self.path=='/set-result':value=store.set_result(body['task_id'],body['index'],body['image_b64'])
      elif self.path=='/result':value=store.result(body['task_id'],body['image_b64'])
      elif self.path=='/event':
       t=store.find(body['task_id']);state=body['state']
@@ -132,7 +163,7 @@ def main():
  import tkinter as tk
  from tkinter import ttk,messagebox,filedialog
  store=Store(DATA);token=secrets.token_urlsafe(32);http=server(store,token);threading.Thread(target=http.serve_forever,daemon=True).start()
- win=tk.Tk();win.title('Ozon Edge 本地服务 v0.4.1');win.geometry('850x700')
+ win=tk.Tk();win.title('Ozon Edge 本地服务 v0.5');win.geometry('850x700')
  ttk.Label(win,text='本地服务已启动。将配对码粘贴至 Edge 扩展；可在下方选择原图，扩展将附加到当前ChatGPT对话。').pack(pady=8)
  code=ttk.Entry(win,width=65);code.insert(0,token);code.pack()
  ttk.Label(win,text='SKU（不含空格）').pack();sku=ttk.Entry(win,width=60);sku.pack()
@@ -147,11 +178,11 @@ def main():
  def create():
   try:
    with store.lock:
-    store.create(sku.get().strip(),facts.get('1.0','end').strip(),references)
+    store.create_set(sku.get().strip(),facts.get('1.0','end').strip(),references)
     for task in store.tasks:
      if task['sku']==sku.get().strip():task['auto_batch']=True
     store.save()
-   messagebox.showinfo('已创建','8张任务已排队；已启用自动批次的扩展会开始执行。完成后自动合成8秒视频。')
+   messagebox.showinfo('已创建','整套8图任务已排队，只发送一次；收到8张独立图后自动合成视频。')
   except Exception as e:messagebox.showerror('未创建',str(e))
  ttk.Button(win,text='创建并自动制作8图＋8秒视频',command=create).pack(pady=6)
  view=tk.Listbox(win,height=12);view.pack(fill='both',expand=True,padx=15)

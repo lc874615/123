@@ -17,6 +17,7 @@ async function run(task){
   if(task.references?.length){
    await globalThis.OzonUploads.upload(task.references,{editor,sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message)});
   }
+  const previousImages=new Set([...document.querySelectorAll('img')].map(i=>i.currentSrc||i.src));
   const before=document.querySelectorAll('[data-message-author-role="assistant"]').length;
   editor=findEditor();if(!editor)throw Error('上传后输入框变化，请刷新对话；未发送');
   editor.focus();
@@ -26,13 +27,25 @@ async function run(task){
   while(Date.now()<sendDeadline&&!stop){editor=findEditor();if(editor)send=globalThis.OzonComposer.findSend(editor);if(send)break;await sleep(300);}
   if(!send)throw Error('未识别到唯一可用发送按钮；提示词已保留，请人工检查。未自动发送');
   await tell(task,'sending','即将发送，异常时不会自动重发');send.click();await tell(task,'waiting','已点击发送，等待新回复生成图片');
-  const deadline=Date.now()+10*60*1000;
+  const deadline=Date.now()+20*60*1000;
   while(Date.now()<deadline){
    if(stop)throw Error('已暂停；请检查网页结果');
+   if(task.set_mode&&!document.querySelector('[data-testid="stop-button"]')){
+    const sources=new Set();const candidates=[...document.querySelectorAll('main img')].filter(i=>{const src=i.currentSrc||i.src;if(!i.complete||i.naturalWidth<512||i.naturalHeight<512||previousImages.has(src)||sources.has(src))return false;sources.add(src);return true;});
+    if(candidates.length===8){
+     for(let index=0;index<8;index++){
+      if(stop)throw Error('已暂停，部分图可能已保存');
+      const response=await fetch(candidates[index].currentSrc||candidates[index].src,{credentials:'include'});if(!response.ok)throw Error('图片读取失败');const blob=await response.blob();if(blob.size>20*1024*1024)throw Error('图片过大');
+      const image_b64=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result.split(',')[1]);r.onerror=reject;r.readAsDataURL(blob);});
+      const r=await chrome.runtime.sendMessage({kind:'set-result',task_id:task.id,index,image_b64});if(r?.error)throw Error(r.error);
+     }return;
+    }
+    if(candidates.length>8)throw Error('检测到超过8张新图片，顺序不明确，已暂停');
+   }
    const replies=[...document.querySelectorAll('[data-message-author-role="assistant"]')];
-   if(replies.length>before&&!document.querySelector('[data-testid="stop-button"]')){
+   if(!task.set_mode&&replies.length>before&&!document.querySelector('[data-testid="stop-button"]')){
     const last=replies.at(-1);
-    const imgs=[...last.querySelectorAll('img')].filter(i=>i.complete&&i.naturalWidth>=512&&i.naturalHeight>=512);
+    const imgs=[...(last.closest('article')||last).querySelectorAll('img')].filter(i=>i.complete&&i.naturalWidth>=512&&i.naturalHeight>=512);
     if(imgs.length===1){
      const image=imgs[0];const response=await fetch(image.currentSrc||image.src,{credentials:'include'});if(!response.ok)throw Error('原图读取失败，请手动下载');const blob=await response.blob();
      if(blob.size>20*1024*1024)throw Error('图片超过20MB，请手动处理');
@@ -43,7 +56,7 @@ async function run(task){
    }
    await sleep(1500);
   }
-  throw Error('等待超时，请检查验证、限额或网页变化；不会重发');
+  throw Error(task.set_mode?'未收齐8张独立图片（可能只返回单图或拼图）；已暂停，不自动重发':'等待超时，请检查验证、限额或网页变化；不会重发');
  }catch(e){await tell(task,'needs_attention',e.message).catch(()=>{});}finally{running=false;}
 }
 chrome.runtime.onMessage.addListener((m,sender,reply)=>{if(m.kind==='preflight'){reply(preflight());return false;}if(m.kind==='stop'){stop=true;reply({ok:true});}if(m.kind==='start'){run(m.task);reply({ok:true});}return false;});})();
