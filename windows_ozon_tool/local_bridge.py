@@ -175,6 +175,11 @@ def server(store,token,port=8765):
        if task['sku']==sku:task['copy_state']='running'
       store.save()
       value={'id':'copy:'+sku,'prompt':(folder/'copy_prompt.txt').read_text(encoding='utf-8')}
+     elif self.path=='/copy-failed':
+      sku=body['sku']
+      for task in store.tasks:
+       if task['sku']==sku:task.update(copy_state='needs_attention',message=str(body.get('message','文案保存待处理'))[:300])
+      store.save();value={'ok':True}
      elif self.path=='/copy-result':
       from listing_bundle import save_copy
       sku=body['sku']
@@ -237,7 +242,7 @@ def main():
   labels={'queued':'排队中','saved':'图片已保存','cancelled':'已取消','needs_attention':'需处理','waiting':'处理中','claimed':'已领取','sending':'发送中','review':'待审核','approved':'已审核'}
   for task in visible:
    count=len(task.get('received_images',[]));progress=f'{count}/8 图' if task.get('set_mode') else task['name']
-   state='全部素材就绪' if task.get('copy_state')=='done' else labels.get(task['state'],task['state'])
+   state='全部素材就绪' if task.get('copy_state')=='done' else ('文案待处理' if task.get('copy_state')=='needs_attention' else ('文案生成中' if task.get('copy_state')=='running' else labels.get(task['state'],task['state'])))
    view.insert('', 'end',iid=task['id'],values=(task['sku'],progress,state))
   if selection and view.exists(selection[0]):view.selection_set(selection[0])
   win.after(1500,refresh)

@@ -29,7 +29,7 @@ chrome.runtime.onMessage.addListener((m,sender,reply)=>{(async()=>{
   await chrome.scripting.executeScript({target:{tabId:tab.id},files:['composer.js','uploads.js','copy_parser.js','content.js']});
   await chrome.tabs.sendMessage(tab.id,{kind:'copy-recover',task:current});return {status:'正在保存本页现有文案，不重新发送'};
  }
- if(m.kind==='copy-failed'){if(sender.tab?.id!==runTab||!current||m.task_id!==current.id)throw Error('任务不匹配');busy=false;current=null;await persist();await status(m.message);return {ok:true};}
+ if(m.kind==='copy-failed'){if(sender.tab?.id!==runTab||!current||m.task_id!==current.id)throw Error('任务不匹配');await api('/copy-failed',{sku:current.id.slice(5),message:m.message});busy=false;current=null;await persist();await status(m.message);return {ok:true};}
  if(m.kind==='copy-result'){
   if(sender.tab?.id!==runTab||!current||m.task_id!==current.id)throw Error('文案任务不匹配');
   await api('/copy-result',{sku:current.id.slice(5),copy:m.copy});busy=false;current=null;await persist();await status('俄文文案已保存至本地草稿，待审核');return {ok:true};

@@ -73,20 +73,25 @@ async function recover(task){
  }catch(e){await tell(task,'needs_attention',e.message).catch(()=>{});}
 }
 async function copy(task){
+ stop=false;
  try{
   const editor=findEditor();if(!editor)throw Error('未找到输入框');
   if(editor.textContent.trim()||editor.value?.trim())throw Error('输入框已有内容，未覆盖');
-  const before=document.querySelectorAll('[data-message-author-role="assistant"]').length;
-  editor.focus();if(editor instanceof HTMLTextAreaElement){Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(editor,task.prompt);editor.dispatchEvent(new Event('input',{bubbles:true}));}else document.execCommand('insertText',false,task.prompt);
+  const excluded=globalThis.OzonCopy.snapshot();
+  const main=document.querySelector('main,[role="main"]');const oldText=main?.innerText||'';
+  editor.focus();if(editor instanceof HTMLTextAreaElement){Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(editor,task.prompt);editor.dispatchEvent(new Event('input',{bubbles:true}));}else{document.execCommand('insertText',false,task.prompt);editor.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:task.prompt}));}
   await sleep(1000);const button=globalThis.OzonComposer.findSend(editor);if(!button)throw Error('未找到可用发送按钮');button.click();
-  const until=Date.now()+180000;
+  const until=Date.now()+300000;let stable='',repeats=0,changed=false;
   while(Date.now()<until){
-   await sleep(1000);const replies=[...document.querySelectorAll('[data-message-author-role="assistant"]')];
-   if(replies.length>before&&!document.querySelector('[data-testid="stop-button"]')){
-    const node=replies.at(-1);const value=globalThis.OzonCopy.parse(node.innerText||node.textContent)||globalThis.OzonCopy.parse((node.closest('article')||node).innerText);
-    if(value){const r=await chrome.runtime.sendMessage({kind:'copy-result',task_id:task.id,copy:value});if(r?.error)throw Error(r.error);return;}
-   }
-  }throw Error('文案生成超时或JSON无效，未自动重发');
+   await sleep(1000);if(stop)throw Error('文案任务已暂停；生成可能仍在继续，请保存现有结果');
+   changed=changed||(main?.innerText||'')!==oldText;
+   if(document.querySelector('[data-testid="stop-button"]'))continue;
+   const value=globalThis.OzonCopy.latest(document,{exclude:excluded});
+   if(value){const signature=JSON.stringify(value);repeats=signature===stable?repeats+1:1;stable=signature;
+    if(repeats>=3){const r=await chrome.runtime.sendMessage({kind:'copy-result',task_id:task.id,copy:value});if(r?.error)throw Error(r.error);return;}
+   }else{stable='';repeats=0;}
+  }
+  throw Error(changed?'已检测到页面更新，但未提取到新的完整文案JSON；请使用保存现有文案，不要重新生成':'未检测到新回复，可能生成未完成或验证阻塞；未自动重发');
  }catch(e){await chrome.runtime.sendMessage({kind:'copy-failed',task_id:task.id,message:e.message});}
 }
 async function recoverCopy(task){

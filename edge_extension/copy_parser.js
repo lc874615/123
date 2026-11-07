@@ -12,10 +12,11 @@
    }
   }return null;
  }
- function latest(doc=document){
+ function latest(doc=document,options={}){
   const selectors=['[data-message-author-role="assistant"]','main article .markdown','main .markdown','main article','[data-testid^="conversation-turn"]','[role="main"]','main'];
-  for(const sel of selectors){const nodes=[...doc.querySelectorAll(sel)];for(let i=nodes.length-1;i>=0;i--){const node=nodes[i];const blocks=[...node.querySelectorAll('pre,code')].reverse();for(const b of [node,...blocks]){for(const text of [b.innerText,b.textContent]){const v=parse(text);if(v)return v;}}}}
+  for(const sel of selectors){const nodes=[...doc.querySelectorAll(sel)];for(let i=nodes.length-1;i>=0;i--){const node=nodes[i];const blocks=[...node.querySelectorAll('pre,code')].reverse();for(const b of [node,...blocks]){for(const text of [b.innerText,b.textContent]){const v=parse(text);if(v&&!options.exclude?.has(JSON.stringify(v)))return v;}}}}
   return null;
  }
- globalThis.OzonCopy={parse,latest};
+ function snapshot(doc=document){const values=new Set();for(const node of doc.querySelectorAll('[data-message-author-role="assistant"],main article,main .markdown,[data-testid^="conversation-turn"]')){for(const text of [node.innerText,node.textContent]){const v=parse(text);if(v)values.add(JSON.stringify(v));}}return values;}
+ globalThis.OzonCopy={parse,latest,snapshot};
 })();
