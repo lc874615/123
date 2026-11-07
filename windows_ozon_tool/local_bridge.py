@@ -36,7 +36,7 @@ class Store:
     path=folder/f'{i+1:02d}.{ext}';path.write_bytes(raw)
     refs.append({'path':str(path),'name':path.name,'mime':mime})
   for name,brief in TASKS:
-   self.tasks.append({'id':secrets.token_hex(16),'sku':sku,'name':name,'state':'queued','references':refs,'prompt':'根据本对话已上传原图制作一张独立Ozon商品图，3:4竖版，自然俄文。保持外观一致，禁止虚构属性、数量或尺寸。包装尺寸不得作为商品尺寸。任务：'+brief+'。商品事实：'+facts})
+   self.tasks.append({'id':secrets.token_hex(16),'sku':sku,'facts':facts,'name':name,'state':'queued','references':refs,'prompt':'根据本对话已上传原图制作一张独立Ozon商品图，3:4竖版，自然俄文。保持外观一致，禁止虚构属性、数量或尺寸。包装尺寸不得作为商品尺寸。任务：'+brief+'。商品事实：'+facts})
   self.save()
  def create_set(self,sku,facts,references=None):
   self.create(sku,facts,references)
@@ -226,6 +226,19 @@ def main():
    with store.lock:store.cancel_product(product)
   except Exception as e:messagebox.showerror('未取消',str(e))
  ttk.Button(win,text='取消所选商品剩余任务（保留文件）',command=cancel_product).pack(pady=4)
+ def listing():
+  from listing_bundle import prepare
+  import os
+  sel=view.curselection()
+  if not sel:return
+  try:
+   task=visible[sel[0]]
+   target=prepare(DATA/'products'/task['sku'],task)
+   messagebox.showinfo('草稿已准备',str(target)+'\n已保留素材与主图顺序；尚未提交Ozon。')
+   if os.name=='nt':os.startfile(str(target.parent))
+  except Exception as e:messagebox.showerror('未准备',str(e))
+ ttk.Button(win,text='准备所选商品上架草稿并打开文件夹',command=listing).pack(pady=4)
+
 
 
  ttk.Label(win,text='遇到 needs_attention：停止自动任务，先人工检查网页；不自动重发。图片在本工具 data/products 下。').pack()
