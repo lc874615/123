@@ -31,7 +31,7 @@ test('alarm restores SKU and finishes copy after background suspension without r
 });
 test('obsolete persisted image task is reconciled before claiming one queued task',async()=>{
  const state={pairToken:'test',autoEnabled:true,autoTab:3,activeTask:{id:'DELETED',sku:'OLD',tabId:3}},calls=[],sent=[];
- const chrome={storage:{local:{get:async()=>structuredClone(state),set:async x=>Object.assign(state,structuredClone(x)),remove:async k=>delete state[k]}},runtime:{onMessage:{addListener:()=>{}}},alarms:{onAlarm:{addListener:()=>{}}},scripting:{executeScript:async()=>{}},tabs:{get:async()=>({id:3,url:'https://chatgpt.com/c/test'}),sendMessage:async(id,m)=>{sent.push(m.kind);return m.kind==='preflight'?{ready:true,version:'0.24.0'}:{ok:true};}}};
+ const chrome={storage:{local:{get:async()=>structuredClone(state),set:async x=>Object.assign(state,structuredClone(x)),remove:async k=>delete state[k]}},runtime:{onMessage:{addListener:()=>{}}},alarms:{onAlarm:{addListener:()=>{}}},scripting:{executeScript:async()=>{}},tabs:{get:async()=>({id:3,url:'https://chatgpt.com/c/test'}),sendMessage:async(id,m)=>{sent.push(m.kind);return m.kind==='preflight'?{ready:true,version:'0.25.0'}:{ok:true};}}};
  const ctx={chrome,setTimeout,clearTimeout,AbortSignal,URL,fetch:async(url,options)=>{calls.push(url);let value={ok:true};if(url.endsWith('/task-status'))value={found:false};if(url.endsWith('/poll'))value={ready:true};if(url.endsWith('/claim'))value={id:'NEW_TASK',sku:'NEW'};return {ok:true,json:async()=>value};}};
  vm.runInNewContext(fs.readFileSync(__dirname+'/background.js','utf8'),ctx);await vm.runInNewContext('poll()',ctx);
  assert.equal(state.activeTask.id,'NEW_TASK');assert.deepEqual(sent,['preflight','start']);assert.equal(calls.filter(x=>x.endsWith('/claim')).length,1);
@@ -53,10 +53,23 @@ test('download capture renames only the intended service file and cleans listene
 });
 test('manual recovery and diagnostics use the bound work tab even when popup opens elsewhere',async()=>{
  let listener;const state={pairToken:'test',autoTab:7,autoEnabled:false};const injected=[],sent=[];
- const chrome={storage:{local:{get:async()=>structuredClone(state),set:async x=>Object.assign(state,structuredClone(x)),remove:async k=>delete state[k]}},runtime:{onMessage:{addListener:f=>listener=f}},alarms:{onAlarm:{addListener:()=>{}}},tabs:{get:async id=>({id,url:'https://chatgpt.com/c/'+id,title:id===7?'生成8张Ozon商品图':'工具沟通'}),sendMessage:async(id,m)=>{sent.push([id,m.kind]);return {ok:true};}},scripting:{executeScript:async args=>{injected.push(args.target.tabId);return args.func?[{result:{version:'0.24.0'}}]:[];}}};
+ const chrome={storage:{local:{get:async()=>structuredClone(state),set:async x=>Object.assign(state,structuredClone(x)),remove:async k=>delete state[k]}},runtime:{onMessage:{addListener:f=>listener=f}},alarms:{onAlarm:{addListener:()=>{}}},tabs:{get:async id=>({id,url:'https://chatgpt.com/c/'+id,title:id===7?'生成8张Ozon商品图':'工具沟通'}),sendMessage:async(id,m)=>{sent.push([id,m.kind]);return {ok:true};}},scripting:{executeScript:async args=>{injected.push(args.target.tabId);return args.func?[{result:{version:'0.25.0'}}]:[];}}};
  const ctx={chrome,setTimeout,clearTimeout,AbortSignal,URL,fetch:async(url)=>({ok:true,json:async()=>url.endsWith('/recover')?{id:'TASK',sku:'GROUP(1)'}:{blockers:[]}})};
  vm.runInNewContext(fs.readFileSync(__dirname+'/background.js','utf8'),ctx);
  const call=message=>new Promise(resolve=>listener(message,{},resolve));
  await call({kind:'recover',tabId:3,sku:'GROUP(1)'});assert.deepEqual(sent,[[7,'recover']]);assert.equal(state.activeTask.tabId,7);
  const diag=await call({kind:'diagnose',tabId:3});assert.equal(diag.diagnostic.target.title,'生成8张Ozon商品图');assert.equal(diag.diagnostic.target.sameAsOpenedPopup,false);assert.ok(injected.every(id=>id===7));
+});
+test('overlapping polls cannot claim two tasks and completed summary replaces stale video status',async()=>{
+ const state={pairToken:'test',autoEnabled:true,autoTab:3,status:'本地正在合成8秒视频。'},calls=[];
+ const chrome={storage:{local:{get:async()=>structuredClone(state),set:async x=>Object.assign(state,structuredClone(x)),remove:async k=>delete state[k]}},runtime:{onMessage:{addListener:()=>{}}},alarms:{onAlarm:{addListener:()=>{}}}};
+ const ctx={chrome,setTimeout,clearTimeout,AbortSignal,URL,fetch:async(url)=>{calls.push(url);await new Promise(r=>setTimeout(r,10));return {ok:true,json:async()=>({ready:false,summary:'3个变体素材已完成：8图、视频、共用俄语文案；待上架审核'})};}};
+ vm.runInNewContext(fs.readFileSync(__dirname+'/background.js','utf8'),ctx);await vm.runInNewContext('Promise.all([poll(),poll(),poll()])',ctx);
+ assert.equal(calls.filter(u=>u.endsWith('/poll')).length,1);assert.match(state.status,/3个变体素材已完成/);assert.ok(!state.status.includes('正在合成'));
+});
+test('stop clears extension activity even when the local notification fails',async()=>{
+ let listener;const state={pairToken:'old-token',autoEnabled:true,activeTask:{id:'TASK',tabId:3,sku:'GROUP(1)'}};
+ const chrome={storage:{local:{get:async()=>structuredClone(state),set:async x=>Object.assign(state,structuredClone(x)),remove:async k=>delete state[k]}},runtime:{onMessage:{addListener:f=>listener=f}},alarms:{clear:async()=>{},onAlarm:{addListener:()=>{}}},tabs:{sendMessage:async()=>({ok:true})}};
+ const ctx={chrome,setTimeout,clearTimeout,AbortSignal,URL,fetch:async()=>({ok:false,json:async()=>({error:'配对失败'})})};vm.runInNewContext(fs.readFileSync(__dirname+'/background.js','utf8'),ctx);
+ const result=await new Promise(resolve=>listener({kind:'stop'},{},resolve));assert.equal(state.autoEnabled,false);assert.equal(state.activeTask,undefined);assert.match(result.status,/已暂停/);assert.match(result.status,/配对失败/);
 });

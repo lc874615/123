@@ -101,6 +101,11 @@ class Store:
   digest=hashlib.sha256(data).hexdigest()
   if index<len(received):
    if received[index]['sha256']!=digest:raise ImageOrderConflict('恢复图片与已保存顺序不一致，已有文件保留')
+   if task.get('gallery_source') and len(received)<8:
+    from product_group import reuse_gallery
+    folder=self.folder/'products'/task['sku'];trial={**task,'received_images':received[:1]}
+    reuse_gallery(folder,trial);task['received_images']=trial['received_images'];return self.finish_set(task)
+   if len(received)==8 and task['state']!='saved':return self.finish_set(task)
    return {'saved_count':len(received),'complete':task['state']=='saved'}
   if index!=len(received) or task['state']=='saved':raise ValueError('图片顺序错误')
   if any(x['sha256']==digest for x in received):raise ValueError('不同图片位置内容重复，已保留文件，请检查图片列表')
@@ -110,13 +115,16 @@ class Store:
   if task.get('gallery_source') and len(received)==1:
    from product_group import reuse_gallery
    reuse_gallery(folder.parent,task)
-  task.update(state='saved' if len(received)==8 else 'waiting',message=f'已保存 {len(received)}/8 张独立图片');self.save()
-  if len(received)==8:
-   (folder.parent/'image_manifest.json').write_text(json.dumps(received,ensure_ascii=False,indent=2),encoding='utf-8')
+  return self.finish_set(task)
+ def finish_set(self,task):
+  received=task['received_images'];folder=self.folder/'products'/task['sku'];complete=len(received)==8
+  if complete:
+   target=folder/'image_manifest.json';temp=target.with_suffix('.tmp');temp.write_text(json.dumps(received,ensure_ascii=False,indent=2),encoding='utf-8');temp.replace(target)
    from listing_bundle import refresh_assets
-   refresh_assets(folder.parent)
-   threading.Thread(target=self.render_video,args=(task['sku'],),daemon=True).start()
-  return {'saved_count':len(received),'complete':task['state']=='saved'}
+   refresh_assets(folder)
+  task.update(state='saved' if complete else 'waiting',message=f'已保存 {len(received)}/8 张独立图片');self.save()
+  if complete:threading.Thread(target=self.render_video,args=(task['sku'],),daemon=True).start()
+  return {'saved_count':len(received),'complete':complete}
  def repair_order(self,tid):
   import shutil
   task=self.find(tid)
@@ -238,12 +246,20 @@ class Store:
   self.save()
  def listing_status(self):
   from listing_bundle import copy_complete,copy_hash
+  from asset_audit import inspect
+  audits={t['sku']:inspect(self.folder/'products'/t['sku']) for t in self.tasks if t.get('set_mode')}
   result=[]
   for task in self.tasks:
    if not task.get('set_mode'):continue
    folder=self.folder/'products'/task['sku'];row={'sku':task['sku'],'state':task['state'],'image_count':len(task.get('received_images',[])),'video_exists':(folder/'video'/'product_8s.mp4').exists(),'copy_state':task.get('copy_state'),'copy_source':task.get('copy_source'),'copy_complete':False}
+   audit=audits[task['sku']];row['image_files_verified']=audit['verified']
+   if audit['verified']:
+    row['primary_order']=audit['primary_order'];row['primary_hash']=audit['primary_hash']
+    leader_audit=audits.get(task.get('gallery_source',task['sku']),{})
+    row['shared_gallery_matches']=bool(leader_audit.get('verified') and audit['gallery_hashes']==leader_audit['gallery_hashes'])
+   else:row['image_check_message']=audit['reason']
    try:
-    bundle=json.loads((folder/'listing_bundle.json').read_text(encoding='utf-8-sig'));row['copy_complete']=bool(copy_complete(bundle.get('copy')));row['copy_source']=bundle.get('copy_source',task.get('copy_leader',task['sku']));row['copy_hash']=copy_hash(bundle['copy']) if row['copy_complete'] else None
+    bundle=json.loads((folder/'listing_bundle.json').read_text(encoding='utf-8-sig'));row['copy_complete']=bool(copy_complete(bundle.get('copy')));row['copy_source']=bundle.get('copy_source',task.get('copy_leader',task['sku']));row['copy_hash']=copy_hash(bundle['copy']) if row['copy_complete'] else None;row['listing_blockers']=bundle.get('blockers',[]);row['category_confirmed']=bool(bundle.get('category',{}).get('confirmed'));row['price_set']=bundle.get('price_cny') is not None;row['all_image_urls_set']=len(bundle.get('images',[]))==8 and all(i.get('https_url') for i in bundle.get('images',[]))
    except (ValueError,OSError):pass
    if row['copy_complete']:
     try:
@@ -251,6 +267,19 @@ class Store:
     except (ValueError,OSError):row['shared_copy_matches']=False
    result.append(row)
   return result
+ def queue_summary(self):
+  from listing_bundle import copy_complete
+  group=[t for t in self.tasks if t.get('set_mode') and t['state']!='cancelled']
+  if not group:return '暂无任务，等待创建商品'
+  complete=0
+  for task in group:
+   folder=self.folder/'products'/task['sku']
+   try:copy=copy_complete(json.loads((folder/'listing_bundle.json').read_text(encoding='utf-8-sig')).get('copy'))
+   except (ValueError,OSError):copy=False
+   rows=task.get('received_images',[]);images_present=len(rows)==8 and all(r.get('file') and (folder/'images'/Path(r['file'].replace('\\','/')).name).is_file() for r in rows)
+   if task['state']=='saved' and images_present and (folder/'video'/'product_8s.mp4').exists() and copy:complete+=1
+  if complete==len(group):return f'{complete}个变体素材已完成：8图、视频、共用俄语文案；待上架审核'
+  return f'素材处理中：已完成{complete}/{len(group)}个变体，等待图片、视频或文案完成'
  def next_copy(self):
   self.sync_shared_copies()
   for task in self.tasks:
@@ -329,7 +358,7 @@ def server(store,token,port=8765):
       store.client={'last_seen':time.time(),'auto_enabled':bool(body.get('auto_enabled',True))}
       active=bool(store.blockers())
       copy_task=store.next_copy() if not active else None
-      value={'ready':not active and any(t['state']=='queued' and t.get('auto_batch') for t in store.tasks),'copy_sku':copy_task['sku'] if copy_task else None,'blocked_reason':store.queue_reason() if active else None,'blockers':store.blockers()}
+      value={'ready':not active and any(t['state']=='queued' and t.get('auto_batch') for t in store.tasks),'copy_sku':copy_task['sku'] if copy_task else None,'blocked_reason':store.queue_reason() if active else None,'blockers':store.blockers(),'summary':store.queue_summary()}
      elif self.path=='/copy-task':
       sku=body['sku']
       if not valid_article(sku):raise ValueError('货号格式无效')
@@ -361,7 +390,7 @@ def server(store,token,port=8765):
       value=save_copy(store.folder/'products'/sku,body['copy'])
       store.sync_shared_copies()
       from category_match import suggest
-      threading.Thread(target=suggest,args=(store.folder/'products'/sku,),daemon=True).start()
+      threading.Thread(target=suggest,args=(store.folder/'products'/sku,),kwargs={'lock':store.lock},daemon=True).start()
       for task in store.tasks:
        if task['sku']==sku:task.update(copy_state='done',message='8图、视频、俄文文案及草稿已完成；待定价、类目和托管')
       store.save()
@@ -382,7 +411,7 @@ def main():
  import tkinter as tk
  from tkinter import ttk,messagebox,filedialog
  store=Store(DATA);token=secrets.token_urlsafe(32);http=server(store,token);threading.Thread(target=http.serve_forever,daemon=True).start()
- root=tk.Tk();root.title('Ozon Edge 本地服务 v0.24');root.geometry('1120x850')
+ root=tk.Tk();root.title('Ozon Edge 本地服务 v0.25');root.geometry('1120x850')
  shell=ttk.Frame(root);shell.pack(fill='both',expand=True);shell.rowconfigure(0,weight=1);shell.columnconfigure(0,weight=1)
  canvas=tk.Canvas(shell,highlightthickness=0);canvas.grid(row=0,column=0,sticky='nsew')
  outer_scroll=ttk.Scrollbar(shell,orient='vertical',command=canvas.yview);outer_scroll.grid(row=0,column=1,sticky='ns');canvas.configure(yscrollcommand=outer_scroll.set)
@@ -544,7 +573,9 @@ def main():
    try:
     c=int(cat.get());t=int(typ.get())
     if min(c,t)<=0:raise ValueError('ID须为正整数')
-    latest=json.loads(path.read_text(encoding='utf-8-sig'));latest['category']={'description_category_id':c,'type_id':t,'confirmed':True,'attributes_revalidation_required':True};path.write_text(json.dumps(latest,ensure_ascii=False,indent=2),encoding='utf-8');dialog.destroy()
+    with store.lock:
+     latest=json.loads(path.read_text(encoding='utf-8-sig'));latest['category']={'description_category_id':c,'type_id':t,'confirmed':True,'attributes_revalidation_required':True};temp=path.with_suffix('.category.tmp');temp.write_text(json.dumps(latest,ensure_ascii=False,indent=2),encoding='utf-8');temp.replace(path)
+    dialog.destroy()
    except Exception as e:messagebox.showerror('未保存',str(e))
   ttk.Button(dialog,text='确认此类目（发布前仍核验必填属性）',command=confirm).pack()
  ttk.Button(win,text='确认或修改所选商品类目',command=category_editor).pack(pady=4)

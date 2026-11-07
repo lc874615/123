@@ -18,8 +18,11 @@ def configure(tasks,base):
 def reuse_gallery(folder,task):
  folder=Path(folder);source=folder.parent/task['gallery_source'];rows=json.loads((source/'image_manifest.json').read_text(encoding='utf-8-sig'))
  if len(rows)!=8 or [r['order'] for r in rows]!=list(range(1,9)):raise ValueError('首变体详情清单不完整')
+ prepared=[]
  for row in rows[1:]:
   src=source/'images'/Path(row['file'].replace('\\','/')).name;dst=folder/'images'/src.name
   if hashlib.sha256(src.read_bytes()).hexdigest()!=row['sha256']:raise ValueError('共用详情已变化，请重新审核')
-  shutil.copy2(src,dst)
-  task['received_images'].append({**row,'file':str(dst),'shared_from':task['gallery_source']})
+  prepared.append((row,src,dst))
+ # Validate every source before copying or changing the task's saved-image list.
+ for row,src,dst in prepared:shutil.copy2(src,dst)
+ task['received_images'].extend({**row,'file':str(dst),'shared_from':task['gallery_source']} for row,src,dst in prepared)
