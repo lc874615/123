@@ -174,7 +174,7 @@ def server(store,token,port=8765):
       for task in store.tasks:
        if task['sku']==sku:task['copy_state']='running'
       store.save()
-      value={'id':'copy:'+sku,'prompt':(folder/'copy_prompt.txt').read_text(encoding='utf-8')}
+      value={'id':'copy:'+sku,'sku':sku,'prompt':'本次商品SKU：'+sku+'。只依据下列当前资料，不得沿用历史商品材质。输出JSON必须额外包含sku字段，值为'+sku+'。'+(folder/'copy_prompt.txt').read_text(encoding='utf-8')}
      elif self.path=='/copy-failed':
       sku=body['sku']
       for task in store.tasks:

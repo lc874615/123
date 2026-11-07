@@ -86,7 +86,7 @@ async function copy(task){
    await sleep(1000);if(stop)throw Error('文案任务已暂停；生成可能仍在继续，请保存现有结果');
    changed=changed||(main?.innerText||'')!==oldText;
    if(document.querySelector('[data-testid="stop-button"]'))continue;
-   const value=globalThis.OzonCopy.latest(document,{exclude:excluded});
+   const value=globalThis.OzonCopy.latest(document,{exclude:excluded,sku:task.sku});
    if(value){const signature=JSON.stringify(value);repeats=signature===stable?repeats+1:1;stable=signature;
     if(repeats>=3){const r=await chrome.runtime.sendMessage({kind:'copy-result',task_id:task.id,copy:value});if(r?.error)throw Error(r.error);return;}
    }else{stable='';repeats=0;}
@@ -95,7 +95,7 @@ async function copy(task){
  }catch(e){await chrome.runtime.sendMessage({kind:'copy-failed',task_id:task.id,message:e.message});}
 }
 async function recoverCopy(task){
- try{const value=globalThis.OzonCopy.latest();if(!value)throw Error('本页未识别到完整俄文JSON，请展开完整回复');const r=await chrome.runtime.sendMessage({kind:'copy-result',task_id:task.id,copy:value});if(r?.error)throw Error(r.error);}
+ try{const value=globalThis.OzonCopy.latest(document,{sku:task.sku});if(!value)throw Error('本页没有与当前SKU匹配的文案，请生成一次带SKU的文案，不需要重做图片');const r=await chrome.runtime.sendMessage({kind:'copy-result',task_id:task.id,copy:value});if(r?.error)throw Error(r.error);}
  catch(e){await chrome.runtime.sendMessage({kind:'copy-failed',task_id:task.id,message:e.message});}
 }
 chrome.runtime.onMessage.addListener((m,sender,reply)=>{if(m.kind==='copy-recover'){recoverCopy(m.task);reply({ok:true});return false;}if(m.kind==='copy'){copy(m.task);reply({ok:true});return false;}if(m.kind==='recover'){recover(m.task);reply({ok:true});return false;}if(m.kind==='preflight'){reply(preflight());return false;}if(m.kind==='stop'){stop=true;reply({ok:true});}if(m.kind==='start'){run(m.task);reply({ok:true});}return false;});})();

@@ -25,7 +25,7 @@ chrome.runtime.onMessage.addListener((m,sender,reply)=>{(async()=>{
  if(m.kind==='copy-recover'){
   const tab=await chrome.tabs.get(m.tabId);if(!tab.url||new URL(tab.url).origin!=='https://chatgpt.com')throw Error('请打开含现有文案的ChatGPT商品对话');
   if(current&&current.id!=='copy:'+m.sku)throw Error('另一个任务尚未完成，请先停止');
-  await api('/copy-task',{sku:m.sku});current={id:'copy:'+m.sku};runTab=tab.id;busy=true;await persist();
+  current=await api('/copy-task',{sku:m.sku});runTab=tab.id;busy=true;await persist();
   await chrome.scripting.executeScript({target:{tabId:tab.id},files:['composer.js','uploads.js','copy_parser.js','content.js']});
   await chrome.tabs.sendMessage(tab.id,{kind:'copy-recover',task:current});return {status:'正在保存本页现有文案，不重新发送'};
  }
