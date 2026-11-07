@@ -1,3 +1,4 @@
+async function bounded(p,ms,message){let timer;try{return await Promise.race([p,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error(message)),ms);})]);}finally{clearTimeout(timer);}}
 const BASE='http://127.0.0.1:8765';
 let busy=false,runTab=null,current=null;
 async function restore(){const x=await chrome.storage.local.get('activeTask');if(x.activeTask){current={id:x.activeTask.id};runTab=x.activeTask.tabId;busy=true;}}
@@ -26,8 +27,18 @@ chrome.runtime.onMessage.addListener((m,sender,reply)=>{(async()=>{
   const tab=await chrome.tabs.get(m.tabId);if(!tab.url||new URL(tab.url).origin!=='https://chatgpt.com')throw Error('请打开含现有文案的ChatGPT商品对话');
   if(current&&current.id!=='copy:'+m.sku)throw Error('另一个任务尚未完成，请先停止');
   current=await api('/copy-task',{sku:m.sku});runTab=tab.id;busy=true;await persist();
-  await chrome.scripting.executeScript({target:{tabId:tab.id},files:['composer.js','uploads.js','copy_parser.js','images.js','content.js']});
-  await chrome.tabs.sendMessage(tab.id,{kind:'copy-recover',task:current});return {status:'正在保存本页现有文案，不重新发送'};
+  try{
+   await status('正在读取本页文案并保存');
+   await chrome.scripting.executeScript({target:{tabId:tab.id},files:['composer.js','uploads.js','copy_parser.js','images.js','content.js']});
+   const extracted=await bounded(chrome.tabs.sendMessage(tab.id,{kind:'copy-extract-v013',task:current}),10000,'网页提取超时，请刷新ChatGPT页面后重试');
+   if(!extracted?.copy)throw Error(extracted?.error||'网页脚本版本未更新，请刷新ChatGPT页面后重试');
+   await api('/copy-result',{sku:m.sku,copy:extracted.copy});
+   busy=false;current=null;await persist();
+   const message='俄文文案已保存至本地草稿，待审核';await status(message);return {status:message};
+  }catch(e){
+   await api('/copy-failed',{sku:m.sku,message:e.message}).catch(()=>{});
+   busy=false;current=null;await persist();throw e;
+  }
  }
  if(m.kind==='copy-failed'){if(sender.tab?.id!==runTab||!current||m.task_id!==current.id)throw Error('任务不匹配');await api('/copy-failed',{sku:current.id.slice(5),message:m.message});busy=false;current=null;await persist();await status(m.message);return {ok:true};}
  if(m.kind==='copy-result'){

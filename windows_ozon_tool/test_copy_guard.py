@@ -13,5 +13,7 @@ class Tests(unittest.TestCase):
    value['description_ru']='Полипропилен';save_copy(p,value)
    self.assertEqual(json.loads(f.read_text(encoding='utf-8'))['copy']['missing_facts'],[])
    self.assertTrue((p/'copy_before_material_fix.json').exists())
+   self.assertTrue(save_copy(p,value)['saved'])
+   value['title_ru']='Другой заголовок'
    with self.assertRaisesRegex(ValueError,'不自动覆盖'):save_copy(p,value)
 if __name__=='__main__':unittest.main()

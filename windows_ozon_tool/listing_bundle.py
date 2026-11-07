@@ -39,6 +39,7 @@ def save_copy(folder,value):
  if '聚丙烯' in data['facts'] and ('картон' in material_text or 'бумаг' in material_text):raise ValueError('材质冲突：商品为聚丙烯，文案含纸板或纸材')
  if '纸板' in data['facts'] and 'полипропилен' in material_text:raise ValueError('材质冲突：商品为纸板，文案含聚丙烯')
  value=dict(value);value['missing_facts']=[x for x in value['missing_facts'] if x.strip().lower() not in ('бренд','brand','品牌')]
+ if data['copy']==value:return {'saved':True,'review_status':data.get('copy_review_status','pending_human_review')}
  if data['copy'].get('title_ru'):
   old=data['copy'];oldtext=(old.get('title_ru','')+' '+old.get('description_ru','')).lower()
   conflict=('聚丙烯' in data['facts'] and 'картон' in oldtext) or ('纸板' in data['facts'] and 'полипропилен' in oldtext)

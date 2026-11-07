@@ -92,8 +92,10 @@ async function copy(task){
   throw Error(changed?'已检测到页面更新，但未提取到新的完整文案JSON；请使用保存现有文案，不要重新生成':'未检测到新回复，可能生成未完成或验证阻塞；未自动重发');
  }catch(e){await chrome.runtime.sendMessage({kind:'copy-failed',task_id:task.id,message:e.message});}
 }
-async function recoverCopy(task){
- try{const value=globalThis.OzonCopy.latest(document,{sku:task.sku,bindLatest:true});if(!value)throw Error('未找到含当前货号的完整文案JSON；请使用备用粘贴并核对货号，无需重做图片');const r=await chrome.runtime.sendMessage({kind:'copy-result',task_id:task.id,copy:value});if(r?.error)throw Error(r.error);}
- catch(e){await chrome.runtime.sendMessage({kind:'copy-failed',task_id:task.id,message:e.message});}
+function extractCopy(task){
+ const value=globalThis.OzonCopy.latest(document,{sku:task.sku,bindLatest:true});
+ if(!value)throw Error('最后一条回复中未找到匹配货号的完整文案JSON；请展开文案或使用备用粘贴，无需重新生成');
+ return {copy:value};
 }
-chrome.runtime.onMessage.addListener((m,sender,reply)=>{if(m.kind==='copy-recover'){recoverCopy(m.task);reply({ok:true});return false;}if(m.kind==='copy'){copy(m.task);reply({ok:true});return false;}if(m.kind==='recover'){recover(m.task);reply({ok:true});return false;}if(m.kind==='preflight'){reply(preflight());return false;}if(m.kind==='stop'){stop=true;reply({ok:true});}if(m.kind==='start'){run(m.task);reply({ok:true});}return false;});})();
+
+chrome.runtime.onMessage.addListener((m,sender,reply)=>{if(m.kind==='copy-extract-v013'){try{reply(extractCopy(m.task));}catch(e){reply({error:e.message});}return false;}if(m.kind==='copy'){copy(m.task);reply({ok:true});return false;}if(m.kind==='recover'){recover(m.task);reply({ok:true});return false;}if(m.kind==='preflight'){reply(preflight());return false;}if(m.kind==='stop'){stop=true;reply({ok:true});}if(m.kind==='start'){run(m.task);reply({ok:true});}return false;});})();
