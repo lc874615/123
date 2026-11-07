@@ -6,7 +6,7 @@ function findEditor(){
  for(const sel of selectors){const found=[...document.querySelectorAll(sel)].filter(e=>e.getClientRects().length&&!e.disabled&&e.getAttribute('aria-hidden')!=='true');if(found.length===1)return found[0];}
  return null;
 }
-function preflight(){const e=findEditor();return {ready:!!e&&!document.querySelector('[data-testid="stop-button"]'),url:location.origin+location.pathname,message:e?'输入框已识别':'未找到可见输入框。请在普通ChatGPT文字对话中刷新页面，点击输入区后重试；不能在图片查看器或其他应用中执行。'};}
+function preflight(){const e=findEditor();return {version:'0.16.0',ready:!!e&&!document.querySelector('[data-testid="stop-button"]'),url:location.origin+location.pathname,message:e?'输入框已识别':'未找到可见输入框。请在普通ChatGPT文字对话中刷新页面，点击输入区后重试；不能在图片查看器或其他应用中执行。'};}
 async function run(task){
  if(running)throw Error('本页正在执行任务');running=true;stop=false;
  try{
@@ -18,11 +18,12 @@ async function run(task){
    await globalThis.OzonUploads.upload(task.references,{editor,sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message)});
   }
   const previousImages=new Set([...document.querySelectorAll('img')].map(i=>i.currentSrc||i.src));
-  const before=document.querySelectorAll('[data-message-author-role="assistant"]').length;
+  const oldReplies=new Set(globalThis.OzonConversation.assistantNodes(document));
+  const before=oldReplies.size;
   editor=findEditor();if(!editor)throw Error('上传后输入框变化，请刷新对话；未发送');
   editor.focus();
-  if(editor instanceof HTMLTextAreaElement){Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(editor,task.prompt);editor.dispatchEvent(new Event('input',{bubbles:true}));}
-  else{document.execCommand('insertText',false,task.prompt);editor.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:task.prompt}));}
+  if(editor instanceof HTMLTextAreaElement){Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(editor,task.prompt+'\n【OZON_TASK:'+task.id+'】');editor.dispatchEvent(new Event('input',{bubbles:true}));}
+  else{document.execCommand('insertText',false,task.prompt+'\n【OZON_TASK:'+task.id+'】');editor.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:task.prompt}));}
   let send=null;const sendDeadline=Date.now()+15000;
   while(Date.now()<sendDeadline&&!stop){editor=findEditor();if(editor)send=globalThis.OzonComposer.findSend(editor);if(send)break;await sleep(300);}
   if(!send)throw Error('未识别到唯一可用发送按钮；提示词已保留，请人工检查。未自动发送');
@@ -31,14 +32,14 @@ async function run(task){
   while(Date.now()<deadline){
    if(stop)throw Error('已暂停；请检查网页结果');
    if(task.set_mode&&!document.querySelector('[data-testid="stop-button"]')){
-    const images=await globalThis.OzonImages.collect(document,{expected:task.expected_images||8,previous:previousImages});
+    const images=await globalThis.OzonImages.collect(document,{expected:task.expected_images||8,previous:previousImages,before:oldReplies,marker:'【OZON_TASK:'+task.id+'】'});
     if(images){await saveSet(task,images);return;}
 
    }
    const replies=[...document.querySelectorAll('[data-message-author-role="assistant"]')];
    if(!task.set_mode&&replies.length>before&&!document.querySelector('[data-testid="stop-button"]')){
     const last=replies.at(-1);
-    const imgs=[...(last.closest('article')||last).querySelectorAll('img')].filter(i=>i.complete&&i.naturalWidth>=512&&i.naturalHeight>=512);
+    const imgs=globalThis.OzonConversation.assistantImages(last).filter(i=>i.complete&&i.naturalWidth>=512&&i.naturalHeight>=512);
     if(imgs.length===1){
      const image=imgs[0];const response=await fetch(image.currentSrc||image.src,{credentials:'include'});if(!response.ok)throw Error('原图读取失败，请手动下载');const blob=await response.blob();
      if(blob.size>20*1024*1024)throw Error('图片超过20MB，请手动处理');
@@ -63,7 +64,7 @@ async function saveSet(task,images){
 async function recover(task){
  if(running)throw Error('本页正在执行任务');running=true;stop=false;
  try{
-  const images=await globalThis.OzonImages.collect(document,{expected:task.expected_images||8});
+  const images=await globalThis.OzonImages.collect(document,{expected:task.expected_images||8,marker:'【OZON_TASK:'+task.id+'】'});
   if(!images)throw Error('本页未收齐完整原图，请展开当前回复的图片列表后重试；不会重新生成');
   await saveSet(task,images);
  }catch(e){await tell(task,'needs_attention',e.message).catch(()=>{});}finally{running=false;}
@@ -75,7 +76,8 @@ async function copy(task){
   const editor=findEditor();if(!editor)throw Error('未找到输入框');
   if(editor.textContent.trim()||editor.value?.trim())throw Error('输入框已有内容，未覆盖');
   const excluded=globalThis.OzonCopy.snapshot();
-  const beforeCopy=new Set(document.querySelectorAll('[data-message-author-role="assistant"]'));
+  const copyNodes=globalThis.OzonConversation.assistantNodes(document);
+  const beforeCopy=new Set(copyNodes),beforeText=new Map(copyNodes.map(n=>[n,n.innerText||n.textContent||'']));
   const main=document.querySelector('main,[role="main"]');const oldText=main?.innerText||'';
   editor.focus();if(editor instanceof HTMLTextAreaElement){Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(editor,task.prompt);editor.dispatchEvent(new Event('input',{bubbles:true}));}else{document.execCommand('insertText',false,task.prompt);editor.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:task.prompt}));}
   await sleep(1000);const button=globalThis.OzonComposer.findSend(editor);if(!button)throw Error('未找到可用发送按钮');button.click();
@@ -84,7 +86,7 @@ async function copy(task){
    await sleep(1000);if(stop)throw Error('文案任务已暂停；生成可能仍在继续，请保存现有结果');
    changed=changed||(main?.innerText||'')!==oldText;
    if(document.querySelector('[data-testid="stop-button"]'))continue;
-   const value=globalThis.OzonCopy.latest(document,{exclude:excluded,sku:task.sku,before:beforeCopy});
+   const value=globalThis.OzonCopy.latest(document,{exclude:excluded,sku:task.sku,before:beforeCopy,beforeText,marker:task.marker});
    if(value){const signature=JSON.stringify(value);repeats=signature===stable?repeats+1:1;stable=signature;
     if(repeats>=3){const r=await chrome.runtime.sendMessage({kind:'copy-result',task_id:task.id,copy:value});if(r?.error)throw Error(r.error);return;}
    }else{stable='';repeats=0;}
@@ -98,4 +100,4 @@ function extractCopy(task){
  return result;
 }
 
-chrome.runtime.onMessage.addListener((m,sender,reply)=>{if(m.kind==='copy-extract-v013'){try{reply(extractCopy(m.task));}catch(e){reply({error:e.message});}return false;}if(m.kind==='copy'){copy(m.task);reply({ok:true});return false;}if(m.kind==='recover'){recover(m.task);reply({ok:true});return false;}if(m.kind==='preflight'){reply(preflight());return false;}if(m.kind==='stop'){stop=true;reply({ok:true});}if(m.kind==='start'){run(m.task);reply({ok:true});}return false;});})();
+chrome.runtime.onMessage.addListener((m,sender,reply)=>{if(m.kind==='copy-inspect-v016'){reply({copy:globalThis.OzonCopy.latest(document,{sku:m.task.sku,marker:m.task.marker}),generating:!!document.querySelector('[data-testid="stop-button"]')});return false;}if(m.kind==='copy-extract-v013'){try{reply(extractCopy(m.task));}catch(e){reply({error:e.message});}return false;}if(m.kind==='copy'){copy(m.task);reply({ok:true});return false;}if(m.kind==='recover'){recover(m.task);reply({ok:true});return false;}if(m.kind==='preflight'){reply(preflight());return false;}if(m.kind==='stop'){stop=true;reply({ok:true});}if(m.kind==='start'){run(m.task);reply({ok:true});}return false;});})();

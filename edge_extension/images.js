@@ -6,13 +6,14 @@
   if(strip.length===expected)return strip;
   return full;
  }
- async function collect(doc,{expected=8,previous=new Set()}={}){
-  const replies=[...doc.querySelectorAll('[data-message-author-role="assistant"]')];
-  const scopes=replies.map(r=>r.closest('article')||r).reverse();
-  if(!scopes.length)scopes.push(doc.querySelector('main')||doc);
+ async function collect(doc,{expected=8,previous=new Set(),before=new Set(),marker=''}={}){
+  const scopes=globalThis.OzonConversation.imageScopes(doc,{before,marker});
+  const nodes=[];
   for(const scope of scopes){
-   const nodes=[...scope.querySelectorAll('img')].filter(i=>!previous.has(i.currentSrc||i.src));
-   const candidates=ordered(nodes,expected);if(!candidates.length)continue;
+   nodes.push(...globalThis.OzonConversation.assistantImages(scope).filter(i=>!previous.has(i.currentSrc||i.src)));
+  }
+  {
+   const candidates=ordered([...new Set(nodes)],expected);if(!candidates.length)return null;
    const hashes=new Set(),results=[];
    for(const i of candidates){
     const response=await fetch(i.currentSrc||i.src,{credentials:'include'});if(!response.ok)throw Error('原图读取失败，已有文件保留');

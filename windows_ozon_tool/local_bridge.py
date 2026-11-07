@@ -64,6 +64,8 @@ class Store:
    if min(im.size)<512:raise ValueError('图片分辨率不足')
   ext={'PNG':'png','JPEG':'jpg','WEBP':'webp'}.get(fmt)
   if not ext:raise ValueError('图片格式无效')
+  from asset_guard import reject_reference
+  reject_reference(data,task.get('references',[]))
   digest=hashlib.sha256(data).hexdigest()
   if index<len(received):
    if received[index]['sha256']!=digest:raise ValueError('恢复图片与已保存顺序不一致，已有文件保留')
@@ -72,7 +74,7 @@ class Store:
   if any(x['sha256']==digest for x in received):raise ValueError('不同图片位置内容重复，已保留文件，请检查图片列表')
   folder=self.folder/'products'/task['sku']/'images';folder.mkdir(parents=True,exist_ok=True)
   path=folder/f'{TASKS[index][0]}.{ext}';path.write_bytes(data)
-  received.append({'file':str(path),'sha256':digest,'role':'primary' if index==0 else 'gallery','order':index+1})
+  received.append({'file':str(path),'sha256':digest,'role':'primary' if index==0 else 'gallery','order':index+1,'source':'assistant_generated'})
   if task.get('gallery_source') and len(received)==1:
    from product_group import reuse_gallery
    reuse_gallery(folder.parent,task)
@@ -81,6 +83,35 @@ class Store:
    (folder.parent/'image_manifest.json').write_text(json.dumps(received,ensure_ascii=False,indent=2),encoding='utf-8')
    threading.Thread(target=self.render_video,args=(task['sku'],),daemon=True).start()
   return {'saved_count':len(received),'complete':task['state']=='saved'}
+ def recollect(self,tid):
+  import shutil
+  selected=self.find(tid);leader=selected.get('copy_leader',selected['sku'])
+  group=[t for t in self.tasks if t.get('copy_leader',t['sku'])==leader]
+  if any(t['state'] in ('claimed','sending','waiting') or t.get('copy_state')=='running' for t in group):raise ValueError('请先停止扩展自动批次，再备份并重新采集')
+  stamp=time.strftime('%Y%m%d-%H%M%S')+'-'+secrets.token_hex(3)
+  names=('images','video','image_manifest.json','listing_bundle.json','copy_prompt.txt')
+  planned=[];affected=[]
+  for task in group:
+   folder=self.folder/'products'/task['sku']
+   if not task.get('received_images') and not any((folder/name).exists() for name in names):continue
+   affected.append(task);backup=folder/'recovery_backups'/stamp
+   backup.mkdir(parents=True,exist_ok=False)
+   (backup/'task.json').write_text(json.dumps(task,ensure_ascii=False,indent=2),encoding='utf-8')
+   for name in names:
+    src=folder/name
+    if not src.exists():continue
+    dst=backup/name
+    if src.is_dir():shutil.copytree(src,dst)
+    else:shutil.copy2(src,dst)
+    planned.append(src)
+  # Only remove live outputs once every backup completed successfully.
+  for src in planned:
+   if src.is_dir():shutil.rmtree(src)
+   else:src.unlink()
+  for task in affected:
+   task.update(state='needs_attention',received_images=[],message='已备份旧素材；等待从网页重新采集生成图，不重新发送作图')
+   task.pop('copy_state',None);task.pop('video',None)
+  self.save();return stamp
  def claim(self):
   if any(t['state'] in ('claimed','sending','waiting','needs_attention','review') for t in self.tasks):raise ValueError('请先审核上一任务或处理异常，不能继续发送')
   t=next((t for t in self.tasks if t['state']=='queued'),None)
@@ -200,7 +231,8 @@ def server(store,token,port=8765):
       for task in store.tasks:
        if task['sku']==sku:task['copy_state']='running'
       store.save()
-      value={'id':'copy:'+sku,'sku':sku,'prompt':'本次商品组文案保存货号：'+sku+'。只依据下列当前资料，不得沿用历史商品材质。主体材质与配件/内衬材质分别对应，不得混写，也不要因内衬含纸板就把主体写成纸板。输出JSON必须额外包含sku字段，值为'+sku+'。'+(folder/'copy_prompt.txt').read_text(encoding='utf-8')}
+      marker='【OZON_COPY:'+secrets.token_hex(12)+'】'
+      value={'id':'copy:'+sku,'sku':sku,'marker':marker,'prompt':marker+'\n'+'本次商品组文案保存货号：'+sku+'。只依据下列当前资料，不得沿用历史商品材质。主体材质与配件/内衬材质分别对应，不得混写，也不要因内衬含纸板就把主体写成纸板。输出JSON必须额外包含sku字段，值为'+sku+'。'+(folder/'copy_prompt.txt').read_text(encoding='utf-8')}
      elif self.path=='/copy-failed':
       sku=body['sku']
       for task in store.tasks:
@@ -233,7 +265,7 @@ def main():
  import tkinter as tk
  from tkinter import ttk,messagebox,filedialog
  store=Store(DATA);token=secrets.token_urlsafe(32);http=server(store,token);threading.Thread(target=http.serve_forever,daemon=True).start()
- root=tk.Tk();root.title('Ozon Edge 本地服务 v0.15');root.geometry('1120x850')
+ root=tk.Tk();root.title('Ozon Edge 本地服务 v0.16');root.geometry('1120x850')
  shell=ttk.Frame(root);shell.pack(fill='both',expand=True);shell.rowconfigure(0,weight=1);shell.columnconfigure(0,weight=1)
  canvas=tk.Canvas(shell,highlightthickness=0);canvas.grid(row=0,column=0,sticky='nsew')
  outer_scroll=ttk.Scrollbar(shell,orient='vertical',command=canvas.yview);outer_scroll.grid(row=0,column=1,sticky='ns');canvas.configure(yscrollcommand=outer_scroll.set)
@@ -329,6 +361,15 @@ def main():
    with store.lock:store.delete_task(task['id'])
   except Exception as e:messagebox.showerror('未删除',str(e))
  ttk.Button(win,text='删除选中任务（保留素材文件）',command=delete).pack(pady=4)
+ def recollect():
+  task=selected()
+  if not task:return
+  try:
+   with store.lock:backup=store.recollect(task['id'])
+   messagebox.showinfo('备份完成','整组原素材已备份到各货号 recovery_backups/'+backup+'。\n请在扩展填写首变体货号，点击保存本页现有8张图；不需要重新作图。')
+  except Exception as e:messagebox.showerror('未重新采集',str(e))
+ ttk.Button(win,text='备份整组旧素材，重新采集网页生成图',command=recollect).pack(pady=4)
+
  def approve():
   task=selected()
   if not task:return

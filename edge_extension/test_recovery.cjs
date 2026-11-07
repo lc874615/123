@@ -18,3 +18,14 @@ test('local validation failure is returned to panel',async()=>{
 test('unlabelled copy candidates return for explicit confirmation without saving',async()=>{
  const r=await run({candidates:[{title_ru:'Корзина'}]});assert.match(r.response.status,/选择/);assert.equal(r.response.candidates.length,1);assert.equal(r.state.activeTask,undefined);assert.ok(!r.calls.some(x=>x.endsWith('/copy-result')));
 });
+test('alarm restores SKU and finishes copy after background suspension without resending prompt',async()=>{
+ let alarm;const state={pairToken:'test',activeTask:{id:'copy:GROUP(1)',tabId:3,startedAt:Date.now()}},bodies=[];
+ const chrome={storage:{local:{get:async()=>structuredClone(state),set:async x=>Object.assign(state,structuredClone(x)),remove:async k=>delete state[k]}},runtime:{onMessage:{addListener:()=>{}}},alarms:{onAlarm:{addListener:f=>alarm=f}},tabs:{sendMessage:async(tab,m)=>{assert.equal(m.task.sku,'GROUP(1)');assert.equal(m.kind,'copy-inspect-v016');return {copy:{sku:'GROUP(1)',title_ru:'saved'},generating:false};}}};
+ const ctx={chrome,setTimeout,clearTimeout,AbortSignal,URL,fetch:async(url,options)=>{bodies.push([url,JSON.parse(options.body)]);return {ok:true,json:async()=>({saved:true})};}};
+ vm.runInNewContext(fs.readFileSync(__dirname+'/background.js','utf8'),ctx);
+ // Simulate fresh service workers on two separate alarm events.
+ await vm.runInNewContext('poll()',ctx);assert.equal(state.activeTask.sku,'GROUP(1)');
+ const restarted={...ctx};vm.runInNewContext(fs.readFileSync(__dirname+'/background.js','utf8'),restarted);
+ await vm.runInNewContext('poll()',restarted);
+ assert.equal(state.activeTask,undefined);assert.match(state.status,/自动保存/);assert.equal(bodies.length,1);assert.equal(bodies[0][1].sku,'GROUP(1)');assert.ok(bodies[0][0].endsWith('/copy-result'));
+});
