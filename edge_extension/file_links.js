@@ -41,13 +41,16 @@
   if(count)await new Promise(resolve=>setTimeout(resolve,350));
   return count;
  }
- function candidates(doc,{marker='',expected=8,allowPartial=false,manual=false,onlyVisible=false}={}){
+ function candidates(doc,{marker='',expected=8,allowPartial=false,manual=false,onlyVisible=false,inventory=false}={}){
   const main=globalThis.OzonConversation.main(doc);if(!main)return null;
   let anchor=null;if(marker){const walker=doc.createTreeWalker(main,4);let n;while((n=walker.nextNode()))if(n.nodeValue.includes(marker))anchor=n;}
   if(allowPartial&&marker&&!anchor)return null;
   const nextUser=anchor?globalThis.OzonConversation.userNodes(doc).find(n=>!!(anchor.compareDocumentPosition(n)&4)):null;
-  const images=new Map();
-  for(const element of main.querySelectorAll('a[href],button,[role="link"],[role="button"]')){
+  const images=new Map(),unnumbered=new Set();
+  const elements=[...main.querySelectorAll('a[href],button,[role="link"],[role="button"]')].filter(element=>!globalThis.OzonConversation.userOwned(element)&&(!anchor||!!(anchor.compareDocumentPosition(element)&4))&&(!nextUser||!!(element.compareDocumentPosition(nextUser)&4)));
+  const resourceElements=elements.filter(element=>resourceRow(element)&&allowedElement(element));
+  // The final downloadable file cards outrank earlier prose links and image attempts.
+  for(const element of resourceElements.length?resourceElements:elements){
    if(globalThis.OzonConversation.userOwned(element)||anchor&&!(anchor.compareDocumentPosition(element)&4)||nextUser&&!(element.compareDocumentPosition(nextUser)&4))continue;
    if(onlyVisible||manual&&!anchor){const r=element.getBoundingClientRect();if(!r.width||!r.height||r.bottom<=0||r.top>=doc.defaultView.innerHeight)continue;}
    const href=element.getAttribute('href');if(!allowedElement(element))continue;let pathname='';try{pathname=decodeURIComponent(new URL(href,location.href).pathname);}catch{}
@@ -56,14 +59,15 @@
    const name=(label.match(/[^\s/\\]+\.(?:jpe?g|png|webp)\b/i)?.[0]||pathname.split('/').at(-1)||'').split(/[?#]/)[0];
    const ext=name.match(/\.(jpe?g|png|webp)$/i)?.[1]?.toLowerCase();if(!ext)continue;
    const target=directTarget(element);const link={element:target||element,href:target?target.getAttribute('href'):href,name,extension:ext,direct:!!target};
-   const match=name.match(/^0*([1-8])(?:[_ .-])/);if(!match)continue;
+   const match=name.match(/^0*(\d{1,3})(?:[_ .-])/);if(!match){unnumbered.add(name);continue;}
    const index=Number(match[1]);
    if(images.has(index)&&images.get(index).name!==name)throw Error('同一图片编号出现多个不同下载链接，无法确认顺序');
    if(!images.get(index)?.direct||link.direct)images.set(index,link);
   }
   const ordered=Array.from({length:expected},(_,i)=>images.get(i+1));
-  if(ordered.every(Boolean))return {images:ordered};
-  if(manual&&marker)return candidates(doc,{expected,manual:false,onlyVisible:true});
+  if(inventory)return {count:images.size,present:images.size+unnumbered.size,complete:images.size===expected&&ordered.every(Boolean),images:ordered.filter(Boolean),signature:[...images].map(([n,r])=>n+':'+r.name+'|'+(r.href||'')).join('\n')};
+  if(images.size===expected&&ordered.every(Boolean))return {images:ordered};
+  if(manual&&marker&&!anchor)return candidates(doc,{expected,manual:false,onlyVisible:true});
   return null;
  }
  async function blob64(blob){return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result.split(',')[1]);reader.onerror=reject;reader.readAsDataURL(blob);});}
@@ -88,6 +92,7 @@
   finally{link.element.removeAttribute('data-ozon-download');link.element.removeAttribute('data-ozon-direct-download');}
  }
  async function collect(doc,options={}){
+  if(globalThis.OzonConversation.generating(doc))return null;
   const expanded=await expandFiles(doc,options);
   let found=candidates(doc,options);
   const until=Date.now()+(expanded?5000:100);
@@ -97,6 +102,7 @@
   const images=[];
   for(let i=0;i<found.images.length;i++){
    if(stopped())throw Error('已暂停，已有文件保留');await report('正在下载独立商品图片 '+(i+1)+'/'+expected);
+   if(globalThis.OzonConversation.generating(doc))return null;
    const result=await read(found.images[i],task);
    if(result.length!==1)throw Error('单个图片入口返回数量不符');images.push(result[0]);
    await onImage(i,result[0]);

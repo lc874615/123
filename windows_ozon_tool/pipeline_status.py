@@ -17,7 +17,9 @@ def stage(task,bundle,jobs):
  if task.get('state')=='queued':return '排队中'
  if task.get('state') in ('claimed','sending','waiting'):return '作图与采集中'
  if task.get('state')=='needs_attention':return '需处理：'+task.get('message','请检查作图页')
- if not task.get('video'):return '合成视频中' if len(task.get('received_images') or [])==8 else '等待图片'
+ if not task.get('video'):
+  if len(task.get('received_images') or [])!=8:return '等待图片'
+  return '文案生成中 · 视频合成中' if task.get('copy_state')=='running' else '合成视频中'
  if not copy_complete(bundle.get('copy')):return '文案处理中'
  if not (bundle.get('category') or {}).get('confirmed'):return '待确认类目'
  if not bundle.get('price_cny'):return '待补充定价资料'

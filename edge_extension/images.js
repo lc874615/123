@@ -3,7 +3,7 @@
   const full=images.filter(i=>i.complete&&i.naturalWidth>=512&&i.naturalHeight>=512);
   // The selected preview precedes the strip in the DOM. Use the strip order instead.
   const strip=full.filter(i=>{const r=i.getBoundingClientRect();return r.width>0&&r.width<=160&&r.height<=220;});
-  if(strip.length===expected)return strip;
+  if(strip.length===expected&&full.length<=expected+1)return strip;
   return full;
  }
  function visibleImage(image){
@@ -97,6 +97,9 @@
   return results;
  }
  async function collect(doc,{expected=8,previous=new Set(),before=new Set(),marker='',sleep,stopped,report,onImage=async()=>{},allowPartial=false}={}){
+  if(globalThis.OzonConversation.generating(doc))return null;
+  const inventory=inspect(doc,{expected,marker,allowPartial});
+  if(inventory.overflow){const error=Error('当前任务生成图片超过'+expected+'张，等待最终编号文件；不会截取前'+expected+'张');error.code='DELIVERY_AMBIGUOUS';throw error;}
   const found=gallery(doc,{expected,marker,allowPartial});
   if(found)return readGallery(doc,found,{expected,sleep,stopped,report,onImage,allowPartial});
   const scopes=globalThis.OzonConversation.imageScopes(doc,{before,marker});
@@ -115,12 +118,35 @@
     results.push(await new Promise((resolve,reject)=>{const f=new FileReader();f.onload=()=>resolve(f.result.split(',')[1]);f.onerror=reject;f.readAsDataURL(blob);}));
    }
    if(results.length===expected){for(let index=0;index<results.length;index++)await onImage(index,results[index]);return results;}
-   if(results.length>expected)throw Error('当前回复原图数量超过预期，无法确认顺序；未覆盖已有图片');
+   if(results.length>expected){const error=Error('当前回复原图数量超过预期，等待最终编号文件；未覆盖已有图片');error.code='DELIVERY_AMBIGUOUS';throw error;}
    // Never fill a partial reply with unrelated images from older replies.
    return null;
   }
   return null;
  }
- globalThis.OzonImages={ordered,collect,gallery,readGallery};
- if(typeof module!=='undefined')module.exports={ordered,collect,gallery,readGallery};
+ function inspect(doc,options={}){
+  const scope=globalThis.OzonConversation.region(doc,options),expected=options.expected||8;
+  if(!scope.root)return {count:0,overflow:false,signature:''};
+  const images=[...scope.root.querySelectorAll('img')].filter(scope.includes);
+  let count=0;
+  for(const strip of scope.root.querySelectorAll('[class*="vertical-scroll-fade-mask"]')){
+   const thumbs=[...strip.querySelectorAll('button img')].filter(scope.includes);count=Math.max(count,thumbs.length);
+  }
+  for(const preview of images){
+   const p=preview.getBoundingClientRect();if(p.width<240||p.height<280)continue;
+   const thumbs=images.filter(i=>{const r=i.getBoundingClientRect();return i!==preview&&r.width>=20&&r.width<=160&&r.height>=25&&r.height<=220&&r.left>=p.right-8&&r.left<=p.right+120&&r.top>=p.top-25;});
+   count=Math.max(count,thumbs.length);
+  }
+  const originals=images.filter(i=>i.complete&&i.naturalWidth>=512&&i.naturalHeight>=512);
+  if(!count){
+   const compact=originals.filter(i=>{const r=i.getBoundingClientRect();return r.width>0&&r.width<=160&&r.height<=220;});
+   count=compact.length===expected&&originals.length===expected+1?expected:new Set(originals.map(i=>i.currentSrc||i.src)).size;
+  }else{
+   const compact=originals.filter(i=>{const r=i.getBoundingClientRect();return r.width>0&&r.width<=160&&r.height<=220;});
+   if(!(compact.length===count&&originals.length===count+1))count=Math.max(count,new Set(originals.map(i=>i.currentSrc||i.src)).size);
+  }
+  return {count,overflow:count>expected,signature:images.map(i=>(i.currentSrc||i.src)+'|'+i.naturalWidth+'x'+i.naturalHeight).join('\n')};
+ }
+ globalThis.OzonImages={ordered,collect,gallery,readGallery,inspect};
+ if(typeof module!=='undefined')module.exports={ordered,collect,gallery,readGallery,inspect};
 })();

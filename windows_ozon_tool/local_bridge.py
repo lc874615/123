@@ -63,7 +63,8 @@ class Store:
   group=[t for t in self.tasks if t['sku']==sku]
   for t in group:t.update(state='cancelled',message='由一次提交整套任务替代')
   task=dict(group[0]);task.update(id=secrets.token_hex(16),name='00_full_set',state='queued',message='等待扩展领取任务',auto_batch=True,set_mode=True,received_images=[])
-  task['prompt']='请一次完成8张独立的Ozon商品图片，必须是8个独立图片文件，不要拼图，不要把8个画面合成一张。按顺序输出：'+ '；'.join(f'{i+1}. {brief}' for i,(_,brief) in enumerate(TASKS))+ '。请直接交付8张独立图片及各自下载入口，不要提供ZIP。文件须按01_至08_编号，01_为主图，不得混入原始参考图。第1张是商品主图，展示真实销售数量。每张3:4竖版，自然俄文，风格一致，保持原图外观。严禁虚构尺寸、材质、配件和功能，包装尺寸不能当作商品尺寸。商品事实：'+facts
+  from image_prompts import generation_prompt
+  task['prompt']=generation_prompt(facts)
   self.tasks=[t for t in self.tasks if t['sku']!=sku]+[task];self.save()
  def rebase_paths(self):
   for task in self.tasks:
@@ -157,8 +158,10 @@ class Store:
     b['copy']={'title_ru':None,'description_ru':None,'tags_ru':[]};t.pop('copy_state',None)
    b.update(images=[],regeneration_pending=True,video={'local_file':'video/product_8s.mp4','exists':False,'https_url':None});b['hosting']={'state':'waiting','verified_images':0};b['video_hosting']={'state':'waiting'};write(folder/'listing_bundle.json',b)
    if t['sku']==leader:
-    t['expected_images']=8;t['prompt']='一次生成8张独立Ozon图片文件，3:4俄文；01主图、02尺寸、03场景、04场景、05材质、06结构、07细节、08套装。不得拼图，不提供ZIP。当前商品事实：'+t['facts']+'。所有变体资料：'+t.get('group_facts','')+'。02—08须兼容全部变体并明确颜色/尺寸对应。'
-   else:t['expected_images']=1;t['prompt']='仅生成01_main一张独立Ozon主图，3:4俄文。严格按当前颜色、件数、尺寸和材质，后7张沿用首变体。当前事实：'+t['facts']
+    t['expected_images']=8
+   else:t['expected_images']=1
+   from image_prompts import generation_prompt
+   t['prompt']=generation_prompt(t['facts'],t.get('group_facts',''),t['expected_images'])
   self.save();return stamp
  def resume_unsent_upload(self):
   count=0
@@ -181,9 +184,9 @@ class Store:
   if not task:return {'found':False}
   return {'found':True,'id':task['id'],'sku':task['sku'],'state':task['state'],'copy_state':task.get('copy_state'),'saved_count':len(task.get('received_images',[])),'expected_images':task.get('expected_images',8),'message':task.get('message',''),'resume_mode':task.get('resume_mode'),'pause_requested':task.get('pause_requested',False)}
  def recover(self,sku):
-  group=[t for t in self.tasks if t['sku']==sku and t.get('set_mode') and t['state'] in ('waiting','needs_attention','claimed','sending')]
+  group=[t for t in self.tasks if t['sku']==sku and t.get('set_mode') and t['state'] in ('waiting','needs_attention','claimed','sending','saved')]
   if len(group)!=1:raise ValueError('没有唯一可恢复的整套任务，请核对货号')
-  task=group[0];task.pop('resume_mode',None);task.update(state='waiting',message='用户请求从现有网页恢复保存，不重新生成');self.save();return {'id':task['id'],'sku':task['sku'],'set_mode':True,'saved_count':len(task.get('received_images',[])),'expected_images':task.get('expected_images',8)}
+  task=group[0];validate_complete=len(task.get('received_images',[]))==8;task.pop('resume_mode',None);task.update(state='waiting',message='用户请求核对最终编号文件，不重新生成');self.save();return {'id':task['id'],'sku':task['sku'],'set_mode':True,'saved_count':len(task.get('received_images',[])),'expected_images':task.get('expected_images',8),'orderRepairPending':validate_complete}
  def set_result(self,tid,index,encoded):
   task=self.find(tid)
   if not task.get('set_mode') or task['state'] not in ('claimed','sending','waiting','saved'):raise ValueError('整套任务状态无效')
@@ -240,12 +243,43 @@ class Store:
     gallery=bool(original and (set(original)!=set(now) or any(differs(original[k],now.get(k) or {},VISUAL) for k in original)))
     review.update(main=own,gallery=gallery);bundle['asset_review']=review;write(target,bundle)
   task.update(state='saved' if complete else 'waiting',message=f'已保存 {len(received)}/8 张独立图片');self.save()
-  if complete:threading.Thread(target=self.render_video,args=(task['sku'],),daemon=True).start()
+  if complete:
+   self.sync_shared_galleries(task)
+   threading.Thread(target=self.render_video,args=(task['sku'],),daemon=True).start()
   return {'saved_count':len(received),'complete':complete}
+ def sync_shared_galleries(self,source):
+  import shutil
+  from product_group import reuse_gallery
+  from listing_bundle import refresh_assets
+  if source.get('gallery_source'):return
+  expected=[r['sha256'] for r in source['received_images'][1:]]
+  for task in self.tasks:
+   rows=task.get('received_images') or []
+   if task.get('gallery_source')!=source['sku'] or task.get('state')!='saved' or len(rows)!=8:continue
+   if [r['sha256'] for r in rows[1:]]==expected:continue
+   folder=self.folder/'products'/task['sku'];backup=folder/'shared_gallery_backups'/(str(time.time_ns()))
+   backup.mkdir(parents=True)
+   for name in ('images','video','image_manifest.json','listing_bundle.json'):
+    old=folder/name
+    if old.is_dir():shutil.copytree(old,backup/name)
+    elif old.exists():shutil.copy2(old,backup/name)
+   trial={**task,'received_images':rows[:1]};reuse_gallery(folder,trial)
+   live_names={Path(r['file'].replace('\\','/')).name for r in trial['received_images']}
+   for old in rows[1:]:
+    name=Path(old['file'].replace('\\','/')).name
+    if name not in live_names:(folder/'images'/name).unlink(missing_ok=True)
+   if (folder/'video').exists():shutil.rmtree(folder/'video')
+   task['received_images']=trial['received_images'];task.pop('video',None)
+   manifest=folder/'image_manifest.json';temp=manifest.with_suffix('.tmp');temp.write_text(json.dumps(task['received_images'],ensure_ascii=False,indent=2),encoding='utf-8');temp.replace(manifest)
+   refresh_assets(folder);task['message']='已按首变体最终编号文件更新共用7张详情，旧素材已备份；重新合成视频'
+   threading.Thread(target=self.render_video,args=(task['sku'],),daemon=True).start()
+  self.save()
  def repair_order(self,tid):
   import shutil
   task=self.find(tid)
   if not task.get('set_mode') or task['state'] not in ('waiting','claimed','sending','needs_attention'):raise ValueError('当前任务不允许自动重新采集')
+  affected={t['sku'] for t in self.tasks if t['sku']==task['sku'] or t.get('gallery_source')==task['sku']}
+  if affected & self.video_running:return {'pending':True,'reason':'等待旧视频处理结束，再备份并替换最终图片'}
   folder=self.folder/'products'/task['sku'];stamp=time.strftime('%Y%m%d-%H%M%S')+'-'+secrets.token_hex(4);backup=folder/'auto_recovery'/stamp;backup.mkdir(parents=True)
   (backup/'task.json').write_text(json.dumps(task,ensure_ascii=False,indent=2),encoding='utf-8')
   for name in ('images','video','image_manifest.json','listing_bundle.json'):
@@ -296,7 +330,11 @@ class Store:
   if any(t['state'] in ('claimed','sending','waiting','needs_attention','review') for t in self.tasks):raise ValueError('请先审核上一任务或处理异常，不能继续发送')
   t=next((t for t in self.tasks if t['state']=='queued'),None)
   if not t:raise ValueError('没有排队任务，请在本地窗口创建商品')
-  t['generation_parameters']=copy.deepcopy(t.get('variant_parameters') or {});t['generation_variants']=copy.deepcopy(t.get('group_variants') or []);t['state']='claimed';t['prompt']=t['prompt'].replace('。如以文件或ZIP交付，8张文件须按01_至08_编号，01_为主图，ZIP不得包含原始参考图。','。仅交付8张独立图片，按01_至08_编号。');t['prompt']+='\n交付要求：仅输出独立图片及逐张下载入口，不要打包，不提供ZIP或其他压缩包。';self.save();result=dict(t);result['references']=[{'name':r['name'],'mime':r['mime'],'purpose':r.get('purpose','variant_main'),'base64':base64.b64encode(Path(r['path']).read_bytes()).decode()} for r in t.get('references',[])];return result
+  t['generation_parameters']=copy.deepcopy(t.get('variant_parameters') or {});t['generation_variants']=copy.deepcopy(t.get('group_variants') or []);t['state']='claimed'
+  if t.get('set_mode'):
+   from image_prompts import generation_prompt
+   t['prompt']=generation_prompt(t['facts'],t.get('group_facts',''),t.get('expected_images',8))
+  t['prompt']=t['prompt'].replace('。如以文件或ZIP交付，8张文件须按01_至08_编号，01_为主图，ZIP不得包含原始参考图。','。仅交付8张独立图片，按01_至08_编号。');t['prompt']+='\n交付要求：仅输出独立图片及逐张下载入口，不要打包，不提供ZIP或其他压缩包。';self.save();result=dict(t);result['references']=[{'name':r['name'],'mime':r['mime'],'purpose':r.get('purpose','variant_main'),'base64':base64.b64encode(Path(r['path']).read_bytes()).decode()} for r in t.get('references',[])];return result
  def find(self,tid):
   t=next((t for t in self.tasks if t['id']==tid),None)
   if not t:raise ValueError('任务不存在')
@@ -421,10 +459,14 @@ class Store:
  def next_copy(self):
   self.sync_shared_copies()
   for task in self.tasks:
-   if task.get('set_mode') and task['state']=='saved' and task.get('video') and not task.get('copy_state'):
+   if task.get('copy_state')=='needs_attention' and task.get('message') in ('未找到可用发送按钮','图片回复尚未结束，文案等待下一次自动继续','上一条回复仍在生成'):
+    task.pop('copy_state',None);task['message']='前次文案未发送，等待图片回复结束后自动继续';self.save()
+   if task.get('set_mode') and task['state']=='saved' and not task.get('copy_state'):
     from listing_bundle import prepare,copy_complete
     folder=self.folder/'products'/task['sku']
-    if not (folder/'listing_bundle.json').exists():prepare(folder,task)
+    if not (folder/'listing_bundle.json').exists():
+     if not (folder/'image_manifest.json').exists():continue
+     prepare(folder,task)
     if task.get('copy_leader') and task['copy_leader']!=task['sku']:continue
     bundle=json.loads((folder/'listing_bundle.json').read_text(encoding='utf-8-sig'))
     if copy_complete(bundle.get('copy')):task['copy_state']='done';self.save();continue
@@ -475,7 +517,7 @@ def server(store,token,port=8765):
     body=json.loads(self.rfile.read(n))
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.0','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.1','paired':True}
      elif self.path=='/control':value=store.control
      elif self.path=='/automation-control':value=store.set_paused(bool(body.get('paused')))
      elif self.path=='/pause-ack':
@@ -542,7 +584,7 @@ def server(store,token,port=8765):
       from category_match import suggest
       threading.Thread(target=suggest,args=(store.folder/'products'/sku,),kwargs={'lock':store.lock},daemon=True).start()
       for task in store.tasks:
-       if task['sku']==sku:task.update(copy_state='done',message='8图、视频、俄文文案及草稿已完成；待定价、类目和托管')
+       if task['sku']==sku:task.update(copy_state='done',message='8图、视频、俄文文案及草稿已完成；待定价、类目和托管' if task.get('video') else '最终图片及共用俄语文案已保存；视频并行处理中')
       store.save()
      elif self.path=='/recover':value=store.recover(body['sku'])
      elif self.path=='/claim':value=store.claim()

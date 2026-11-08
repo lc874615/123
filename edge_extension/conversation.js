@@ -53,6 +53,15 @@
  function assistantImages(root){
   return [...root.querySelectorAll('img')].filter(i=>!userOwned(i)&&!i.closest?.('aside,[role="complementary"],#prompt-textarea'));
  }
- globalThis.OzonConversation={assistantNodes,assistantImages,userOwned,imageScopes,requestReplies,main,contentRoots,userNodes};
+ function generating(doc){
+  return !!doc.querySelector('[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop streaming"],button[aria-label="停止生成"],button[aria-label="停止流式传输"],main [data-is-streaming="true"],[role="main"] [data-is-streaming="true"]');
+ }
+ function region(doc,{marker='',allowPartial=false}={}){
+  const root=main(doc);let anchor=null;
+  if(root&&marker&&doc.createTreeWalker){const walker=doc.createTreeWalker(root,4);let node;while((node=walker.nextNode()))if(node.nodeValue.includes(marker))anchor=node;}
+  const next=anchor?userNodes(doc).find(n=>!!(anchor.compareDocumentPosition(n)&4)):null;
+  return {root,anchor,includes:n=>!!root&&!userOwned(n)&&!(allowPartial&&marker&&!anchor)&&(!anchor||!!(anchor.compareDocumentPosition(n)&4))&&(!next||!!(n.compareDocumentPosition(next)&4))};
+ }
+ globalThis.OzonConversation={assistantNodes,assistantImages,userOwned,imageScopes,requestReplies,main,contentRoots,userNodes,generating,region};
  if(typeof module!=='undefined')module.exports=globalThis.OzonConversation;
 })();

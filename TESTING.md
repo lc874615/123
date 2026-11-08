@@ -1,12 +1,12 @@
-# v1.0.0 最终版验证
+# v1.0.1 最终版验证
 
 2026-11-08，本次发布在合成商品与模拟 API 上验证，未对真实 Ozon 店铺或 COS 执行操作。
 
 ## 结果
 
-- Python：231 项通过，覆盖采集、图序恢复、视频、托管、类目/属性、定价、整组编辑、上架状态、重启与店铺隔离。
-- JavaScript：24 项通过，覆盖图片/文案解析、上传控件、配对、暂停和安全恢复。
-- Chromium：7 个独立页面场景通过。包含隐藏图库、延迟加载、用户参考图排除、八个独立文件直接下载、文件链接、无原生上传控件的粘贴路径及精简插件界面。
+- Python：236 项通过，覆盖采集、图序恢复、视频、托管、类目/属性、定价、整组编辑、上架状态、重启与店铺隔离。
+- JavaScript：26 项通过，覆盖图片/文案解析、上传控件、配对、暂停和安全恢复。
+- Chromium：8 个独立页面场景通过。包含隐藏图库、延迟加载、用户参考图排除、八个独立文件直接下载、文件链接、无原生上传控件的粘贴路径及精简插件界面。
 - Tk：真实窗口验证三页主界面、按组显示、四页预览、1000×700 下提交区可见、四项价格行存在，编辑共用文案后两个变体自动保存。
 - Python 编译与插件版本/文件引用检查通过。
 
@@ -36,6 +36,7 @@ node edge_extension/browser_structural_gallery.cjs
 node edge_extension/browser_file_links.cjs
 node edge_extension/browser_direct_download.cjs
 node edge_extension/browser_popup_final.cjs
+node edge_extension/browser_final_delivery.cjs
 ```
 
 有图形显示的环境运行 `python windows_ozon_tool/gui_smoke.py`。Linux 可使用 Xvfb 与系统 Tk；测试使用临时 data、模拟 API，并关闭 HTTP 服务和后台自动任务。
@@ -43,3 +44,10 @@ node edge_extension/browser_popup_final.cjs
 Windows DPAPI、Edge 安装权限及真实平台审核未在该 Linux 环境验证。实际平台状态以店铺回执为准；不把模拟测试写成真实上架成功。
 
 历史记录见 TESTING_HISTORY.md。
+
+
+## v1.0.1 新增回归
+
+复现“先凑到8张、继续生成12张过程图、最后交付折叠的8个文件”：过程中不保存，最终卡片优先于早期链接，自动展开并按编号下载，不打开预览、不下载压缩包。9个编号文件不会截断成8个，结束后的静默核对时间随回复变化重新计时。测试同时运行实际 content.js 恢复循环。
+
+图片完成后自动启动整组文案，不等待视频；生成中的页面不会提前创建文案发送任务或关闭自动化。已采错完整8张可核对最终文件后备份替换，其他变体主图保持、7张详情及视频更新，移除旧格式的活跃文件，旧视频先备份避免上传旧成品。已知未发送的文案可恢复，结果不确定的文案不重发。

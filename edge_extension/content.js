@@ -1,5 +1,8 @@
-(()=>{if(window.__ozonLocalInstalled)return;window.__ozonLocalInstalled=true;globalThis.__ozonContentVersion='1.0.0';let stop=false,running=false;
-async function collectSource(task,options){return await globalThis.OzonFiles?.collect(document,{...options,task})||await globalThis.OzonImages.collect(document,options);}
+(()=>{if(window.__ozonLocalInstalled)return;window.__ozonLocalInstalled=true;globalThis.__ozonContentVersion='1.0.1';let stop=false,running=false;
+async function collectSource(task,options){
+ if(!globalThis.OzonDelivery)throw Error('最终交付采集模块未加载，请更新插件并刷新作图页');
+ return globalThis.OzonDelivery.collect(document,{...options,task});
+}
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function tell(task,state,message){const r=await chrome.runtime.sendMessage({kind:'event',task_id:task.id,state,message});if(r?.error)throw Error(r.error);}
 function findEditor(){
@@ -7,13 +10,13 @@ function findEditor(){
  for(const sel of selectors){const found=[...document.querySelectorAll(sel)].filter(e=>e.getClientRects().length&&!e.disabled&&e.getAttribute('aria-hidden')!=='true');if(found.length===1)return found[0];}
  return null;
 }
-function preflight(){const e=findEditor();return {version:'1.0.0',ready:!!e&&!document.querySelector('[data-testid="stop-button"]'),url:location.origin+location.pathname,message:e?'输入框已识别':'未找到可见输入框。请在普通ChatGPT文字对话中刷新页面，点击输入区后重试；不能在图片查看器或其他应用中执行。'};}
+function preflight(){const e=findEditor(),generating=globalThis.OzonConversation.generating(document);return {version:'1.0.1',ready:!!e&&!generating,generating,url:location.origin+location.pathname,message:generating?'上一条回复仍在生成，等待完成后自动继续':e?'输入框已识别':'未找到可见输入框。请在普通ChatGPT文字对话中刷新页面，点击输入区后重试；不能在图片查看器或其他应用中执行。'};}
 async function run(task){
  if(running)throw Error('本页正在执行任务');running=true;stop=false;
  try{
   if(location.origin!=='https://chatgpt.com')throw Error('请返回 ChatGPT 对话');
   let editor=findEditor();if(!editor)throw Error(preflight().message);
-  if(document.querySelector('[data-testid="stop-button"]'))throw Error('上一条回复仍在生成');
+  if(globalThis.OzonConversation.generating(document))throw Error('上一条回复仍在生成');
   if(editor.textContent.trim()||editor.value?.trim())throw Error('输入框已有内容，请先人工处理，避免覆盖');
   if(task.references?.length){
    await globalThis.OzonUploads.upload(task.references,{editor,sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message)});
@@ -35,7 +38,7 @@ async function run(task){
    if(task.set_mode){
     const images=await collectImages(task,{allowPartial:true,expected:task.expected_images||8,previous:previousImages,before:oldReplies,marker:'【OZON_TASK:'+task.id+'】',sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message),onImage:(index,b64)=>saveImage(task,index,b64)});
     if(images)return;
-    if(Date.now()-lastReport>5000){lastReport=Date.now();await tell(task,'waiting','等待采集：助手区域'+globalThis.OzonConversation.assistantNodes(document).length+'个、页面图片'+document.querySelectorAll('main img,[role="main"] img').length+'张。若网页已生成8张，请导出页面诊断；不会重发');}
+    if(Date.now()-lastReport>5000){lastReport=Date.now();if(!task._deliveryNotice)await tell(task,'waiting','等待当前任务的最终图片交付；不会重新发送作图请求');}
 
    }
    const replies=[...document.querySelectorAll('[data-message-author-role="assistant"]')];
@@ -63,6 +66,7 @@ async function collectImages(task,options){
   const images=await collectSource(task,{...options,allowPartial:false,onImage:async()=>{}});
   if(!images)return null;
   const reset=await chrome.runtime.sendMessage({kind:'repair-order',task_id:task.id});if(reset?.error)throw Error(reset.error);
+  if(reset?.pending){await tell(task,'waiting',reset.reason||'等待旧素材处理结束再替换');return null;}
   task.orderRepairPending=false;task.orderRepairAttempted=true;
   for(let index=0;index<images.length;index++)await saveImage(task,index,images[index]);
   return images;
@@ -84,8 +88,8 @@ async function recover(task){
  if(running)throw Error('本页正在执行任务');running=true;stop=false;
  try{
   let images=await collectImages(task,{manual:true,expected:task.expected_images||8,marker:'【OZON_TASK:'+task.id+'】',sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message),onImage:(index,b64)=>saveImage(task,index,b64)});
-  const until=Date.now()+20*60*1000;while(!images&&task.orderRepairPending&&Date.now()<until&&!stop){await sleep(1500);images=await collectImages(task,{manual:true,expected:task.expected_images||8,marker:'【OZON_TASK:'+task.id+'】',sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message),onImage:(index,b64)=>saveImage(task,index,b64)});}
-  if(!images)throw Error('本页未收齐完整原图，请展开当前回复的图片列表后重试；不会重新生成');
+  const until=Date.now()+20*60*1000;while(!images&&Date.now()<until&&!stop){await sleep(1500);images=await collectImages(task,{manual:true,expected:task.expected_images||8,marker:'【OZON_TASK:'+task.id+'】',sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message),onImage:(index,b64)=>saveImage(task,index,b64)});}
+  if(!images)throw Error('等待最终编号图片文件超时，未重新生成；已有图片保留');
 
  }catch(e){await tell(task,'needs_attention',e.message).catch(()=>{});}finally{running=false;}
 }
@@ -93,6 +97,7 @@ async function recover(task){
 async function copy(task){
  stop=false;
  try{
+  if(running||globalThis.OzonConversation.generating(document))throw Error('图片回复尚未结束，文案等待下一次自动继续');
   const editor=findEditor();if(!editor)throw Error('未找到输入框');
   if(editor.textContent.trim()||editor.value?.trim())throw Error('输入框已有内容，未覆盖');
   const excluded=globalThis.OzonCopy.snapshot();

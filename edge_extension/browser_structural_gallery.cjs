@@ -4,7 +4,7 @@ const {chromium}=require('playwright'),assert=require('node:assert/strict'),path
  const browser=await chromium.launch({executablePath:process.env.OZON_TEST_CHROMIUM||'/usr/bin/chromium',headless:true,args:['--no-sandbox']});
  try{
   const page=await browser.newPage({viewport:{width:1280,height:640}});await page.route('https://chatgpt.com/**',r=>r.fulfill({contentType:'text/html',body:'<main></main>'}));await page.goto('https://chatgpt.com/c/synthetic-diagnostic-2');
-  for(const file of ['conversation.js','copy_parser.js','images.js'])await page.addScriptTag({path:path.join(__dirname,file)});
+  for(const file of ['conversation.js','copy_parser.js','images.js','file_links.js','delivery.js'])await page.addScriptTag({path:path.join(__dirname,file)});
   await page.evaluate(()=>{
    function src(n,w=1086,h=1448){const c=document.createElement('canvas');c.width=w;c.height=h;const ctx=c.getContext('2d');ctx.fillStyle=`rgb(${n*22},${n*10},${n*5})`;ctx.fillRect(0,0,w,h);return c.toDataURL();}
    window.generated=Array.from({length:8},(_,i)=>src(i+1));window.references=Array.from({length:5},(_,i)=>src(i+9,1000,1000));window.clicks=0;
