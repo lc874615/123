@@ -95,9 +95,17 @@ def validate_values(field,values):
 class AttributeService:
  def __init__(self,data,lock=None,caller=api,active_skus=None):
   self.data=Path(data);self.root=self.data/'attributes';self.root.mkdir(parents=True,exist_ok=True);self.lock=lock or threading.Lock();self.io_lock=threading.RLock();self.caller=caller;self.active_skus=active_skus;self.schema_cache={};self.status='等待类目确认后读取必填属性';self.wake=threading.Event();self.retry_at={}
- def dictionary(self,bundle,field,query='',last_value_id=0):
+ def dictionary(self,bundle,field,query='',last_value_id=0,force=False):
   category,type_id=category_key(bundle);base={'attribute_id':field['id'],'description_category_id':category,'type_id':type_id}
   with self.io_lock:
+   cache_path=self.root/f'{category}-{type_id}-{field["id"]}-queries.json'
+   try:cached=read(cache_path) if cache_path.exists() else {}
+   except (OSError,ValueError):cached={}
+   if not isinstance(cached,dict):cached={}
+   cache_key=json.dumps([query.strip(),last_value_id,'ZH_HANS',field.get('dictionary_id')],ensure_ascii=False);entry=cached.get(cache_key) or {}
+   if not isinstance(entry,dict):entry={}
+   if not force and 0<=time.time()-entry.get('fetched_at',0)<86400 and isinstance((entry.get('response') or {}).get('result'),list):return copy.deepcopy(entry['response'])
+   self.status='正在读取官方选项：'+(field.get('name') or field.get('name_ru') or str(field['id']))
    if query:
     if len(query.strip())<2:raise ValueError('官方字典关键词至少2个字符')
     response=self.caller('/v1/description-category/attribute/values/search',{**base,'value':query.strip(),'limit':100})
@@ -105,7 +113,7 @@ class AttributeService:
    path=self.root/(f'{category}-{type_id}-{field["id"]}.json');known=read(path) if path.exists() else {}
    for row in response['result']:
     if isinstance(row.get('id'),int) and row['id']>0:known[str(row['id'])]=row
-   write(path,known);return response
+   write(path,known);cached[cache_key]={'fetched_at':time.time(),'response':response};write(cache_path,cached);return response
  def migrate(self,bundle,old,fields):
   previous={field_key(f):f for f in old.get('fields',[])};values={};pending={};old_values=old.get('values') or {}
   for field in fields:
@@ -144,9 +152,12 @@ class AttributeService:
   with self.io_lock:
    base={'description_category_id':category,'type_id':type_id}
    cached=self.schema_cache.get((category,type_id))
-   if not force and cached and time.time()-cached[0]<60:zh,ru=copy.deepcopy(cached[1:])
+   prior=bundle.get('attribute_draft') or bundle.get('attribute_history') or {}
+   if not force and (not cached or time.time()-cached[0]>=86400) and prior.get('category_key')==[category,type_id] and prior.get('fields') and 0<=time.time()-prior.get('fetched_at',0)<86400:
+    zh=copy.deepcopy(prior['fields']);ru=[{**f,'name':f.get('name_ru',f.get('name',''))} for f in zh];cached=(prior['fetched_at'],zh,ru);self.schema_cache[(category,type_id)]=cached
+   if not force and cached and 0<=time.time()-cached[0]<86400:zh,ru=copy.deepcopy(cached[1:]);schema_time=cached[0]
    else:
-    zh=self.caller('/v1/description-category/attribute',{**base,'language':'ZH_HANS'})['result'];ru=self.caller('/v1/description-category/attribute',{**base,'language':'RU'})['result'];self.schema_cache[(category,type_id)]=(time.time(),copy.deepcopy(zh),copy.deepcopy(ru))
+    zh=self.caller('/v1/description-category/attribute',{**base,'language':'ZH_HANS'})['result'];ru=self.caller('/v1/description-category/attribute',{**base,'language':'RU'})['result'];schema_time=time.time();self.schema_cache[(category,type_id)]=(schema_time,copy.deepcopy(zh),copy.deepcopy(ru))
    russian={field_key(f):f for f in ru}
    fields=[{**f,'name_ru':russian.get(field_key(f),{}).get('name',f.get('name',''))} for f in zh]
    if not fields:raise ValueError('该类目未返回属性，暂不视为校验通过')
@@ -170,6 +181,10 @@ class AttributeService:
     if suggestion is None or suggestion=='':continue
     suggestions[key]=suggestion
     if field.get('dictionary_id'):
+     old_values=(old.get('values') or {}).get(key)
+     if same and 0<=time.time()-old.get('fetched_at',0)<86400 and (old.get('suggestions') or {}).get(key)==suggestion and old_values:
+      try:validate_values(field,old_values);values[key]=copy.deepcopy(old_values);continue
+      except ValueError:pass
      try:
       rows=self.dictionary(bundle,field,str(suggestion))['result'];matches=[r for r in rows if str(r.get('value','')).casefold()==str(suggestion).casefold()]
       if not matches:
@@ -201,7 +216,7 @@ class AttributeService:
     except ValueError:continue
     values[key]=proposed;auto_references[key]={k:reference[k] for k in ('suggested','evidence','confidence','note','kind')}
    for k in values:pending.pop(k,None)
-   state={'autofill_version':AUTOFILL_VERSION,'auto_reference_keys':sorted(auto_references),'auto_references':auto_references,'category_key':[category,type_id],'schema_hash':digest,'fields':fields,'values':values,'suggestions':suggestions,'fetched_at':time.time(),'confirmed':bool(same and unchanged and old.get('autofill_version')==AUTOFILL_VERSION and old.get('confirmed')),'source_fingerprint':source,'manual_keys':sorted(manual) if same else [k for k in values if k in manual],'migration_pending':pending}
+   state={'autofill_version':AUTOFILL_VERSION,'auto_reference_keys':sorted(auto_references),'auto_references':auto_references,'category_key':[category,type_id],'schema_hash':digest,'fields':fields,'values':values,'suggestions':suggestions,'fetched_at':schema_time,'confirmed':bool(same and unchanged and old.get('autofill_version')==AUTOFILL_VERSION and old.get('confirmed')),'source_fingerprint':source,'manual_keys':sorted(manual) if same else [k for k in values if k in manual],'migration_pending':pending}
    with self.lock:
     latest=read(path)
     if category_key(latest)!=(category,type_id) or source_fingerprint(latest)!=source or not latest['category'].get('confirmed'):raise ValueError('读取期间类目已变化，请重新读取')
@@ -275,6 +290,6 @@ class AttributeService:
      state=bundle.get('attribute_draft') or {}
      if state.get('autofill_version')==AUTOFILL_VERSION and state.get('category_key')==list(category_key(bundle)) and state.get('source_fingerprint')==source_fingerprint(bundle) and time.time()-state.get('fetched_at',0)<86400:
       self.status='当前类目属性已缓存，可核对或导出';continue
-     self.status=path.parent.name+'：正在读取官方必填属性';self.refresh(path);self.status='必填属性已读取，待核对缺失项'
+     self.status=path.parent.name+'：正在读取官方必填属性';self.refresh(path,force=False);self.status='必填属性已读取，待核对缺失项'
     except Exception as exc:self.status='属性待处理：'+str(exc)[:160];self.retry_at[str(path)]=time.time()+60
    self.wake.wait(15);self.wake.clear()

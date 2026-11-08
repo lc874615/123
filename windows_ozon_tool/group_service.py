@@ -47,12 +47,13 @@ class GroupService:
     for task in self.store.tasks:
      if task['sku']==b['sku']:task.update(variant_parameters=copy.deepcopy(b.get('variant_parameters',{})),facts=b.get('facts',''),group_facts=all_facts,group_variants=copy.deepcopy(variants))
   if self.store:self.store.save()
- def after_edit(self,indices,refresh=True):
+ def after_edit(self,indices,refresh=True,force=False):
   if refresh:
+   forced=set()
    for n in indices:
     try:
      self.status=self.paths[n].parent.name+'：同步官方属性与已填内容'
-     self.attributes.refresh(self.paths[n],force=False)
+     key=category_key(read(self.paths[n]));self.attributes.refresh(self.paths[n],force=force and key not in forced);forced.add(key)
     except ValueError:pass # Draft retains the explicit missing/connection state.
   self.status='正在重新计算售价';self.pricing.calculate_all();self.attributes.wake.set();self.status='参数和自动售价已同步'
  def set_parameters(self,indices,key,values,expected=None):

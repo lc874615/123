@@ -120,7 +120,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
     displayed_copy=copy.deepcopy(actual_copy)
    merchant=os.environ.get('OZON_CLIENT_ID') or '未连接';job=active_job();last_job=job or next((j for j in publication.jobs() if set(offers())&set(j.get('items',{}))),None)
    status.configure(text='店铺Client-Id：'+merchant+' | '+(coordinator.status if busy else '整组 '+str(len(paths))+' 个变体')+' | '+(last_job.get('message','') if last_job else '编辑会同步重算售价；提交前请核对图文与参数'))
-   if busy:status.configure(text=status.cget('text')+' | 正在'+coordinator.status+'（已用'+str(int(time.monotonic()-busy_since))+'秒）')
+   if busy:status.configure(text=status.cget('text')+' | 正在'+coordinator.status+'（已用'+str(int(time.monotonic()-busy_since))+'秒）'+(' | '+service.status if '官方属性' in coordinator.status else ''))
    if operation_error:status.configure(text='处理未完成：'+operation_error[:220]+' | 详见提交与上架进度页')
    if copy_dirty:status.configure(text=status.cget('text')+' | 共用文案尚未保存')
    submit_button.configure(state='disabled' if busy or copy_dirty else 'normal',text='查看当前提交进度' if job else '提交/更新整组并自动上架');progress_refresh()
@@ -195,7 +195,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  ttk.Button(bar,text='批量修改当前参数',command=bulk).pack(side='left',padx=3)
  def refresh_all():
   if not editable():return
-  run(lambda:coordinator.after_edit(list(range(len(paths)))))
+  run(lambda:coordinator.after_edit(list(range(len(paths))),force=True))
  ttk.Button(bar,text='刷新API参数并重新定价',command=refresh_all).pack(side='left',padx=3)
  if connection_callback:ttk.Button(bar,text='连接Ozon API',command=connection_callback).pack(side='left',padx=3)
  def load_warehouses():
