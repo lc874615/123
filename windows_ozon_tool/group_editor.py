@@ -381,10 +381,12 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  for key,label,width in [('offer','货号',180),('warehouse','目标仓库',200),('quantity','目标库存 / 当前可用',160),('state','上架阶段',250),('errors','平台结果 / 错误',350)]:progress.heading(key,text=label);progress.column(key,width=width,anchor='center')
  progress.pack(fill='both',expand=True,padx=8,pady=8);progress_info=ScrolledText(progress_tab,height=6);progress_info.pack(fill='x',padx=8,pady=5)
  def progress_refresh():
-  if not last_job:return
   progress.delete(*progress.get_children())
+  if not last_job:
+   if not operation_error:progress_info.delete('1.0','end');progress_info.insert('1.0','本组暂无本地上架记录。')
+   return
   for offer,item in last_job.get('items',{}).items():
-   setting=last_job['stocks'][offer];progress.insert('','end',values=(offer,setting['warehouse_name'],str(setting['stock'])+' / '+str(item.get('current_free_stock','待查询')),item.get('status',''),json.dumps(item.get('errors') or item.get('platform_status') or {},ensure_ascii=False)))
+   setting=last_job['stocks'][offer];progress.insert('','end',values=(offer,setting['warehouse_name'],str(setting['stock'])+' / '+str(item.get('current_free_stock','待查询')),item.get('status',''),item.get('error_summary') or json.dumps(item.get('errors') or item.get('platform_errors') or item.get('platform_status') or {},ensure_ascii=False)))
   text=json.dumps({'任务':last_job['id'],'导入任务ID':last_job.get('task_id'),'状态':last_job['state'],'说明':last_job.get('message'),'最近处理错误':operation_error or None},ensure_ascii=False,indent=2)
   if progress_info.get('1.0','end-1c')!=text:progress_info.delete('1.0','end');progress_info.insert('1.0',text)
  def query_status():
@@ -406,6 +408,15 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   if not messagebox.askyesno('停止后续跟进','停止未来自动写入，已受理的商品导入和已设置库存不会撤销。之后可修改新预览再次提交。是否停止？',parent=dialog):return
   run(lambda:publication.cancel_followup(last_job['id']))
  ttk.Button(recovery,text='停止后续跟进（不撤销已完成操作）',command=cancel_followup).pack(side='left',padx=4)
+ def clear_progress():
+  if busy:return
+  targets=offers()
+  def done(count):
+   nonlocal operation_error
+   operation_error='';refresh();progress_refresh();messagebox.showinfo('本地进度已清空','已清理 '+str(count)+' 条记录，素材和回执备份保留。平台商品未删除；可在后台处理后再提交。',parent=dialog)
+  run(lambda:publication.clear_group(targets),done,label='清空本组本地上架进度')
+ ttk.Button(progress_tab,text='清空本组上架进度（保留素材）',command=clear_progress).pack(pady=4)
+
 
 
  def submit():

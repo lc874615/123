@@ -37,7 +37,7 @@ def request(path,body):
  return value
 
 def digest(value):return hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
-TERMINAL={'on_sale','completed_zero_stock','partial_failed','rejected','failed','superseded','cancelled_followup'}
+TERMINAL={'on_sale','completed_zero_stock','partial_failed','rejected','failed','superseded','cancelled_followup','validation_failed'}
 class PublicationService:
  def __init__(self,data,store_lock,caller=request,account_getter=account,initial_stock=None):
   if initial_stock is not None and (type(initial_stock) is not int or not 0<=initial_stock<=2147483647):raise ValueError('初始库存配置无效')
@@ -155,7 +155,7 @@ class PublicationService:
    history=[j for j in self.jobs() if j.get('account_id')==merchant]
    for item in payload['items']:
     offer=item['offer_id'];item_hash=digest(item);stock_sig=digest([merchant,stocks[offer]])
-    prior_item=next((j['items'][offer] for j in history if offer in j.get('items',{}) and j['items'][offer].get('item_hash')==item_hash and j['items'][offer].get('import_state')=='imported'),None)
+    prior_item=next((j['items'][offer] for j in history if offer in j.get('items',{}) and j['items'][offer].get('item_hash')==item_hash and j['items'][offer].get('import_state')=='imported' and not j['items'][offer].get('validation_blocked')),None)
     prior_stock=next((j['items'][offer] for j in history if offer in j.get('items',{}) and j['items'][offer].get('stock_signature')==stock_sig and j['items'][offer].get('stock_state')=='done'),None)
     job['items'][offer]={'item_hash':item_hash,'stock_signature':stock_sig,'import_state':'imported' if prior_item else 'pending','product_id':prior_item.get('product_id') if prior_item else None,'stock_state':'done' if prior_stock else 'pending','status':'等待提交','errors':[]}
    self._save(job)
@@ -187,22 +187,38 @@ class PublicationService:
      offer=row.get('offer_id')
      if offer not in job['items']:continue
      target=job['items'][offer];errors=row.get('errors') or []
-     if row.get('status') in ('failed','error') or any(e.get('level','ERROR').upper()=='ERROR' for e in errors):target.update(import_state='failed',errors=errors,status='导入失败')
-     elif row.get('status')=='imported' and row.get('product_id'):target.update(import_state='imported',product_id=row['product_id'],errors=[],status='已导入')
+     if row.get('status') in ('failed','error') or any(str(e.get('level','ERROR')).upper() in ('ERROR','ERROR_LEVEL_ERROR','ERROR_LEVEL_INTERNAL','INTERNAL') for e in errors):target.update(import_state='failed',errors=errors,status='导入失败')
+     elif row.get('status') in ('imported','skipped') and row.get('product_id'):target.update(import_state='imported',product_id=row['product_id'],errors=[],status='已导入')
      elif target['import_state']!='imported':target.update(status='平台正在处理导入，等待创建完成',errors=errors)
    self._save(job)
    current=[read(p) for p in job['source_paths']]
    if revision(current)!=job['source_revision']:
     job.update(state='superseded' if job.get('writes_complete') else 'local_changed',message='本地资料已有新版本；原写入结果保留，旧任务停止后续写入');self._save(job);return job
+   visible_offers=[o for o,item in job['items'].items() if item['import_state']!='failed']
+   products={}
+   if visible_offers:
+    try:
+     info=self.caller('/v3/product/info/list',{'offer_id':visible_offers});products={r['offer_id']:r for r in info.get('items',[])}
+    except Rejected as exc:
+     if 'product creation incomplete' not in str(exc).casefold():raise
+   blocking=False
+   for offer,item in job['items'].items():
+    product=products.get(offer) or {};status=product.get('statuses') or {};errors=product.get('errors') or []
+    item['platform_status']=status;item['platform_errors']=errors;item['error_summary']='；'.join(self.error_text(e) for e in errors);item['card_exists']=bool(product.get('id'))
+    fatal=[e for e in errors if str(e.get('level','')).upper() in ('ERROR','ERROR_LEVEL_ERROR','ERROR_LEVEL_INTERNAL','INTERNAL')]
+    invalid=str(status.get('validation_status','')).casefold() in ('failed','invalid','error','validation_failed')
+    if fatal or invalid:
+     item.update(validation_blocked=True,errors=fatal or errors,status='商品卡片已创建，但校验不通过；请修改后重新提交');blocking=True
+    elif item['import_state']=='pending':item['status']='商品卡片已存在，等待本次导入结果' if item['card_exists'] else '平台正在处理导入，等待创建完成'
+   if blocking:
+    job.update(state='validation_failed',message='平台商品校验不通过，具体错误已回填；请修正参数后更新同货号商品，无需重复创建')
+    self._save(job);return job
    offers=[o for o,item in job['items'].items() if item['import_state']=='imported']
    if not offers:
     failed=all(i['import_state']=='failed' for i in job['items'].values())
-    for item in job['items'].values():
-     if item['import_state']=='pending':item['status']='平台正在处理导入，等待创建完成'
-    job.update(state='failed' if failed else 'importing',message='整组导入失败，请查看逐变体错误' if failed else '导入任务已受理，平台尚未完成商品创建；自动等待，不重复提交')
+    job.update(state='failed' if failed else 'importing',message='整组导入失败，请查看逐变体错误' if failed else '正在等待本次导入结果，卡片创建与导入校验分别跟踪，不重复提交')
     self._save(job);return job
    eligible={r['warehouse_id']:r for r in self.warehouses()}
-   info=self.caller('/v3/product/info/list',{'offer_id':offers});products={r['offer_id']:r for r in info.get('items',[])}
    stock_rows=[]
    for offer,item in job['items'].items():
     if item['import_state']!='imported' or item['stock_state'] in ('done','uncertain','intent') or item.get('stock_retry_at',0)>time.time():continue
@@ -247,7 +263,7 @@ class PublicationService:
     if item['on_sale']:item['status']='平台返回可售'
     elif offer in not_ready:item['status']='库存已设置，等待平台库存查询服务就绪' if item['stock_state']=='done' else '商品库存服务尚未就绪，自动等待'
     elif item['stock_state']=='done':item['status']='库存已设置，等待平台审核/可售状态' if setting['stock'] else '库存为0，未可售'
-    elif item['import_state']=='pending':item['status']='平台正在处理导入，等待创建完成'
+    elif item['import_state']=='pending':item['status']='商品卡片已存在，等待本次导入结果' if item.get('card_exists') else '平台正在处理导入，等待创建完成'
    values=list(job['items'].values())
    job['writes_complete']=all(i['import_state']=='failed' or (i['import_state']=='imported' and i['stock_state']=='done') for i in values)
    if all(i.get('on_sale') for i in values):job.update(state='on_sale',message='整组商品已导入，所选仓库有库存，平台返回可售')
@@ -283,6 +299,24 @@ class PublicationService:
     if 'product creation incomplete' not in str(exc).casefold():raise
     waiting.add(offer)
   return rows,waiting
+ @staticmethod
+ def error_text(error):
+  texts=error.get('texts') or {};detail=error.get('message') or error.get('description') or texts.get('message') or texts.get('description') or error.get('code','')
+  attribute=str(error.get('attribute_id',''))
+  if attribute=='22390':return '组合成类似产品：系列名称最多255字符，本版默认1。'+str(detail)
+  if attribute=='23171':return '主题标签：须以#开头，字母/数字/下划线，标签用空格分隔。'+str(detail)
+  return str(detail)
+ def clear_group(self,offers):
+  # Serialize against the worker: wait for any current request before archiving.
+  # Only local follow-up is removed. Platform effects and assets are untouched.
+  with self.mutex:
+   selected=[j for j in self.jobs() if set(offers)&set(j.get('items',{}))]
+   backup=self.root/'cleared';backup.mkdir(exist_ok=True)
+   for job in selected:
+    job.update(state='cancelled_followup',message='用户清空本地进度，停止后续跟进；平台商品未删除',cleared_at=time.time())
+    write(backup/(job['id']+'.json'),job)
+    (self.root/(job['id']+'.json')).unlink(missing_ok=True)
+   return len(selected)
  def resolve_no_import(self,job_id):
   with self.mutex:
    job=read(self.root/(job_id+'.json'))
@@ -308,13 +342,17 @@ class PublicationService:
    job.update(state='cancelled_followup',message='已停止后续自动操作；已受理导入与已写库存不会撤销');self._save(job);return job
  def worker(self,stop):
   while not stop.is_set():
-   for job in self.jobs():
+   for snapshot in self.jobs():
     if stop.is_set():return
-    if job['state'] in TERMINAL or job.get('next_poll_at',0)>time.time():continue
-    try:
-     if job['state']=='local_changed':continue
-     self.step(job['id'])
-    except Exception as exc:
-     current=read(self.root/(job['id']+'.json'));current['message']='查询待重试：'+str(exc)[:180];self._save(current)
-    current=read(self.root/(job['id']+'.json'));current['next_poll_at']=time.time()+30;self._save(current)
+    with self.mutex:
+     path=self.root/(snapshot['id']+'.json')
+     if not path.exists():continue
+     job=read(path)
+     if job['state'] in TERMINAL or job.get('next_poll_at',0)>time.time() or job['state']=='local_changed':continue
+     try:self.step(job['id'])
+     except Exception as exc:
+      if not path.exists():continue
+      current=read(path);current['message']='查询待重试：'+str(exc)[:180];self._save(current)
+     if path.exists():
+      current=read(path);current['next_poll_at']=time.time()+30;self._save(current)
    self.wake.wait(15);self.wake.clear()

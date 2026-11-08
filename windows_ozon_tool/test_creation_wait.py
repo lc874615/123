@@ -5,10 +5,10 @@ import test_group_publication as fixtures
 
 READ='/v2/product/info/stocks-by-warehouse/fbs'
 class CreationWaitTests(unittest.TestCase):
- def test_pending_import_never_queries_product_or_stock_index(self):
+ def test_pending_import_checks_card_errors_but_never_queries_stock(self):
   with tempfile.TemporaryDirectory() as tmp:
    group,api,pub=fixtures.GroupTests().setup_group(tmp);api.import_pending=True;job=pub.begin(group,group.token());api.calls=[];result=pub.step(job['id'])
-   self.assertEqual(result['state'],'importing');self.assertFalse(any(p in (READ,'/v3/product/info/list','/v2/products/stocks') for p,b in api.calls));self.assertIn('等待',next(iter(result['items'].values()))['status'])
+   self.assertEqual(result['state'],'importing');self.assertFalse(any(p in (READ,'/v2/products/stocks') for p,b in api.calls));self.assertIn('等待',next(iter(result['items'].values()))['status'])
  def test_stock_index_creation_delay_is_waited_without_rewriting_stock(self):
   with tempfile.TemporaryDirectory() as tmp:
    group,api,pub=fixtures.GroupTests().setup_group(tmp);original=pub.caller;delay=[True]

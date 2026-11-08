@@ -8,6 +8,7 @@ from listing_bundle import copy_complete,copy_hash
 from pricing_service import read,write
 
 from assisted_fields import is_pdf
+from tag_rules import is_tag_field,is_series_field,normalize_tags
 VIDEO_IDS={21841,21837,21845}
 def attribute_errors(bundle):
  state=bundle.get('attribute_draft') or {};errors=[]
@@ -23,6 +24,10 @@ def attribute_errors(bundle):
    continue
   if field['id'] in VIDEO_IDS or field['id']==8229:continue
   values=(state.get('values') or {}).get(field_key(field),[])
+  if is_series_field(field) and any(len(v.get('value',''))>255 for v in values):errors.append('组合成类似产品的系列名称不得超过255字符')
+  if is_tag_field(field):
+   text=' '.join(v.get('value','') for v in values)
+   if text!=' '.join(normalize_tags(text)):errors.append('主题标签格式不合规，请刷新参数自动修正')
   from rich_content import is_rich_field,generate
   if is_rich_field(field):
    expected=generate(bundle)
@@ -58,11 +63,11 @@ def build_item(folder,bundle):
   except ValueError as exc:errors.append(str(exc))
  if not copy_complete(bundle.get('copy')):errors.append('俄文标题、简介和标签不完整')
  else:
-  description=bundle['copy']['description_ru'];tags=' '.join(bundle['copy']['tags_ru']);description_ok=False;tags_ok=not tags
+  description=bundle['copy']['description_ru'];tags=' '.join(normalize_tags(bundle['copy']['tags_ru']));description_ok=False;tags_ok=not tags
   for field in state.get('fields',[]):
    values=(state.get('values') or {}).get(field_key(field)) or [];text=' '.join(v.get('value','') for v in values)
    if field['id']==4191 or (field.get('name_ru') or '').lower() in ('аннотация','описание товара'):description_ok=text==description
-   if field['id']==22390 or (field.get('name_ru') or '').lower() in ('хэштеги','хештеги'):tags_ok=text==tags
+   if is_tag_field(field):tags_ok=text==tags
   if not description_ok:errors.append('俄文简介未完整对应到当前类目的简介属性')
   if not tags_ok:errors.append('俄文标签未完整对应到当前类目的标签属性')
  offer=bundle.get('offer_id') or bundle.get('sku','')

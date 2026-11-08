@@ -1,10 +1,11 @@
 """Prepare a local handoff without mistaking local paths for hosted Ozon images."""
 import json,hashlib
+from tag_rules import normalize_tags
 from pathlib import Path
 
 def copy_prompt_for(task):
  copy_facts=task.get('group_facts') or task.get('facts','')
- return '以下为同一商品全部变体，标题、简介和标签统一一套。标题以全组共同商品名称、用途和共同卖点为主，不得只写某一个变体的颜色或尺寸。简介完整覆盖全部变体，颜色、尺寸、材质和套装数量差异按选项分别说明，明确购买时选择一个变体，不得写成所有颜色或规格一并发货。标签统一覆盖全组真实用途和变体相关长尾词，不得重复堆砌。根据以下商品事实生成俄文Ozon标题、简介和标签。自然覆盖相关长尾词，禁止重复堆词和编造承重、认证、功能、品牌。品牌固定无品牌（Нет бренда），不要将品牌列为缺失项。严格区分主体材质和配件/内衬材质，例如主体为聚丙烯而内衬为纸板时，两者均可描述，但不得将纸板写成主体材质。未知部件材质不得推测。未知留空。只输出JSON：title_ru、description_ru、tags_ru数组、missing_facts数组。商品事实：'+copy_facts
+ return '以下为同一商品全部变体，标题、简介和标签统一一套。标题以全组共同商品名称、用途和共同卖点为主，不得只写某一个变体的颜色或尺寸。简介完整覆盖全部变体，颜色、尺寸、材质和套装数量差异按选项分别说明，明确购买时选择一个变体，不得写成所有颜色或规格一并发货。标签统一覆盖全组真实用途和变体相关长尾词，不得重复堆砌。每个标签必须以#开头，只能含字母、数字和下划线，多词用下划线连接；每个不超过30字符，总数不超过30。根据以下商品事实生成俄文Ozon标题、简介和标签。自然覆盖相关长尾词，禁止重复堆词和编造承重、认证、功能、品牌。品牌固定无品牌（Нет бренда），不要将品牌列为缺失项。严格区分主体材质和配件/内衬材质，例如主体为聚丙烯而内衬为纸板时，两者均可描述，但不得将纸板写成主体材质。未知部件材质不得推测。未知留空。只输出JSON：title_ru、description_ru、tags_ru数组、missing_facts数组。商品事实：'+copy_facts
 
 def prepare(folder,task):
  folder=Path(folder);manifest=folder/'image_manifest.json'
@@ -41,7 +42,7 @@ def save_copy(folder,value):
  if value.get('sku')!=data['sku']:raise ValueError('文案SKU不匹配或缺失，拒绝历史文案；请生成带SKU的新文案')
  from material_guard import validate,conflict
  validate(data,value)
- value=dict(value);value['missing_facts']=[x for x in value['missing_facts'] if x.strip().lower() not in ('бренд','brand','品牌')]
+ value=dict(value);value['tags_ru']=normalize_tags(value['tags_ru']);value['missing_facts']=[x for x in value['missing_facts'] if x.strip().lower() not in ('бренд','brand','品牌')]
  if data['copy']==value:return {'saved':True,'review_status':data.get('copy_review_status','pending_human_review')}
  if data['copy'].get('title_ru'):
   old=data['copy'];oldtext=(old.get('title_ru','')+' '+old.get('description_ru','')).lower()

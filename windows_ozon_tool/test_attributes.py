@@ -7,7 +7,7 @@ import test_hosting as image_fixtures
 import test_video_hosting as video_fixtures
 from video_hosting import VideoHostingService
 
-FIELDS=[{'id':85,'name':'品牌','name_ru':'Бренд','type':'string','dictionary_id':1,'is_required':True},{'id':9048,'name':'型号','name_ru':'Название модели','type':'string','is_required':True},{'id':4191,'name':'简介','name_ru':'Аннотация','type':'string','is_required':True},{'id':22390,'name':'标签','name_ru':'Хештеги','type':'string','is_collection':True},{'id':12345,'name':'内衬材质','name_ru':'Материал подкладки','type':'string','dictionary_id':2,'is_required':True}]
+FIELDS=[{'id':85,'name':'品牌','name_ru':'Бренд','type':'string','dictionary_id':1,'is_required':True},{'id':9048,'name':'型号','name_ru':'Название модели','type':'string','is_required':True},{'id':4191,'name':'简介','name_ru':'Аннотация','type':'string','is_required':True},{'id':23171,'name':'标签','name_ru':'Хештеги','type':'string','is_collection':True},{'id':12345,'name':'内衬材质','name_ru':'Материал подкладки','type':'string','dictionary_id':2,'is_required':True}]
 class AttributeTests(unittest.TestCase):
  def setup_draft(self,tmp):
   source,path,host,video=video_fixtures.VideoTests().setup_media(tmp);VideoHostingService(source).scan_once();data=read(path)

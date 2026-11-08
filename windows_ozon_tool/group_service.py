@@ -215,6 +215,8 @@ class GroupService:
   with self.mutex:
    with self.lock:
     bundles=[read(p) for p in self.paths];self._check(bundles,expected)
+    from tag_rules import normalize_tags
+    value={**value,'tags_ru':normalize_tags(value.get('tags_ru'))}
     for b in bundles:b['copy']={**copy.deepcopy(value),'sku':b['sku']};self._invalidate(b)
     self._write(bundles)
    self.after_edit(list(range(len(bundles))))
@@ -229,8 +231,16 @@ def preview_changes(before,after,allow_automatic=False):
  for old,new in zip(before,after):
   left,right=sections(old),sections(new)
   if allow_automatic:
+   from tag_rules import normalize_tags
+   for side in (left,right):
+    if isinstance(side['共用文案'],dict):side['共用文案']={**side['共用文案'],'tags_ru':normalize_tags(side['共用文案'].get('tags_ru'))}
    keys=set((old.get('attribute_draft') or {}).get('auto_reference_keys') or [])|set((new.get('attribute_draft') or {}).get('auto_reference_keys') or [])
    keys-=set((new.get('attribute_draft') or {}).get('manual_keys') or [])
+   from tag_rules import is_tag_field,is_series_field
+   for field in (new.get('attribute_draft') or {}).get('fields',[]):
+    key=field_key(field);values=((new.get('attribute_draft') or {}).get('values') or {}).get(key) or []
+    if is_series_field(field) and values==[{'value':'1'}]:keys.add(key)
+    if is_tag_field(field) and ' '.join(v.get('value','') for v in values)==' '.join(normalize_tags((new.get('copy') or {}).get('tags_ru'))):keys.add(key)
    for side in (left,right):side['官方属性']={k:v for k,v in (side['官方属性'] or {}).items() if k not in keys}
    estimate=(new.get('auto_pricing') or {}).get('price_cny')
    if not new.get('manual_price') and estimate is not None and str(estimate)==str(new.get('price_cny')):left['售价']=right['售价']

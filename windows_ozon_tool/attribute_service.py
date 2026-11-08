@@ -27,7 +27,7 @@ def api(path,body):
  if not isinstance(value,dict) or not isinstance(value.get('result'),list):raise ValueError('Ozon属性响应格式异常')
  return value
 
-AUTOFILL_VERSION=4
+AUTOFILL_VERSION=5
 def normalized_name(field):
  return re.sub(r'\s+',' ',(field.get('name_ru') or field.get('name','')).casefold().replace('ё','е').replace('#','')).strip()
 def audience(bundle):
@@ -40,6 +40,10 @@ def suggested_value(field,bundle):
  name=normalized_name(field);identifier=int(field['id']);p=bundle.get('variant_parameters') or {};copy=bundle.get('copy') or {}
  from rich_content import is_rich_field,generate
  if is_rich_field(field):return generate(bundle)
+ from tag_rules import is_tag_field,is_series_field,normalize_tags
+ if is_series_field(field):return '1'
+ if is_tag_field(field):
+  tags=normalize_tags(copy.get('tags_ru') or []);return tags if field.get('is_collection') else ' '.join(tags)
  if name.startswith('количество товара'):return p.get('quantity')
  if name in ('комплектация','配套','套装内容'):
   quantity=str(p.get('quantity') or '').strip();category=(bundle.get('category') or {}).get('name') or 'Товар'
@@ -56,8 +60,6 @@ def suggested_value(field,bundle):
  if identifier==85 or name in ('бренд','品牌'):return 'Нет бренда'
  if identifier==9048 or name in ('название модели','модель','型号','型号名称'):return bundle.get('model')
  if identifier==4191 or name in ('аннотация','описание товара','商品描述','简介'):return copy.get('description_ru')
- if identifier==22390 or name in ('хэштеги','хештеги','标签','主题标签'):
-  tags=copy.get('tags_ru') or [];return tags if field.get('is_collection') else ' '.join(tags)
  if name in ('страна-изготовитель','страна производства','生产国','原产国','产地'):return {'中国':'Китай'}.get(p.get('origin'),p.get('origin'))
  if name in ('цвет товара','цвет','颜色','商品颜色'):return {'金色':'золотой','红色':'красный','灰色':'серый','浅灰色':'светло-серый','黑色':'черный','白色':'белый','蓝色':'синий','绿色':'зеленый','米色':'бежевый'}.get(p.get('color'),p.get('color'))
  if name in ('материал','основной материал','主体材质','主要材质'):return {'聚丙烯':'Полипропилен','纸板':'Картон','金属':'Металл','塑料':'Пластик'}.get(p.get('material'),p.get('material'))
@@ -146,7 +148,15 @@ class AttributeService:
   return values,pending
  def refresh(self,path,force=True):
   path=Path(path)
-  with self.lock:bundle=read(path)
+  with self.lock:
+   bundle=read(path)
+   from tag_rules import normalize_tags
+   copy_value=bundle.get('copy') or {};normalized=normalize_tags(copy_value.get('tags_ru'))
+   if copy_value.get('tags_ru')!=normalized:
+    bundle['copy']={**copy_value,'tags_ru':normalized}
+    from listing_bundle import copy_hash
+    if bundle.get('copy_shared_hash'):bundle['copy_shared_hash']=copy_hash(bundle['copy'])
+    write(path,bundle)
   category,type_id=category_key(bundle)
   if not (bundle.get('category') or {}).get('confirmed'):raise ValueError('类目仍待确认，请先确认或修改类目')
   with self.io_lock:
@@ -175,7 +185,8 @@ class AttributeService:
    for field in fields:
     key=field_key(field)
     from rich_content import is_rich_field
-    if is_rich_field(field):values.pop(key,None);manual.discard(key)
+    from tag_rules import is_tag_field,is_series_field
+    if is_rich_field(field) or is_tag_field(field) or (is_series_field(field) and old.get('autofill_version',0)<5):values.pop(key,None);manual.discard(key)
     if key in values or field['id'] in (8229,21841,21837,21845):continue
     suggestion=suggested_value(field,bundle)
     if suggestion is None or suggestion=='':continue
@@ -224,11 +235,11 @@ class AttributeService:
     current=latest.get('attribute_draft') or {}
     if current.get('schema_hash')==digest:
      for k,v in (current.get('values') or {}).items():
-      if (k not in auto_references or k in (current.get('manual_keys') or [])) and not any(field_key(f)==k and is_rich_field(f) for f in fields) and ((current.get('source_fingerprint')==source and current.get('autofill_version')==AUTOFILL_VERSION) or k in (current.get('manual_keys') or [])):state['values'][k]=v
+      if (k not in auto_references or k in (current.get('manual_keys') or [])) and not any(field_key(f)==k and (is_rich_field(f) or is_tag_field(f) or (is_series_field(f) and current.get('autofill_version',0)<5)) for f in fields) and ((current.get('source_fingerprint')==source and current.get('autofill_version')==AUTOFILL_VERSION) or k in (current.get('manual_keys') or [])):state['values'][k]=v
      for k in (current.get('manual_keys') or []):
       state['auto_references'].pop(k,None)
      state['auto_reference_keys']=sorted(state['auto_references'])
-     state['manual_keys']=[k for k in (current.get('manual_keys') or []) if not any(field_key(f)==k and is_rich_field(f) for f in fields)]
+     state['manual_keys']=[k for k in (current.get('manual_keys') or []) if not any(field_key(f)==k and (is_rich_field(f) or is_tag_field(f) or (is_series_field(f) and current.get('autofill_version',0)<5)) for f in fields)]
      state['confirmed']=bool(current.get('source_fingerprint')==source and current.get('autofill_version')==AUTOFILL_VERSION and current.get('confirmed'))
      if state['confirmed']:state['confirmed_values_hash']=current.get('confirmed_values_hash')
     if old.get('category_key'):
