@@ -107,6 +107,8 @@ class GroupService:
      state=b['attribute_draft'];state.setdefault('values',{})[key]=canonical;state['manual_keys']=sorted(set(state.get('manual_keys') or [])|{key});state['confirmed']=False
      (state.get('migration_pending') or {}).pop(key,None)
      link=binding(field)
+     if link and len(canonical)>1 and link[0] in ('color','material','accessory_material'):
+      b.setdefault('variant_parameters',{})[link[0]]='；'.join(v.get('value','') for v in canonical);b['facts']=facts(b['variant_parameters'])
      if link and len(canonical)==1:
       param,multiplier=link;text=canonical[0].get('value','')
       if param not in ('color','material','accessory_material'):

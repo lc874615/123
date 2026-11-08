@@ -17,7 +17,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  coordinator=GroupService(paths,service,pricing,store)
  coordinator.ensure_fixed_vat()
  if publication.initial_stock is not None and not publication.active([p.parent.name for p in paths]):coordinator.ensure_initial_stock(publication.initial_stock)
- dialog=tk.Toplevel(root);dialog.title('整组预览 · Ozon 商品自动化 1.0.13');dialog.geometry('1280x850');dialog.minsize(950,650)
+ dialog=tk.Toplevel(root);dialog.title('整组预览 · Ozon 商品自动化 1.0.14');dialog.geometry('1280x850');dialog.minsize(950,650)
  busy=False;selected=set(range(len(paths)));focus=['',''];bundles=[];token=None;rendered=None;warehouses={};photos=[];rows={};last_job=None;copy_dirty=False;displayed_copy=None;copy_timer=None;busy_since=0;operation_error='';operation_name=''
  ttk.Label(dialog,text='每列一个变体；双击单格修改，点击参数名选中整行后批量修改。仓库显示当前店铺全部类型和状态。',wraplength=900).pack(pady=6)
  status=ttk.Label(dialog,text='正在加载整组预览',wraplength=1200);status.pack(pady=3)
@@ -185,7 +185,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   if kind=='p' and key=='stock' and publication.initial_stock is not None:
    messagebox.showinfo('统一初始库存','新商品初始库存固定为'+str(publication.initial_stock)+'，销售后正常扣减，不自动重置。',parent=dialog);return
   if kind=='p':text_editor('修改 '+iid,indices,str(initial),lambda values:coordinator.set_parameters(indices,key,values,expected));return
-  if len(indices)==1 and field.get('dictionary_id'):dictionary_editor(indices[0],key,field,expected);return
+  if field.get('dictionary_id'):dictionary_editor(indices,key,field,expected);return
   def save(values):
    resolved=[coordinator.resolve_text(n,key,v) for n,v in zip(indices,values)];coordinator.set_attributes(indices,key,resolved,expected)
   text_editor('修改官方属性：'+field.get('name',''),indices,str(initial) if len(indices)==1 else '',save)
@@ -286,28 +286,64 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  def report_x(first,last):sx.set(first,last);badges.schedule()
  def report_y(first,last):sy.set(first,last);badges.schedule()
  tree.configure(xscrollcommand=report_x,yscrollcommand=report_y)
- def dictionary_editor(index,key,field,expected):
-  window=tk.Toplevel(dialog);window.title(paths[index].parent.name+' · 官方字典：'+field.get('name',''));window.geometry('780x500');query=tk.StringVar();ttk.Entry(window,textvariable=query,width=60).pack(pady=6)
-  box=tk.Listbox(window,selectmode='extended' if field.get('is_collection') else 'browse',exportselection=False);box.pack(fill='both',expand=True,padx=8);loaded={};visible=[];cursor=[0]
-  def filter_values(*args):
-   nonlocal visible
-   visible=[r for r in loaded.values() if query.get().casefold() in (str(r.get('value') or '')+' '+str(r.get('info') or '')).casefold()];box.delete(0,'end')
-   for r in visible:box.insert('end',str(r.get('value') or '')+' '+str(r.get('info') or ''))
-  query.trace_add('write',filter_values)
-  def fetch(searching=False):
-   text=query.get() if searching else ''
-   def action():return service.dictionary(coordinator.load()[index],field,text,cursor[0])
-   def show(response):
+ def dictionary_editor(indices,key,field,expected):
+  from attribute_choices import OfficialChoices
+  try:
+   snapshot=coordinator.load();model=OfficialChoices(service,[snapshot[n] for n in indices],key)
+  except ValueError as exc:messagebox.showerror('无法选择',str(exc),parent=dialog);return
+  window=tk.Toplevel(dialog);window.title(('批量' if len(indices)>1 else paths[indices[0]].parent.name)+' · 官方选项：'+field.get('name',''));window.geometry('850x650')
+  ttk.Label(window,text='目标：'+'、'.join(paths[n].parent.name for n in indices),wraplength=810).pack(pady=5)
+  ttk.Label(window,text=('点击勾选，可多选，最多'+str(model.maximum)+'项' if model.multiple else '此参数按API规则只能单选')+('；批量显示所有目标类目共有的官方选项，保存后统一替换本参数' if len(indices)>1 else '') ,wraplength=810).pack(pady=4)
+  query=tk.StringVar();ttk.Entry(window,textvariable=query,width=65).pack(pady=5)
+  holder=ttk.Frame(window);holder.pack(fill='both',expand=True,padx=8);holder.rowconfigure(0,weight=1);holder.columnconfigure(0,weight=1)
+  box=ttk.Treeview(holder,columns=('label',),show='tree headings',selectmode='browse',height=10);box.heading('#0',text='勾选');box.column('#0',width=60,stretch=False);box.heading('label',text='API官方选项 / 说明');box.column('label',width=660);box.grid(row=0,column=0,sticky='nsew');scroll=ttk.Scrollbar(holder,orient='vertical',command=box.yview);scroll.grid(row=0,column=1,sticky='ns');box.configure(yscrollcommand=scroll.set)
+  count=ttk.Label(window);count.pack(pady=3);selected_box=tk.Listbox(window,height=4,selectmode='multiple',exportselection=False);selected_box.pack(fill='x',padx=8);loading=[False]
+  def render(*args):
+   if not window.winfo_exists():return
+   box.delete(*box.get_children());needle=query.get().strip().casefold()
+   for r in model.visible:
+    label=str(r.get('value') or '')+' '+str(r.get('info') or '')
+    if not needle or needle==str(model.query or '').casefold() or needle in label.casefold():box.insert('','end',iid=str(r['id']),text='☑' if r['id'] in model.selected else '☐',values=(label,))
+   selected_box.delete(0,'end')
+   for v in model.selected.values():selected_box.insert('end',v.get('value') or str(v['dictionary_value_id']))
+   count.configure(text='已选 '+str(len(model.selected))+' / '+str(model.maximum)+' 项；搜索、翻页保留已选内容')
+  def toggle(event):
+   if loading[0]:return
+   iid=box.identify_row(event.y)
+   if not iid:return
+   try:model.toggle(int(iid));render()
+   except ValueError as exc:messagebox.showerror('无法选择',str(exc),parent=window)
+  box.bind('<ButtonRelease-1>',toggle);query.trace_add('write',render)
+  tools=ttk.Frame(window);tools.pack(pady=4)
+  def fetch(next_page=False,force=False):
+   if loading[0]:return
+   loading[0]=True;save_button.configure(state='disabled');count.configure(text='正在读取所选变体的API官方选项…')
+   def show(error):
+    loading[0]=False
     if not window.winfo_exists():return
-    for r in response['result']:loaded[r['id']]=r
-    if not searching and response['result']:cursor[0]=response['result'][-1]['id']
-    filter_values()
-   run(action,show)
-  tools=ttk.Frame(window);tools.pack(pady=4);ttk.Button(tools,text='加载中文选项 / 下一页',command=lambda:fetch(False)).pack(side='left',padx=4);ttk.Button(tools,text='官方关键词搜索',command=lambda:fetch(True)).pack(side='left',padx=4)
+    save_button.configure(state='disabled' if error else 'normal');next_button.configure(state='normal' if model.has_more else 'disabled');render()
+    if error:messagebox.showerror('官方选项读取失败',error,parent=window)
+   # Capture Tk text in the UI thread before the worker starts.
+   search_text=query.get() if not next_page else model.query or ''
+   def load_action():
+    try:model.load(search_text,next_page=next_page,force=force)
+    except Exception as exc:return str(exc)
+    return None
+   run(load_action,show)
+  ttk.Button(tools,text='官方关键词搜索',command=lambda:fetch()).pack(side='left',padx=4)
+  next_button=ttk.Button(tools,text='加载下一页',command=lambda:fetch(True));next_button.pack(side='left',padx=4)
+  ttk.Button(tools,text='刷新API选项',command=lambda:fetch(force=True)).pack(side='left',padx=4)
+  def remove():
+   ids=list(model.selected)
+   for n in selected_box.curselection():model.selected.pop(ids[n],None)
+   render()
+  ttk.Button(tools,text='移除下方选中项',command=remove).pack(side='left',padx=4);ttk.Button(tools,text='清空已选',command=lambda:(model.clear(),render())).pack(side='left',padx=4)
   def save():
-   if not box.curselection():return
-   values=[{'dictionary_value_id':visible[n]['id'],'value':visible[n]['value']} for n in box.curselection()];window.destroy();run(lambda:coordinator.set_attributes([index],key,[values],expected))
-  ttk.Button(window,text='保存官方选项并重算售价',command=save).pack(pady=7);fetch(False)
+   if loading[0]:return
+   try:values=model.values()
+   except ValueError as exc:messagebox.showerror('未保存',str(exc),parent=window);return
+   window.destroy();run(lambda:coordinator.set_attributes(indices,key,values,expected))
+  save_button=ttk.Button(window,text='保存所选官方选项并重算售价',command=save);save_button.pack(pady=7);render();fetch()
  def choose_category(indices):
   # Show the known category immediately. A click no longer fetches both full trees.
   window=tk.Toplevel(dialog);window.title('确认当前类目 / 搜索其他官方类目');window.geometry('1000x600')
