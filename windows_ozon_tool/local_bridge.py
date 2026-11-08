@@ -587,13 +587,17 @@ def server(store,token,port=8765):
     body=json.loads(self.rfile.read(n))
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.12','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.13','paired':True}
      elif self.path=='/control':value=store.control
      elif self.path=='/automation-control':value=store.set_paused(bool(body.get('paused')))
      elif self.path=='/pause-ack':
-      tid=body['task_id'];task=next((t for t in store.tasks if t['sku']==tid[5:]),None) if tid.startswith('copy:') else store.find(tid)
-      if task is None:raise ValueError('未找到需要暂停的任务')
-      task['pause_ack']=True;store.save();value={'ok':True}
+      tid=body['task_id']
+      try:task=next((t for t in store.tasks if t['sku']==tid[5:]),None) if tid.startswith('copy:') else store.find(tid)
+      except ValueError:task=None
+      if task is None:
+       if not body.get('allow_missing') or not store.control.get('paused'):raise ValueError('未找到需要暂停的任务')
+       value={'ok':True,'found':False}
+      else:task['pause_ack']=True;store.save();value={'ok':True,'found':True}
      elif self.path=='/heartbeat':
       store.client={'last_seen':time.time(),'auto_enabled':bool(body.get('auto_enabled'))}
       value={'ok':True,'queue_reason':store.queue_reason(),'blockers':store.blockers()}

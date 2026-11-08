@@ -51,7 +51,23 @@ async function refreshBinding(){
  try{const [tab]=await chrome.tabs.query({active:true,currentWindow:true});const r=await chrome.runtime.sendMessage({kind:'binding-info',tabId:tab.id});document.querySelector('#binding').textContent=r.error||((r.bound?'已绑定作图页：':'尚未绑定，当前页：')+r.title);}
  catch(e){document.querySelector('#binding').textContent=e.message;}
 }
-document.querySelector('#focus-work').onclick=async()=>{try{const [tab]=await chrome.tabs.query({active:true,currentWindow:true});const r=await chrome.runtime.sendMessage({kind:'focus-work',tabId:tab.id});status.textContent=r.error||r.status;}catch(e){status.textContent=e.message;}};
+async function bindingChoices(){
+ const [tab]=await chrome.tabs.query({active:true,currentWindow:true});const r=await chrome.runtime.sendMessage({kind:'binding-options',tabId:tab?.id});if(r.error)throw Error(r.error);
+ if(!r.canRebind){document.querySelector('#binding-picker').hidden=true;const focused=await chrome.runtime.sendMessage({kind:'focus-work',tabId:tab?.id});status.textContent=focused.error||focused.status+'；更换页面需先暂停制作';return;}
+ const list=document.querySelector('#binding-tabs'),previous=list.value;list.replaceChildren();
+ for(const t of r.tabs||[]){const o=document.createElement('option');o.value=String(t.id);o.textContent=t.title+(t.bound?'（已绑定）':'')+(t.current?'（当前页）':'');list.append(o);}
+ if([...list.options].some(o=>o.value===previous))list.value=previous;else{const preferred=r.tabs?.find(t=>t.current)||r.tabs?.find(t=>t.bound);if(preferred)list.value=String(preferred.id);}
+ document.querySelector('#binding-picker').hidden=false;document.querySelector('#binding-save').disabled=!list.options.length;
+ if(!list.options.length)status.textContent='请先打开需要使用的ChatGPT商品对话，再刷新页面列表';
+}
+document.querySelector('#focus-work').onclick=async()=>{try{await bindingChoices();}catch(e){status.textContent=e.message;}};
+document.querySelector('#binding-refresh').onclick=async()=>{try{await bindingChoices();}catch(e){status.textContent=e.message;}};
+document.querySelector('#binding-cancel').onclick=()=>{document.querySelector('#binding-picker').hidden=true;};
+document.querySelector('#binding-save').onclick=async()=>{
+ const button=document.querySelector('#binding-save');button.disabled=true;
+ try{const r=await chrome.runtime.sendMessage({kind:'rebind-work',tabId:Number(document.querySelector('#binding-tabs').value)});if(r.error)throw Error(r.error);status.textContent=r.status;document.querySelector('#binding-picker').hidden=true;await refreshBinding();await updateButtons();}
+ catch(e){status.textContent=e.message;}finally{button.disabled=!document.querySelector('#binding-tabs').options.length;}
+};
 refreshBinding();
 
 async function health(){

@@ -19,4 +19,15 @@ class Tests(unittest.TestCase):
     other=post('/download-ticket',{'task_id':task['id'],'extension':'png'})
     with self.assertRaises(urllib.error.HTTPError):post('/read-download',{'task_id':task['id'],'ticket':other['ticket'],'path':str(path)})
    finally:http.shutdown();http.server_close();thread.join()
+ def test_rebinding_can_ack_obsolete_activity_only_while_locally_paused(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   store=Store(Path(tmp)/'data');http=server(store,'test-token',0);thread=threading.Thread(target=http.serve_forever,daemon=True);thread.start()
+   def post(body):
+    req=urllib.request.Request(f'http://127.0.0.1:{http.server_port}/pause-ack',data=json.dumps(body).encode(),headers={'Host':'127.0.0.1:0','Origin':'chrome-extension://test','Authorization':'Bearer test-token','Content-Type':'application/json'})
+    with urllib.request.urlopen(req,timeout=5) as response:return json.load(response)
+   try:
+    with self.assertRaises(urllib.error.HTTPError):post({'task_id':'REMOVED','allow_missing':True})
+    store.set_paused(True);self.assertEqual(post({'task_id':'REMOVED','allow_missing':True}),{'ok':True,'found':False});self.assertTrue(store.control['paused']);self.assertEqual(store.tasks,[])
+    self.assertEqual(post({'task_id':'copy:REMOVED','allow_missing':True}),{'ok':True,'found':False})
+   finally:http.shutdown();http.server_close();thread.join()
 if __name__=='__main__':unittest.main()
