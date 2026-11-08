@@ -79,18 +79,19 @@ class GroupTests(unittest.TestCase):
    group.change_category([0],{'description_category_id':11,'type_id':30,'name':'Другой тип','path':'Other'},group.token());new=group.load()[0]
    self.assertEqual(new['attribute_draft']['values']['0:9048'],old['attribute_draft']['values']['0:9048']);self.assertNotEqual(new['attribute_draft']['values']['0:85'][0]['dictionary_value_id'],old_id);self.assertTrue(float(new['price_cny'])>float(old_price));self.assertIn('0:777',[field_key(f) for f in new['attribute_draft']['fields']])
    group.change_category([0],{'description_category_id':10,'type_id':20,'name':'Тестовый тип','path':'Back'},group.token());self.assertEqual(group.load()[0]['attribute_draft']['values']['0:555'][0]['value'],'Synthetic care')
- def test_warehouse_list_only_exposes_current_active_rfbs(self):
+ def test_warehouse_list_exposes_all_shop_types_and_statuses(self):
   with tempfile.TemporaryDirectory() as tmp:
-   group,api,pub=self.setup_group(tmp);self.assertEqual([r['warehouse_id'] for r in pub.warehouses()],[77])
+   group,api,pub=self.setup_group(tmp);self.assertEqual([r['warehouse_id'] for r in pub.warehouses()],[77,88,99])
  def test_repeated_submit_imports_once_sets_selected_warehouse_once_and_checks_live_sale(self):
   with tempfile.TemporaryDirectory() as tmp:
    group,api,pub=self.setup_group(tmp,True);job=pub.begin(group,group.token());again=pub.begin(group,group.token());self.assertEqual(job['id'],again['id'])
    first=pub.step(job['id']);self.assertNotEqual(first['state'],'on_sale');finished=pub.step(job['id']);self.assertEqual(finished['state'],'on_sale')
    self.assertEqual(sum(p=='/v3/product/import' for p,b in api.calls),1);stock_calls=[b for p,b in api.calls if p=='/v2/products/stocks'];self.assertEqual(len(stock_calls),1);self.assertEqual({r['warehouse_id'] for r in stock_calls[0]['stocks']},{77})
    pub.begin(group,group.token());self.assertEqual(sum(p=='/v3/product/import' for p,b in api.calls),1);self.assertEqual(sum(p=='/v2/products/stocks' for p,b in api.calls),1)
- def test_disabled_warehouse_blocks_import_and_stock(self):
+ def test_unreturned_warehouse_blocks_import_and_stock(self):
   with tempfile.TemporaryDirectory() as tmp:
-   group,api,pub=self.setup_group(tmp);api.warehouse_active=False
+   group,api,pub=self.setup_group(tmp);original=pub.caller
+   pub.caller=lambda path,body:{'warehouses':[],'has_next':False} if path=='/v2/warehouse/list' else original(path,body)
    with self.assertRaises(ValueError):pub.begin(group,group.token())
    self.assertFalse(any(p in ('/v3/product/import','/v2/products/stocks') for p,b in api.calls))
  def test_import_timeout_is_durable_and_never_automatically_reposted(self):
@@ -150,7 +151,7 @@ class CategoryInteractionTests(unittest.TestCase):
  def test_setup_guidance_points_to_confirmation_and_warehouse(self):
   from category_catalog import setup_errors
   errors=setup_errors([{'sku':'A','category':{'confirmed':False},'export_settings':{'vat':'0','currency_code':'CNY','currency_confirmed':True}}],'shop')
-  self.assertEqual(len(errors),2);self.assertIn('确认沿用当前类目',errors[0]);self.assertIn('读取店铺可用仓库',errors[1])
+  self.assertEqual(len(errors),2);self.assertIn('确认沿用当前类目',errors[0]);self.assertIn('读取店铺全部仓库',errors[1])
  def test_catalog_cache_avoids_repeated_network_fetches(self):
   from category_catalog import load_catalog
   from types import SimpleNamespace
@@ -177,7 +178,7 @@ class OGLWarehouseTests(unittest.TestCase):
   import threading
   with tempfile.TemporaryDirectory() as tmp:
    def call(path,body):return {'warehouses':[{'warehouse_id':77,'name':'Synthetic OGL','warehouse_type':'ogl','is_rfbs':False,'status':'created'},{'warehouse_id':78,'warehouse_type':'ogl','is_rfbs':False,'status':'disabled'}],'has_next':False}
-   pub=PublicationService(tmp,threading.Lock(),call,lambda:'shop');self.assertEqual([r['warehouse_id'] for r in pub.warehouses()],[77])
+   pub=PublicationService(tmp,threading.Lock(),call,lambda:'shop');self.assertEqual([r['warehouse_id'] for r in pub.warehouses()],[77,78])
  def test_only_warehouse_is_applied_to_whole_group_once(self):
   with tempfile.TemporaryDirectory() as tmp:
    group,api,pub=GroupTests().setup_group(tmp,True)

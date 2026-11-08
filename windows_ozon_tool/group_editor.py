@@ -5,7 +5,7 @@ from attribute_service import field_key,category_key
 from group_service import GroupService,revision
 from variants import FIELDS,column_updates
 from pricing_service import read
-from publication_service import TERMINAL
+from publication_service import TERMINAL,warehouse_label
 
 EXCLUDED={8229,21845}
 def open_editor(root,folder,service,group_folders,category_callback=None,price_callback=None,connection_callback=None,*,pricing,store,publication,hosting=None):
@@ -16,9 +16,9 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  if not paths:messagebox.showinfo('没有变体','请选择尚未取消的商品组');return
  coordinator=GroupService(paths,service,pricing,store)
  if publication.initial_stock is not None and not publication.active([p.parent.name for p in paths]):coordinator.ensure_initial_stock(publication.initial_stock)
- dialog=tk.Toplevel(root);dialog.title('整组预览 · Ozon 商品自动化 1.0.2');dialog.geometry('1280x850');dialog.minsize(950,650)
+ dialog=tk.Toplevel(root);dialog.title('整组预览 · Ozon 商品自动化 1.0.3');dialog.geometry('1280x850');dialog.minsize(950,650)
  busy=False;selected=set(range(len(paths)));focus=['',''];bundles=[];token=None;rendered=None;warehouses={};photos=[];rows={};last_job=None;copy_dirty=False;displayed_copy=None;copy_timer=None;busy_since=0;operation_error='';operation_name=''
- ttk.Label(dialog,text='每列一个变体；双击单格修改，点击参数名选中整行后批量修改。仓库必须从当前店铺可用OGL/rFBS仓库中选择。',wraplength=900).pack(pady=6)
+ ttk.Label(dialog,text='每列一个变体；双击单格修改，点击参数名选中整行后批量修改。仓库显示当前店铺全部类型和状态。',wraplength=900).pack(pady=6)
  status=ttk.Label(dialog,text='正在加载整组预览',wraplength=1200);status.pack(pady=3)
  bar=ttk.Frame(dialog);bar.pack(fill='x',padx=8,pady=3);more_menu=tk.Menu(dialog,tearoff=False);ttk.Menubutton(bar,text='更多',menu=more_menu).pack(side='right',padx=4)
  footer=ttk.Frame(dialog,padding=(8,5));footer.pack(side='bottom',fill='x');blocker=ttk.Label(footer,text='',wraplength=900,foreground='#b00020');blocker.pack(fill='x');bottom=ttk.Frame(footer);bottom.pack(fill='x',pady=4)
@@ -105,7 +105,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
     from assisted_fields import is_pdf
     if field['id'] not in EXCLUDED and not is_pdf(field):union.setdefault(field_key(field),field)
   for key,field in union.items():specs.append(('api','a:'+key,('a',key),field.get('name','')+' / '+field.get('name_ru',''),bool(field.get('is_required')),field))
-  for key,label in [('category','上架类目 / 商品类型'),('price','计算售价 / 促销底价基准（人民币元）'),('price_max','最高价格（基准×2）'),('price_old','划线价（基准×4）'),('price_min','促销最低限制（基准×1）'),('price_cost','平台成本（所填成本）'),('vat','实际增值税率'),('currency','店铺币种'),('warehouse','所选OGL/rFBS仓库'),('media','托管链接进度'),('status','定价状态 / 待处理原因')]:specs.append(('listing','s:'+key,('s',key),label,key in ('category','vat','warehouse'),None))
+  for key,label in [('category','上架类目 / 商品类型'),('price','计算售价 / 促销底价基准（人民币元）'),('price_max','最高价格（基准×2）'),('price_old','划线价（基准×4）'),('price_min','促销最低限制（基准×1）'),('price_cost','平台成本（所填成本）'),('vat','实际增值税率'),('currency','店铺币种'),('warehouse','所选店铺仓库'),('media','托管链接进度'),('status','定价状态 / 待处理原因')]:specs.append(('listing','s:'+key,('s',key),label,key in ('category','vat','warehouse'),None))
   for parent,iid,row,label,required,field in specs:
    values=[value_for(b,row,n) for n,b in enumerate(bundles)];empty=any(not v for v in values)
    if search.get().casefold() not in label.casefold():continue
@@ -214,10 +214,10 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   def action():return publication.warehouses()
   def show(result):
    nonlocal warehouses
-   warehouses={str(r['warehouse_id']):r for r in result};warehouse_choice.configure(values=[r['name']+' / '+str(r['warehouse_id']) for r in result]);status.configure(text=f'已读取本店铺可用OGL/rFBS仓库 {len(result)} 个，请选择仓库。')
+   warehouses={str(r['warehouse_id']):r for r in result};warehouse_choice.configure(values=[warehouse_label(r) for r in result]);status.configure(text=f'已读取本店铺全部仓库 {len(result)} 个，保留平台原始状态。')
    if not result:messagebox.showinfo('没有可选择的仓库',publication.warehouse_summary()+'\n可点击“导出仓库诊断”进一步检查。',parent=dialog)
    if len(result)==1:
-    selected_var.set(result[0]['name']+' / '+str(result[0]['warehouse_id']))
+    selected_var.set(warehouse_label(result[0]))
     if not active_job():
      expected=coordinator.token();merchant=publication.account_getter()
      run(lambda:coordinator.use_only_warehouse(result,merchant,expected))
@@ -241,7 +241,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  warehouse_choice.bind('<<ComboboxSelected>>',warehouse_apply)
  def choose_warehouse(indices):
   def show(result):
-   window=tk.Toplevel(dialog);window.title('选择本店铺可用OGL/rFBS仓库');ttk.Label(window,text='目标：'+'、'.join(paths[n].parent.name for n in indices)).pack(pady=5);choices=ttk.Combobox(window,state='readonly',values=[r['name']+' / '+str(r['warehouse_id']) for r in result],width=65);choices.pack(padx=10,pady=10)
+   window=tk.Toplevel(dialog);window.title('选择店铺仓库（全部类型和状态）');ttk.Label(window,text='目标：'+'、'.join(paths[n].parent.name for n in indices)).pack(pady=5);choices=ttk.Combobox(window,state='readonly',values=[warehouse_label(r) for r in result],width=65);choices.pack(padx=10,pady=10)
    def apply():
     if choices.current()<0:return
     record=result[choices.current()];expected=coordinator.token();merchant=publication.account_getter();window.destroy();run(lambda:coordinator.set_settings(indices,'warehouse',{'warehouse_id':record['warehouse_id'],'warehouse_name':record['name'],'account_id':merchant},expected))
@@ -410,7 +410,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    if not operation_error:progress_info.delete('1.0','end');progress_info.insert('1.0','本组暂无本地上架记录。')
    return
   for offer,item in last_job.get('items',{}).items():
-   setting=last_job['stocks'][offer];progress.insert('','end',values=(offer,setting['warehouse_name'],str(setting['stock'])+' / '+str(item.get('current_free_stock','待查询')),item.get('status',''),item.get('error_summary') or json.dumps(item.get('price_errors') or item.get('errors') or item.get('platform_errors') or item.get('platform_status') or {},ensure_ascii=False)))
+   setting=last_job['stocks'][offer];progress.insert('','end',values=(offer,setting['warehouse_name'],str(setting['stock'])+' / '+str(item.get('current_free_stock','待查询')),item.get('status',''),item.get('error_summary') or json.dumps(item.get('price_errors') or item.get('stock_errors') or item.get('errors') or item.get('platform_errors') or item.get('platform_status') or {},ensure_ascii=False)))
   from pipeline_status import wait_details
   text=json.dumps({'等待':wait_details(last_job),'需处理':bool(last_job.get('needs_attention')),'任务':last_job['id'],'导入任务ID':last_job.get('task_id'),'状态':last_job['state'],'说明':last_job.get('message'),'最近处理错误':operation_error or None},ensure_ascii=False,indent=2)
   if progress_info.get('1.0','end-1c')!=text:progress_info.delete('1.0','end');progress_info.insert('1.0',text)
@@ -485,6 +485,6 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  refresh();media_refresh();poll()
  try:
   publication.account_getter();dialog.after(100,load_warehouses)
- except ValueError:status.configure(text='请先连接Ozon API，再读取店铺可用仓库')
+ except ValueError:status.configure(text='请先连接Ozon API，再读取店铺全部仓库')
  dialog._ozon_ui={'notebook':notebook,'copy_widgets':copy_widgets,'tree':tree,'more':more_menu,'submit':submit_button,'refresh':refresh}
  return dialog

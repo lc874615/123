@@ -63,5 +63,10 @@ class DependencyTests(unittest.TestCase):
   for name in ('安装.bat','安装Edge版.bat','修复依赖.bat'):
    command=(bootstrap.ROOT/name).read_text(encoding='utf-8')
    self.assertIn('bootstrap.py --check-only',command);self.assertNotIn('-m pip install',command)
+ def test_windows_missing_native_trust_is_installed_as_a_dependency(self):
+  def load(name):
+   if name=='truststore':raise ImportError('missing')
+  with patch.object(bootstrap.sys,'platform','win32'),patch.object(bootstrap.importlib,'import_module',side_effect=load):
+   self.assertEqual(bootstrap.missing_dependencies(),['truststore'])
 
 if __name__=='__main__':unittest.main()

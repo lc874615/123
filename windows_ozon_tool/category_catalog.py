@@ -21,7 +21,7 @@ def setup_errors(bundles,merchant):
  for b in bundles:
   prefix=b.get('sku','')+'：';category=b.get('category') or {};setting=b.get('export_settings') or {};warehouse=b.get('fulfillment') or {}
   if not category.get('confirmed'):errors.append(prefix+'类目未确认：双击“上架类目 / 商品类型”，点击“确认沿用当前类目”。')
-  if not warehouse.get('warehouse_id') or warehouse.get('account_id')!=merchant:errors.append(prefix+'仓库未选择：点击右上“读取店铺可用仓库”，再从下拉框选择；仅一个可用仓库时自动应用到整组；多个时应用到勾选变体。')
+  if not warehouse.get('warehouse_id') or warehouse.get('account_id')!=merchant:errors.append(prefix+'仓库未选择：点击右上“刷新仓库”读取店铺全部仓库，再从下拉框选择；仅一个仓库时自动应用到整组；多个时应用到勾选变体。')
   if setting.get('vat') not in ('0','0.05','0.07','0.1','0.2','0.22'):errors.append(prefix+'税率未填写：双击“实际增值税率”设置。')
   if setting.get('currency_code')!='CNY' or not setting.get('currency_confirmed'):errors.append(prefix+'币种未确认：双击“店铺币种”，输入CNY保存。')
  return errors

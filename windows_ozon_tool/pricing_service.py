@@ -11,6 +11,7 @@ from pricing_core import D,Package,solve,confirmed_fee_breakdown
 from pricing_sources import import_ogl,import_commissions,select_commission,tiers,OFFICIAL_COMMISSION_URL
 
 FX_URL='https://www.cbr.ru/scripts/XML_daily.asp'
+FX_URLS=(FX_URL,'https://www.cbr.ru/scripts/XML_daily_eng.asp','https://cbr.ru/scripts/XML_daily.asp')
 
 def read(path):
  return json.loads(Path(path).read_text(encoding='utf-8-sig'))
@@ -32,11 +33,9 @@ def parse_fx(raw,today=None):
  return {'rub_per_cny':str(rate),'date':date.isoformat(),'source':'俄罗斯央行 CBR','url':FX_URL,'fetched_at':dt.datetime.now(dt.timezone.utc).isoformat()}
 
 def fetch(url,limit):
- req=urllib.request.Request(url,headers={'User-Agent':'OzonLocalPricing/0.26'})
- with urllib.request.urlopen(req,timeout=12) as response:
-  raw=response.read(limit+1)
- if len(raw)>limit:raise ValueError('来源文件超过大小限制')
- return raw
+ from secure_http import read as verified_read
+ req=urllib.request.Request(url,headers={'User-Agent':'OzonLocalPricing/1.0.3'})
+ return verified_read(req,limit,timeout=12)
 
 def adopt_price(bundle):
  result=bundle.get('manual_pricing') if bundle.get('manual_price') else bundle.get('auto_pricing')
@@ -65,9 +64,13 @@ class PricingService:
   path=self.root/'official_commission_download.xlsx';path.write_bytes(raw)
   self.import_commissions(path)
  def update_fx(self):
-  value=parse_fx(fetch(FX_URL,2_000_000))
-  with self.source_lock:write(self.root/'fx.json',value)
-  return value
+  last=None
+  for url in FX_URLS:
+   try:value=parse_fx(fetch(url,2_000_000));value['url']=url
+   except (OSError,ValueError,KeyError,TypeError,AttributeError,ET.ParseError) as error:last=error;continue
+   with self.source_lock:write(self.root/'fx.json',value)
+   return value
+  raise ValueError('央行汇率获取失败，已有汇率未覆盖：'+str(last)) from last
  def sources(self):
   with self.source_lock:
    configs={name:read(self.root/(name+'.json')) for name in ('ogl','commissions','fx')}

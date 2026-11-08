@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parent
-DEPENDENCIES=(('PIL','Pillow'),('imageio_ffmpeg','imageio-ffmpeg'),('openpyxl','openpyxl'))
+DEPENDENCIES=(('PIL','Pillow'),('imageio_ffmpeg','imageio-ffmpeg'),('openpyxl','openpyxl'),('certifi','certifi'))
 PACKAGE_SOURCES=(
  ('阿里云镜像','https://mirrors.aliyun.com/pypi/simple/'),
  ('清华镜像','https://pypi.tuna.tsinghua.edu.cn/simple/'),
@@ -32,7 +32,8 @@ def install_command(index=None,resume=False):
 
 def missing_dependencies():
  missing=[]
- for module,package in DEPENDENCIES:
+ required=DEPENDENCIES+(('truststore','truststore'),) if sys.platform=='win32' else DEPENDENCIES
+ for module,package in required:
   try:importlib.import_module(module)
   except ImportError:missing.append(package)
  return missing
@@ -43,7 +44,8 @@ def ensure_dependencies():
  if sys.prefix==sys.base_prefix:
   raise RuntimeError('请使用本目录 start_edge.bat 启动，或运行 安装Edge版.bat；未向系统Python安装依赖。')
  print('缺少依赖：'+', '.join(missing)+'。仅安装到本工具 .venv。',flush=True)
- print('视频依赖含FFmpeg，约40MB；优先国内镜像，失败自动切换源。已安装的包和pip缓存会复用。',flush=True)
+ if 'imageio-ffmpeg' in missing:print('视频依赖含FFmpeg，约40MB；优先国内镜像，失败自动切换源。已安装的包和pip缓存会复用。',flush=True)
+ else:print('优先国内镜像，失败自动切换源；仅补齐缺失依赖，已安装的包会复用。',flush=True)
  resume=supports_resume()
  wheels=ROOT/'wheelhouse'
  if wheels.is_dir() and any(wheels.glob('*.whl')):

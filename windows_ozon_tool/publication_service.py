@@ -10,6 +10,10 @@ from listing_preview import export_preview
 
 class Rejected(ValueError):pass
 def explicit_true(value):return value is True or (isinstance(value,str) and value.strip().casefold()=='true')
+def warehouse_label(row):
+ kind=str(row.get('warehouse_type') or ('rFBS' if explicit_true(row.get('is_rfbs')) else '未标明类型'))
+ state=str(row.get('status') or '未提供状态')
+ return str(row.get('name') or row['warehouse_id'])+' ['+kind+'，'+state+'] / '+str(row['warehouse_id'])
 READ_PATHS={'/v2/warehouse/list','/v1/product/import/info','/v3/product/info/list','/v2/product/info/stocks-by-warehouse/fbs'}
 WRITE_PATHS={'/v3/product/import','/v2/products/stocks','/v1/product/import/prices'}
 def account():
@@ -61,7 +65,7 @@ class PublicationService:
   return request(path,body,expected_account=merchant) if self.caller is request else self.caller(path,body)
  def warehouses(self,merchant=None):
   merchant=merchant or self.account_getter()
-  result=[];cursor='';seen=set();diagnostic={'endpoint':'/v2/warehouse/list','pages':[],'eligible_count':0};self.warehouse_diagnostic=diagnostic
+  result=[];cursor='';seen=set();ids=set();diagnostic={'endpoint':'/v2/warehouse/list','scope':'all_shop_warehouses','pages':[],'listed_count':0};self.warehouse_diagnostic=diagnostic
   for _ in range(100):
    try:response=self.call_for(merchant,'/v2/warehouse/list',{'limit':200,**({'cursor':cursor} if cursor else {})})
    except Exception as exc:
@@ -75,11 +79,11 @@ class PublicationService:
     if not isinstance(row,dict):continue
     r=dict(row);wid=r.get('warehouse_id')
     if isinstance(wid,str) and wid.isdigit():wid=int(wid)
-    if (explicit_true(r.get('is_rfbs')) or str(r.get('warehouse_type','')).strip().casefold()=='ogl') and str(r.get('status','')).strip().casefold()=='created' and not explicit_true(r.get('is_karantin')) and type(wid) is int and wid>0:
-     r['warehouse_id']=wid;r['name']=r.get('name') or str(wid);result.append(r)
+    if type(wid) is int and wid>0 and wid not in ids:
+     r['warehouse_id']=wid;r['name']=r.get('name') or str(wid);result.append(r);ids.add(wid)
    more=container.get('has_next',False)
    if more is False or more is None or str(more).casefold() in ('false','0',''):
-    diagnostic['eligible_count']=len(result);self.save_warehouse_diagnostic();return result
+    diagnostic['listed_count']=len(result);self.save_warehouse_diagnostic();return result
    if more is not True and str(more).casefold() not in ('true','1'):raise ValueError('仓库分页标志异常，请重试')
    cursor=container.get('cursor','')
    if not cursor or cursor in seen:raise ValueError('仓库分页未完整读取，请重试')
@@ -89,7 +93,8 @@ class PublicationService:
   path=self.data/'warehouse_diagnostic.json';write(path,getattr(self,'warehouse_diagnostic',{'message':'尚未读取仓库'}));return path
  def warehouse_summary(self):
   data=getattr(self,'warehouse_diagnostic',{});rows=[r for page in data.get('pages',[]) for r in page.get('rows',[])]
-  return '接口返回 '+str(len(rows))+' 个仓库，其中rFBS '+str(sum(explicit_true(r.get('is_rfbs')) for r in rows))+' 个，OGL '+str(sum(str(r.get('warehouse_type','')).strip().casefold()=='ogl' for r in rows))+' 个，可用OGL/rFBS '+str(data.get('eligible_count',0))+' 个。显示状态created且未隔离的OGL/rFBS仓库；请检查店铺与仓库配送模式。'
+  states={str(r.get('status') or '未提供'):sum(str(x.get('status') or '未提供')==str(r.get('status') or '未提供') for x in rows) for r in rows}
+  return '接口返回 '+str(len(rows))+' 个仓库，已列出 '+str(data.get('listed_count',len(rows)))+' 个。平台状态：'+('、'.join(k+' '+str(v)+'个' for k,v in states.items()) or '无')+'。显示全部类型和状态；库存写入结果以平台API回执为准。'
  def jobs(self):
   values=[]
   for path in self.root.glob('*.json'):
@@ -103,7 +108,7 @@ class PublicationService:
   except ValueError:return None
   return next((j for j in self.jobs() if j.get('account_id')==merchant and j.get('state') not in TERMINAL and not j.get('writes_complete') and set(offers)&set(j.get('items',{}))),None)
  def _save(self,job):
-  now=time.time();signature=digest({o:{k:i.get(k) for k in ('import_state','price_state','price_errors','stock_state','on_sale','errors','platform_status','current_free_stock')} for o,i in job.get('items',{}).items()})
+  now=time.time();signature=digest({o:{k:i.get(k) for k in ('import_state','price_state','price_errors','stock_state','stock_errors','on_sale','errors','platform_status','current_free_stock')} for o,i in job.get('items',{}).items()})
   if signature!=job.get('progress_fingerprint'):job['last_progress_at']=now;job['progress_fingerprint']=signature
   limit=1800 if job.get('writes_complete') else 600
   job['needs_attention']=now-job.get('last_progress_at',now)>limit and job.get('state') not in TERMINAL
@@ -138,7 +143,7 @@ class PublicationService:
     stocks={}
     for b in bundles:
      setting=b.get('fulfillment') or {};wid=setting.get('warehouse_id')
-     if wid not in warehouses or setting.get('account_id')!=merchant:raise ValueError(b['sku']+'：请重新选择本店铺当前可用的OGL/rFBS仓库')
+     if wid not in warehouses or setting.get('account_id')!=merchant:raise ValueError(b['sku']+'：请重新选择当前店铺返回的仓库')
      raw=str((b.get('variant_parameters') or {}).get('stock','')).strip()
      if self.initial_stock is not None and raw!=str(self.initial_stock):raise ValueError('新商品初始库存固定为'+str(self.initial_stock)+'，请刷新整组预览')
      if not raw.isdigit() or int(raw)>2147483647:raise ValueError(b['sku']+'：库存必须是有效的非负整数')
@@ -267,7 +272,7 @@ class PublicationService:
     self._save(job)
    if any(job['items'][r['offer_id']].get('price_state')!='done' for r in job.get('price_settings',[]) if r['offer_id'] in offers):
     job.update(state='waiting_platform',message='等待同步四项价格；错误详见变体价格回执');self._save(job);return job
-   eligible={r['warehouse_id']:r for r in self.warehouses(job['account_id'])}
+   shop_warehouses={r['warehouse_id']:r for r in self.warehouses(job['account_id'])}
    stock_rows=[]
    for offer,item in job['items'].items():
     if item['import_state']!='imported' or item['stock_state'] in ('done','uncertain','intent') or item.get('stock_retry_at',0)>time.time():continue
@@ -279,7 +284,7 @@ class PublicationService:
     except InvalidOperation:matching=False
     if not matching or product.get('description_category_id')!=desired['description_category_id'] or product.get('type_id')!=desired['type_id']:item['status']='等待平台应用本次价格与类目';continue
     setting=job['stocks'][offer]
-    if setting['warehouse_id'] not in eligible:item['status']='所选仓库已不可用，未写入库存';continue
+    if setting['warehouse_id'] not in shop_warehouses:item['status']='所选仓库已不在当前店铺返回列表，未写入库存';continue
     stock_rows.append({'offer_id':offer,'product_id':item['product_id'],'warehouse_id':setting['warehouse_id'],'stock':setting['stock']})
    if stock_rows:
     for row in stock_rows:job['items'][row['offer_id']]['stock_state']='intent'
@@ -288,11 +293,11 @@ class PublicationService:
      response=self.call_for(job['account_id'],'/v2/products/stocks',{'stocks':stock_rows});results={r.get('offer_id'):r for r in response.get('result',[])}
      for row in stock_rows:
       target=job['items'][row['offer_id']];result=results.get(row['offer_id'])
-      if result and result.get('warehouse_id')==row['warehouse_id'] and result.get('updated') is True and not result.get('errors'):target.update(stock_state='done',status='库存已设置')
-      elif result and result.get('updated') is False:target.update(stock_state='rejected',errors=result.get('errors') or [],status='库存未设置，稍后重试',stock_retry_at=time.time()+120)
+      if result and result.get('warehouse_id')==row['warehouse_id'] and result.get('updated') is True and not result.get('errors'):target.update(stock_state='done',stock_errors=[],status='库存已设置')
+      elif result and result.get('updated') is False:target.update(stock_state='rejected',errors=result.get('errors') or [],stock_errors=result.get('errors') or [],status='库存未设置，稍后重试',stock_retry_at=time.time()+120)
       else:target.update(stock_state='uncertain',status='库存响应不完整，自动核对但不重复写入')
     except Rejected as exc:
-     for row in stock_rows:job['items'][row['offer_id']].update(stock_state='rejected',status=str(exc),stock_retry_at=time.time()+120)
+     for row in stock_rows:job['items'][row['offer_id']].update(stock_state='rejected',stock_errors=[{'message':str(exc)}],status=str(exc),stock_retry_at=time.time()+120)
     except Exception:
      for row in stock_rows:job['items'][row['offer_id']].update(stock_state='uncertain',status='库存结果不确定，核对中，不自动重写')
     self._save(job)
@@ -300,7 +305,7 @@ class PublicationService:
    stock_data,not_ready=self.read_created_stocks(ready,job['account_id']) if ready else ([],set())
    for offer,item in job['items'].items():
     setting=job['stocks'][offer];stock=next((r for r in stock_data if r.get('offer_id')==offer and r.get('warehouse_id')==setting['warehouse_id']),None)
-    if item['stock_state'] in ('intent','uncertain') and stock and stock.get('free_stock')==setting['stock']:item.update(stock_state='done',status='库存写入已通过查询核对')
+    if item['stock_state'] in ('intent','uncertain') and stock and stock.get('free_stock')==setting['stock']:item.update(stock_state='done',stock_errors=[],status='库存写入已通过查询核对')
     product=products.get(offer) or {};visible=any(a.get('availability')=='AVAILABLE' for a in product.get('availabilities',[]))
     item['platform_status']=product.get('statuses') or {};item['current_free_stock']=stock.get('free_stock') if stock else None
     expected_item=next(r for r in job['payload']['items'] if r['offer_id']==offer)
