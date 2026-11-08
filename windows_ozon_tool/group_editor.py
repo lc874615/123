@@ -1,5 +1,5 @@
 """Whole-group, API-schema-driven grid with bulk edits and explicit submission."""
-import copy,json,os,threading,webbrowser
+import copy,json,os,threading,time,webbrowser
 from pathlib import Path
 from attribute_service import field_key,category_key
 from group_service import GroupService,revision
@@ -15,7 +15,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  paths=[Path(p)/'listing_bundle.json' for p in group_folders]
  if not paths:messagebox.showinfo('没有变体','请选择尚未取消的商品组');return
  coordinator=GroupService(paths,service,pricing,store);dialog=tk.Toplevel(root);dialog.title('整组变体预览 · 可编辑与自动上架');dialog.geometry('1280x850');dialog.minsize(950,650)
- busy=False;selected=set(range(len(paths)));focus=['',''];bundles=[];token=None;rendered=None;warehouses={};photos=[];rows={};last_job=None;copy_dirty=False;displayed_copy=None
+ busy=False;selected=set(range(len(paths)));focus=['',''];bundles=[];token=None;rendered=None;warehouses={};photos=[];rows={};last_job=None;copy_dirty=False;displayed_copy=None;busy_since=0;operation_error='';operation_name=''
  ttk.Label(dialog,text='每列一个变体；双击单格修改，点击参数名选中整行后批量修改。仓库必须从当前店铺可用OGL/rFBS仓库中选择。').pack(pady=6)
  status=ttk.Label(dialog,text='正在加载整组预览',wraplength=1200);status.pack(pady=3)
  bar=ttk.Frame(dialog);bar.pack(fill='x',padx=8,pady=3)
@@ -37,17 +37,18 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  def active_job():return publication.active(offers()) if bundles else None
  def editable():
   if busy:return False
-  if active_job():messagebox.showinfo('正在上架','本组有未完成的冻结提交任务，请先在进度页核对；未改动本地参数。',parent=dialog);return False
+  if active_job():notebook.select(progress_tab);messagebox.showinfo('已有提交任务','已打开上架进度页。请查看逐变体状态；资料已变化可停止旧任务跟进后重新编辑，结果未知的写入需要先核对。',parent=dialog);return False
   return True
- def run(action,after=None):
-  nonlocal busy
+ def run(action,after=None,label='同步参数与售价'):
+  nonlocal busy,busy_since,operation_error,operation_name
   if busy:return
-  busy=True;submit_button.configure(state='disabled');status.configure(text='处理中，参数与售价同步后刷新…')
+  busy=True;busy_since=time.monotonic();operation_error='';operation_name=label;coordinator.status=label;submit_button.configure(state='disabled');status.configure(text='处理中，参数与售价同步后刷新…')
   def finish(error=None,result=None):
-   nonlocal busy,rendered
+   nonlocal busy,rendered,operation_error
    if not dialog.winfo_exists():return
-   busy=False;rendered=None;refresh()
-   if error:messagebox.showerror('整组处理未完成',error,parent=dialog)
+   busy=False;rendered=None;operation_error=error or '';refresh()
+   if error:
+    notebook.select(progress_tab);progress_info.delete('1.0','end');progress_info.insert('1.0','提交/处理未完成：\n'+error+'\n\n若提示预览内容变化，核对所列字段后再提交。若有结果不确定的导入任务，请先核对平台回执。');messagebox.showerror('整组处理未完成',error,parent=dialog)
    elif after:after(result)
   def work():
    try:result=action();root.after(0,lambda:finish(result=result))
@@ -72,6 +73,9 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    if not any(field_key(f)==key for f in state.get('fields',[])):return '— 此类目不适用'
    values=(state.get('values') or {}).get(key) or []
    if values:return '；'.join(str(v.get('value') or v.get('dictionary_value_id')) for v in values)
+   from assisted_fields import inline_references
+   reference=inline_references(b).get(key)
+   if reference:return reference['display']+'（参考）'
    old=(state.get('migration_pending') or {}).get(key)
    return '待匹配原值：'+'；'.join(v.get('value','') for v in old) if old else ''
   if key=='category':return ((b.get('category') or {}).get('name') or '待选择')+'（'+('已确认' if (b.get('category') or {}).get('confirmed') else '待确认，双击')+'）'
@@ -91,7 +95,8 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   union={}
   for b in bundles:
    for field in (b.get('attribute_draft') or {}).get('fields',[]):
-    if field['id'] not in EXCLUDED:union.setdefault(field_key(field),field)
+    from assisted_fields import is_pdf
+    if field['id'] not in EXCLUDED and not is_pdf(field):union.setdefault(field_key(field),field)
   for key,field in union.items():specs.append(('api','a:'+key,('a',key),field.get('name','')+' / '+field.get('name_ru',''),bool(field.get('is_required')),field))
   for key,label in [('category','上架类目 / 商品类型'),('price','自动售价（人民币元）'),('vat','实际增值税率'),('currency','店铺币种'),('warehouse','所选OGL/rFBS仓库'),('media','托管链接进度'),('status','定价状态 / 待处理原因')]:specs.append(('listing','s:'+key,('s',key),label,key in ('category','vat','warehouse'),None))
   for parent,iid,row,label,required,field in specs:
@@ -100,7 +105,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    if missing.get() and (not required or not empty):continue
    rows[iid]=(row,field);tree.insert(parent,'end',iid=iid,text=('* ' if required else '')+label,values=values,tags=('missing',) if required and empty else ('pending',) if any(str(v).startswith('待匹配') for v in values) else ())
   if selected_row and tree.exists(selected_row[0]):tree.selection_set(selected_row[0])
-  headings()
+  headings();badges.schedule()
  def refresh():
   nonlocal bundles,token,rendered,last_job,displayed_copy
   if not dialog.winfo_exists():return
@@ -115,8 +120,11 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
     displayed_copy=copy.deepcopy(actual_copy)
    merchant=os.environ.get('OZON_CLIENT_ID') or '未连接';job=active_job();last_job=job or next((j for j in publication.jobs() if set(offers())&set(j.get('items',{}))),None)
    status.configure(text='店铺Client-Id：'+merchant+' | '+(coordinator.status if busy else '整组 '+str(len(paths))+' 个变体')+' | '+(last_job.get('message','') if last_job else '编辑会同步重算售价；提交前请核对图文与参数'))
+   if busy:status.configure(text=status.cget('text')+' | 正在'+coordinator.status+'（已用'+str(int(time.monotonic()-busy_since))+'秒）')
+   if operation_error:status.configure(text='处理未完成：'+operation_error[:220]+' | 详见提交与上架进度页')
    if copy_dirty:status.configure(text=status.cget('text')+' | 共用文案尚未保存')
-   submit_button.configure(state='disabled' if busy or job or copy_dirty else 'normal');progress_refresh()
+   submit_button.configure(state='disabled' if busy or copy_dirty else 'normal',text='查看当前提交进度' if job else '提交/更新整组并自动上架');progress_refresh()
+   blocker.configure(text=('当前按钮暂不可用：'+coordinator.status+'，已用'+str(int(time.monotonic()-busy_since))+'秒' if busy else '共用文案尚未保存' if copy_dirty else '已有上架任务：点击右侧按钮查看进度，系统不会重复提交' if job else operation_error or '红色单元格为已自动采用的参考值；估算售价也自动采用，有问题直接双击修改。'))
   except (OSError,ValueError):status.configure(text='正在等待草稿保存完成')
  def refilter(*args):
   nonlocal rendered
@@ -149,12 +157,15 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    if key=='category':choose_category(indices);return
    if key=='warehouse':choose_warehouse(indices);return
    if key=='price':
-    if price_callback:price_callback(indices[0])
-    return
+    text_editor('修改售价（人民币元；手动修改后优先采用）',indices,str(bundles[indices[0]].get('price_cny') or ''),lambda values:coordinator.set_prices(indices,values,expected));return
    if key=='currency':text_editor('输入CNY确认店铺结算币种',indices,'CNY',lambda values:settings_batch(indices,'currency',values,expected));return
    if key=='vat':text_editor('修改实际税率（0/0.05/0.07/0.1/0.2/0.22）',indices,value_for(bundles[indices[0]],row,indices[0]),lambda values:settings_batch(indices,'vat',values,expected));return
    return
   initial=value_for(bundles[indices[0]],row,indices[0])
+  if kind=='a':
+   from assisted_fields import inline_references
+   reference=inline_references(bundles[indices[0]]).get(key)
+   if reference:initial=reference['suggested']
   if str(initial).startswith('待匹配原值：'):initial=initial.split('：',1)[1]
   if kind=='p':text_editor('修改 '+iid,indices,str(initial),lambda values:coordinator.set_parameters(indices,key,values,expected));return
   if len(indices)==1 and field.get('dictionary_id'):dictionary_editor(indices[0],key,field,expected);return
@@ -172,6 +183,11 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  def track(event=None):
   if tree.selection() and tree.selection()[0] in rows:
    iid=tree.selection()[0];focus[0]=iid;row,field=rows[iid];detail.configure(text=(field.get('description','') if field else '基础参数以填写单位为准；包装与商品尺寸分别处理。')+' | 当前参数可对选中变体批量修改')
+   if row[0]=='a':
+    from assisted_fields import inline_references
+    n=focus[1] if isinstance(focus[1],int) else 0
+    reference=((bundles[n].get('attribute_draft') or {}).get('auto_references') or {}).get(row[1]) or inline_references(bundles[n]).get(row[1])
+    if reference:detail.configure(text='已自动采用的参考：'+reference['confidence']+'；'+reference['evidence']+'；'+reference['note'])
  tree.bind('<Double-1>',double_click);tree.bind('<<TreeviewSelect>>',track)
  def bulk():
   iid=tree.selection()[0] if tree.selection() else focus[0]
@@ -219,65 +235,6 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
     record=result[choices.current()];expected=coordinator.token();merchant=publication.account_getter();window.destroy();run(lambda:coordinator.set_settings(indices,'warehouse',{'warehouse_id':record['warehouse_id'],'warehouse_name':record['name'],'account_id':merchant},expected))
    ttk.Button(window,text='应用到所选变体并重算售价',command=apply).pack(pady=8)
   run(publication.warehouses,show)
- def assisted_review():
-  from assisted_fields import proposals,create_manual
-  indices=chosen()
-  if not indices:return
-  window=tk.Toplevel(dialog);window.title('属性建议 · 核对依据后确认');window.geometry('1000x700')
-  variant=tk.StringVar(value=paths[indices[0]].parent.name);selector=ttk.Combobox(window,textvariable=variant,state='readonly',values=[paths[n].parent.name for n in indices]);selector.pack(pady=5)
-  box=tk.Listbox(window,exportselection=False,height=7);box.pack(fill='x',padx=8);info=ScrolledText(window,height=12,wrap='word');info.pack(fill='both',expand=True,padx=8,pady=5);entry=tk.StringVar();ttk.Entry(window,textvariable=entry,width=90).pack(pady=5);current=[]
-  def index():return next(n for n in indices if paths[n].parent.name==variant.get())
-  def show(event=None):
-   if not box.curselection():return
-   r=current[box.curselection()[0]];entry.set(r['suggested']);info.delete('1.0','end');info.insert('1.0','字段：'+r['field'].get('name','')+' / '+r['field'].get('name_ru','')+'\n平台要求：'+('必填' if r['required'] else '选填')+'\n依据程度：'+r['confidence']+'\n依据：'+r['evidence']+'\n说明：'+r['note']+'\n\n确认前请检查真实参数；字典字段填写已核实的官方选项名称。')
-  def load(event=None):
-   nonlocal current
-   current=proposals(coordinator.load()[index()]);box.delete(0,'end')
-   for r in current:box.insert('end',r['field'].get('name','')+' · '+r['confidence'])
-   if current:box.selection_set(0);show()
-  selector.bind('<<ComboboxSelected>>',load);box.bind('<<ListboxSelect>>',show)
-  def apply():
-   if not editable() or not box.curselection():return
-   r=current[box.curselection()[0]];n=index();value=entry.get().strip()
-   if not value:return
-   if r['kind']=='pdf':messagebox.showinfo('PDF需真实文件','请使用“选择真实PDF”或“生成并托管参数说明书”。',parent=window);return
-   expected=token
-   def action():
-    resolved=coordinator.resolve_text(n,r['key'],value);coordinator.set_attributes([n],r['key'],[resolved],expected)
-   run(action,lambda result:load())
-  def document(generate=False):
-   if not editable() or not box.curselection():return
-   r=current[box.curselection()[0]];n=index()
-   if r['kind']!='pdf':messagebox.showinfo('请选择PDF字段','请先选中PDF文件字段。',parent=window);return
-   if hosting is None:messagebox.showerror('未连接托管','请先配置COS托管。',parent=window);return
-   from tkinter import filedialog
-   from pathlib import Path
-   if generate:
-    if not messagebox.askyesno('确认生成普通参数说明书','仅生成已确认参数的信息文件，不包含未经确认的使用/养护说明；不能代替证书或检测材料。请确认该PDF字段允许普通说明书，并已核对参数。',parent=window):return
-    selected_file=None
-   else:
-    selected_file=filedialog.askopenfilename(parent=window,filetypes=[('PDF','*.pdf')])
-    if not selected_file:return
-   expected=token;b=coordinator.load()[n]
-   def action():
-    import hashlib
-    file=create_manual(b,paths[n].parent/'documents'/'product_information.pdf') if generate else Path(selected_file)
-    raw=file.read_bytes();config,credentials=hosting.settings()
-    if not config.get('enabled'):raise ValueError('请先启用COS托管')
-    client=hosting.host_factory(config,credentials);asset=client.upload_document(raw,hashlib.sha256(raw).hexdigest())
-    resolved=coordinator.resolve_text(n,r['key'],asset['https_url']);coordinator.set_attributes([n],r['key'],[resolved],expected)
-    updated=coordinator.load()[n]
-    for field in (updated.get('attribute_draft') or {}).get('fields',[]):
-     name=(field.get('name_ru') or field.get('name','')).casefold()
-     if 'pdf' in name and ('название файла' in name or '文件名称' in name):
-      key=field_key(field);values=coordinator.resolve_text(n,key,file.name);coordinator.set_attributes([n],key,[values],coordinator.token())
-    return str(file)
-   run(action,lambda result:messagebox.showinfo('PDF已回填','PDF已托管并回填到该变体。'+('本地文件：'+result if generate else ''),parent=window))
-  buttons=ttk.Frame(window);buttons.pack(pady=7)
-  ttk.Button(buttons,text='确认并保存本变体建议值',command=apply).pack(side='left',padx=3)
-  ttk.Button(buttons,text='查看本变体原始参考图',command=lambda:open_reference(index())).pack(side='left',padx=3)
-  ttk.Button(buttons,text='选择真实PDF并托管',command=lambda:document(False)).pack(side='left',padx=3)
-  ttk.Button(buttons,text='生成并托管参数说明书',command=lambda:document(True)).pack(side='left',padx=3);load()
  def open_reference(index):
   from image_viewer import open_viewer
   b=coordinator.load()[index];refs=b.get('main_references') or b.get('references') or []
@@ -287,7 +244,29 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   rows=[{'local_file':r if isinstance(r,str) else r.get('local_file') or r.get('path','')} for r in refs]
   if not rows:messagebox.showinfo('未找到原始参考图','当前草稿未记录参考图片位置，请用你保留的原图或实物核对。生成图不能作为隔层结构的可靠依据。',parent=dialog);return
   open_viewer(dialog,paths[index].parent,rows,0,b['sku']+' · 原始参考图')
- ttk.Button(bar,text='待确认属性建议 / PDF',command=assisted_review).pack(side='left',padx=3)
+ refbar=ttk.Frame(parameter_tab);refbar.pack(fill='x',pady=3)
+ ttk.Label(refbar,text='红色=已自动采用的参考值；售价也自动采用，无需另行确认。有问题直接双击修改。',foreground='#b00020').pack(side='left',padx=5)
+ if price_callback:ttk.Button(refbar,text='查看售价明细',command=lambda:price_callback(focus[1] if isinstance(focus[1],int) else 0)).pack(side='left',padx=3)
+ ttk.Button(refbar,text='查看原始参考图',command=lambda:open_reference(focus[1] if isinstance(focus[1],int) else 0)).pack(side='left',padx=3)
+ def reference_cells():
+  for n,b in enumerate(bundles):
+   state=b.get('attribute_draft') or {}
+   for key,reference in (state.get('auto_references') or {}).items():
+    text='；'.join(str(v.get('value') or '') for v in (state.get('values') or {}).get(key,[]))
+    if text:yield 'a:'+key,'v'+str(n),text,n
+   estimate=(b.get('auto_pricing') or {}).get('price_cny')
+   if not b.get('manual_price') and estimate is not None and str(estimate)==str(b.get('price_cny')):yield 's:price','v'+str(n),str(b['price_cny']),n
+ def select_cell(iid,index):
+  focus[:]=[iid,index];tree.selection_set(iid);track()
+ from cell_references import ReferenceBadges
+ badges=ReferenceBadges(tree,reference_cells,select_cell,lambda iid,n:(select_cell(iid,n),edit_row([n],iid)))
+ old_x=tree.xview;old_y=tree.yview
+ def scroll_x(*args):old_x(*args);badges.schedule()
+ def scroll_y(*args):old_y(*args);badges.schedule()
+ sx.configure(command=scroll_x);sy.configure(command=scroll_y)
+ def report_x(first,last):sx.set(first,last);badges.schedule()
+ def report_y(first,last):sy.set(first,last);badges.schedule()
+ tree.configure(xscrollcommand=report_x,yscrollcommand=report_y)
  def dictionary_editor(index,key,field,expected):
   window=tk.Toplevel(dialog);window.title(paths[index].parent.name+' · 官方字典：'+field.get('name',''));window.geometry('780x500');query=tk.StringVar();ttk.Entry(window,textvariable=query,width=60).pack(pady=6)
   box=tk.Listbox(window,selectmode='extended' if field.get('is_collection') else 'browse',exportselection=False);box.pack(fill='both',expand=True,padx=8);loaded={};visible=[];cursor=[0]
@@ -402,7 +381,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   progress.delete(*progress.get_children())
   for offer,item in last_job.get('items',{}).items():
    setting=last_job['stocks'][offer];progress.insert('','end',values=(offer,setting['warehouse_name'],str(setting['stock'])+' / '+str(item.get('current_free_stock','待查询')),item.get('status',''),json.dumps(item.get('errors') or item.get('platform_status') or {},ensure_ascii=False)))
-  text=json.dumps({'任务':last_job['id'],'导入任务ID':last_job.get('task_id'),'状态':last_job['state'],'说明':last_job.get('message')},ensure_ascii=False,indent=2)
+  text=json.dumps({'任务':last_job['id'],'导入任务ID':last_job.get('task_id'),'状态':last_job['state'],'说明':last_job.get('message'),'最近处理错误':operation_error or None},ensure_ascii=False,indent=2)
   if progress_info.get('1.0','end-1c')!=text:progress_info.delete('1.0','end');progress_info.insert('1.0',text)
  def query_status():
   if last_job:run(lambda:publication.step(last_job['id'],refresh=True))
@@ -427,6 +406,8 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
 
  def submit():
   if copy_dirty:messagebox.showinfo('文案未保存','请先保存整组共用文案',parent=dialog);notebook.select(copy_tab);return
+  if busy:return
+  if active_job():notebook.select(progress_tab);return
   if not editable():return
   from category_catalog import setup_errors
   errors=setup_errors(coordinator.load(),os.environ.get('OZON_CLIENT_ID',''))
@@ -436,7 +417,11 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   def submitted(job):
    nonlocal last_job
    last_job=job;notebook.select(progress_tab);refresh()
-  run(lambda:publication.begin(coordinator,expected),submitted)
+  notebook.select(progress_tab)
+  visible=copy.deepcopy(bundles)
+  def stage(message):coordinator.status=message
+  run(lambda:publication.begin(coordinator,expected,on_progress=stage,visible_bundles=visible),submitted,label='提交前校验')
+ blocker=ttk.Label(dialog,text='',wraplength=1200,foreground='#b00020');blocker.pack(fill='x',padx=8)
  bottom=ttk.Frame(dialog);bottom.pack(fill='x',padx=8,pady=6)
  ttk.Label(bottom,text='同货号已存在时会更新商品；选择仓库后按各变体目标库存设置。仅设置所选仓库；库存0不售；税率字段不自动增加定价税费。').pack(side='left')
  submit_button=ttk.Button(bottom,text='提交/更新整组并自动上架',command=submit);submit_button.pack(side='right',padx=6)

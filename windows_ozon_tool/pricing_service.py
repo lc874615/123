@@ -38,6 +38,15 @@ def fetch(url,limit):
  if len(raw)>limit:raise ValueError('来源文件超过大小限制')
  return raw
 
+def adopt_price(bundle):
+ result=bundle.get('auto_pricing')
+ if not result or bundle.get('price_cny') is None:return False
+ before=json.dumps(bundle,sort_keys=True,default=str)
+ bundle['pricing_confirmed_fingerprint']=bundle.get('pricing_fingerprint');bundle['pricing_confirmed_price']=bundle['price_cny']
+ bundle['pricing_status']='自动估算完成，售价已自动采用' if not bundle.get('manual_price') and str(bundle['price_cny'])==str(result.get('price_cny')) else '采用手动售价，自动估算供参考'
+ bundle['blockers']=[x for x in bundle.get('blockers',[]) if x!='售价估算待确认']
+ return before!=json.dumps(bundle,sort_keys=True,default=str)
+
 class PricingService:
  def __init__(self,data,store_lock=None):
   self.data=Path(data);self.root=self.data/'pricing';self.root.mkdir(parents=True,exist_ok=True)
@@ -101,7 +110,11 @@ class PricingService:
     inputs={k:bundle.get(k) for k in ('variant_parameters','category','category_match_status')}
     fingerprint_inputs={**inputs,'category':{k:v for k,v in (bundle.get('category') or {}).items() if k!='attributes_revalidation_required'}}
     fingerprint=hashlib.sha256(json.dumps([fingerprint_inputs,configs,mapping,source_error],sort_keys=True,default=str).encode()).hexdigest()
-    if bundle.get('pricing_fingerprint')==fingerprint:continue
+    if bundle.get('pricing_fingerprint')==fingerprint:
+     with self.lock:
+      latest=read(path)
+      if latest.get('pricing_fingerprint')==fingerprint and adopt_price(latest):write(path,latest)
+     continue
     try:
      if source_error:raise ValueError('定价来源未就绪：'+source_error)
      result=self.quote(bundle,configs,mapping);error=None
@@ -113,13 +126,15 @@ class PricingService:
      previous=latest.get('auto_pricing')
      if previous is not None and not isinstance(previous,dict):raise ValueError('历史估价格式异常，请检查该商品草稿')
      prior=(previous or {}).get('price_cny')
-     manual=latest.get('price_cny') is not None and str(latest['price_cny'])!=str(prior)
-     latest.update(pricing_fingerprint=fingerprint,pricing_status=error or ('自动估算，类目待确认' if not result['category_confirmed'] else '自动估算完成，待上架确认'))
+     manual=bool(latest.get('manual_price')) or (latest.get('price_cny') is not None and str(latest['price_cny'])!=str(prior))
+     latest.update(pricing_fingerprint=fingerprint,pricing_status=error or ('自动估算，类目待确认' if not result['category_confirmed'] else '自动估算完成，售价已自动采用'))
      latest['auto_pricing']=result
      latest.pop('pricing_confirmed_fingerprint',None)
      if not manual:latest['price_cny']=result['price_cny'] if result else None
      blockers=[x for x in (latest.get('blockers') or []) if x not in ('实际定价待核验','自动定价未完成','售价估算待确认')]
-     blockers.append('售价估算待确认' if result else '自动定价未完成');latest['blockers']=blockers
+     if not result:blockers.append('自动定价未完成')
+     latest['blockers']=blockers
+     if result:adopt_price(latest)
      write(path,latest)
     done+=bool(result);pending+=not bool(result)
    except (OSError,ValueError,TypeError,KeyError,AttributeError) as exc:failures.append(path.parent.name+'：'+str(exc))

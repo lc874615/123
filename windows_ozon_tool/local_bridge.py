@@ -419,7 +419,7 @@ def main():
  import tkinter as tk
  from tkinter import ttk,messagebox,filedialog
  store=Store(DATA);token=secrets.token_urlsafe(32);http=server(store,token);threading.Thread(target=http.serve_forever,daemon=True).start()
- root=tk.Tk();root.title('Ozon Edge 本地服务 v0.35');root.geometry('1120x850')
+ root=tk.Tk();root.title('Ozon Edge 本地服务 v0.36');root.geometry('1120x850')
  shell=ttk.Frame(root);shell.pack(fill='both',expand=True);shell.rowconfigure(0,weight=1);shell.columnconfigure(0,weight=1)
  canvas=tk.Canvas(shell,highlightthickness=0);canvas.grid(row=0,column=0,sticky='nsew')
  outer_scroll=ttk.Scrollbar(shell,orient='vertical',command=canvas.yview);outer_scroll.grid(row=0,column=1,sticky='ns');canvas.configure(yscrollcommand=outer_scroll.set)
@@ -668,21 +668,7 @@ def main():
     ttk.Button(picker,text='确认所选类型及该行佣金',command=apply).pack(pady=4)
     ttk.Button(picker,text='先匹配 / 确认上架类目',command=lambda:category_editor(task)).pack(pady=4)
    except Exception as e:messagebox.showerror('无法选择',str(e))
-  def confirm_price():
-   try:
-    pricing.calculate_all()
-    with store.lock:
-     latest=read_pricing(path)
-     if not latest.get('auto_pricing'):raise ValueError('当前没有可确认的自动估算')
-     if not latest.get('category',{}).get('confirmed'):raise ValueError('请先确认商品类目，再确认售价')
-     latest['pricing_confirmed_fingerprint']=latest['pricing_fingerprint'];latest['pricing_confirmed_price']=latest['price_cny']
-     latest['blockers']=[b for b in latest.get('blockers',[]) if b!='售价估算待确认']
-     latest['pricing_status']='售价已确认'
-     from pricing_service import write as write_pricing
-     write_pricing(path,latest)
-    messagebox.showinfo('已确认','已确认此变体售价；成本、类目、运费或汇率变化后需重新确认。',parent=dialog)
-   except Exception as e:messagebox.showerror('未确认',str(e),parent=dialog)
-  confirm_button=ttk.Button(dialog,text='确认所选变体售价',command=confirm_price);confirm_button.pack(pady=4)
+  ttk.Label(dialog,text='估算售价已自动采用，无需单独确认；请在整组预览核对数据。').pack(pady=4)
   ttk.Button(dialog,text='匹配 / 确认 / 修改本变体及同组类目',command=lambda:category_editor(task)).pack(pady=4)
   ttk.Button(dialog,text='连接Ozon API / 重新匹配类目',command=connect_category).pack(pady=4)
   def refresh_details():
@@ -691,8 +677,8 @@ def main():
   def update_details():
    if not dialog.winfo_exists():return
    try:
-    render_details();confirm_button.configure(state='normal' if result and (bundle.get('category') or {}).get('confirmed') else 'disabled')
-   except (OSError,ValueError):confirm_button.configure(state='disabled')
+    render_details()
+   except (OSError,ValueError):pass
    dialog.after(1500,update_details)
   update_details()
   ttk.Button(dialog,text='佣金无法匹配时，选择官方商品类型',command=select_type).pack(pady=4)

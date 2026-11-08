@@ -27,7 +27,7 @@ def api(path,body):
  if not isinstance(value,dict) or not isinstance(value.get('result'),list):raise ValueError('Ozon属性响应格式异常')
  return value
 
-AUTOFILL_VERSION=3
+AUTOFILL_VERSION=4
 def normalized_name(field):
  return re.sub(r'\s+',' ',(field.get('name_ru') or field.get('name','')).casefold().replace('ё','е').replace('#','')).strip()
 def audience(bundle):
@@ -183,8 +183,25 @@ class AttributeService:
      proposed=[{'value':str(v)} for v in (suggestion if isinstance(suggestion,list) else [suggestion])]
      try:validate_values(field,proposed);values[key]=proposed
      except ValueError:pass
+   from assisted_fields import inline_references
+   for k in old.get('auto_reference_keys') or []:
+    if k not in manual:values.pop(k,None)
+   provisional={**bundle,'attribute_draft':{'fields':fields,'values':values,'manual_keys':list(manual)}}
+   auto_references={}
+   for key,reference in inline_references(provisional).items():
+    if not reference['suggested']:continue
+    field=reference['field'];proposed=[{'value':reference['suggested']}]
+    if field.get('dictionary_id'):
+     try:
+      label=reference['suggested'];rows=self.dictionary(bundle,field,label if len(label)>=2 else '')['result'];matches=[r for r in rows if str(r.get('value','')).casefold()==label.casefold()]
+      if len(matches)!=1:continue
+      proposed=[{'dictionary_value_id':matches[0]['id'],'value':matches[0]['value']}]
+     except ValueError:continue
+    try:validate_values(field,proposed)
+    except ValueError:continue
+    values[key]=proposed;auto_references[key]={k:reference[k] for k in ('suggested','evidence','confidence','note','kind')}
    for k in values:pending.pop(k,None)
-   state={'autofill_version':AUTOFILL_VERSION,'category_key':[category,type_id],'schema_hash':digest,'fields':fields,'values':values,'suggestions':suggestions,'fetched_at':time.time(),'confirmed':bool(same and unchanged and old.get('autofill_version')==AUTOFILL_VERSION and old.get('confirmed')),'source_fingerprint':source,'manual_keys':sorted(manual) if same else [k for k in values if k in manual],'migration_pending':pending}
+   state={'autofill_version':AUTOFILL_VERSION,'auto_reference_keys':sorted(auto_references),'auto_references':auto_references,'category_key':[category,type_id],'schema_hash':digest,'fields':fields,'values':values,'suggestions':suggestions,'fetched_at':time.time(),'confirmed':bool(same and unchanged and old.get('autofill_version')==AUTOFILL_VERSION and old.get('confirmed')),'source_fingerprint':source,'manual_keys':sorted(manual) if same else [k for k in values if k in manual],'migration_pending':pending}
    with self.lock:
     latest=read(path)
     if category_key(latest)!=(category,type_id) or source_fingerprint(latest)!=source or not latest['category'].get('confirmed'):raise ValueError('读取期间类目已变化，请重新读取')
@@ -192,7 +209,10 @@ class AttributeService:
     current=latest.get('attribute_draft') or {}
     if current.get('schema_hash')==digest:
      for k,v in (current.get('values') or {}).items():
-      if not any(field_key(f)==k and is_rich_field(f) for f in fields) and ((current.get('source_fingerprint')==source and current.get('autofill_version')==AUTOFILL_VERSION) or k in (current.get('manual_keys') or [])):state['values'][k]=v
+      if (k not in auto_references or k in (current.get('manual_keys') or [])) and not any(field_key(f)==k and is_rich_field(f) for f in fields) and ((current.get('source_fingerprint')==source and current.get('autofill_version')==AUTOFILL_VERSION) or k in (current.get('manual_keys') or [])):state['values'][k]=v
+     for k in (current.get('manual_keys') or []):
+      state['auto_references'].pop(k,None)
+     state['auto_reference_keys']=sorted(state['auto_references'])
      state['manual_keys']=[k for k in (current.get('manual_keys') or []) if not any(field_key(f)==k and is_rich_field(f) for f in fields)]
      state['confirmed']=bool(current.get('source_fingerprint')==source and current.get('autofill_version')==AUTOFILL_VERSION and current.get('confirmed'))
      if state['confirmed']:state['confirmed_values_hash']=current.get('confirmed_values_hash')

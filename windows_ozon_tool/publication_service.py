@@ -4,7 +4,7 @@ unknown import or stock write. No API keys are persisted in receipts.
 """
 import hashlib,json,os,secrets,threading,time,urllib.error,urllib.request
 from pathlib import Path
-from group_service import revision
+from group_service import revision,preview_changes
 from pricing_service import read,write
 from listing_preview import export_preview
 
@@ -22,7 +22,15 @@ def request(path,body):
  try:
   with urllib.request.urlopen(req,timeout=35) as response:value=json.load(response)
  except urllib.error.HTTPError as exc:
-  if 400<=exc.code<500 and exc.code!=408:raise Rejected('Ozon拒绝请求（HTTP '+str(exc.code)+'），请检查权限或参数') from None
+  if 400<=exc.code<500 and exc.code!=408:
+   message=''
+   try:
+    body=json.loads(exc.read(32768));message=str(body.get('message',''))[:1000] if isinstance(body,dict) else ''
+    for key in ('OZON_API_KEY','COS_SECRET_KEY'):
+     secret=os.environ.get(key,'')
+     if secret:message=message.replace(secret,'[已隐藏]')
+   except (OSError,ValueError):pass
+   raise Rejected('Ozon拒绝请求（HTTP '+str(exc.code)+'）'+('：'+message if message else '，请检查权限或参数')) from None
   raise ValueError('Ozon响应异常，写入结果需要核对') from None
  except (OSError,ValueError):raise ValueError('Ozon请求未完成，写入结果需要核对') from None
  if not isinstance(value,dict):raise ValueError('Ozon响应格式异常')
@@ -75,15 +83,31 @@ class PublicationService:
  def active(self,offers):
   return next((j for j in self.jobs() if j.get('state') not in TERMINAL and not j.get('writes_complete') and set(offers)&set(j.get('items',{}))),None)
  def _save(self,job):job['updated_at']=time.time();write(self.root/(job['id']+'.json'),job);self.status=job.get('message',job['state'])
- def begin(self,coordinator,expected):
+ def begin(self,coordinator,expected,on_progress=None,visible_bundles=None):
+  progress=on_progress or (lambda message:None);progress('等待本地提交队列')
   with self.mutex:
    merchant=self.account_getter()
-   for path in coordinator.paths:coordinator.attributes.refresh(path,force=True)
-   coordinator.pricing.calculate_all()
-   warehouses={r['warehouse_id']:r for r in self.warehouses()}
+   initial=coordinator.load()
+   if revision(initial)!=expected:
+    changes=preview_changes(visible_bundles,initial,allow_automatic=True) if visible_bundles is not None else ['预览版本已更新']
+    if changes:raise ValueError('预览已变化，请核对后再提交：\n'+'\n'.join(changes))
+    expected=revision(initial)
+   existing=self.active([b['sku'] for b in initial])
+   if existing:return existing
+   from attribute_service import AUTOFILL_VERSION,source_fingerprint,category_key
+   for path,b in zip(coordinator.paths,initial):
+    state=b.get('attribute_draft') or {}
+    fresh=state.get('autofill_version')==AUTOFILL_VERSION and state.get('category_key')==list(category_key(b)) and state.get('source_fingerprint')==source_fingerprint(b) and bool(state.get('fields')) and 0<=time.time()-state.get('fetched_at',0)<=86400
+    if not fresh:
+     progress(path.parent.name+'：刷新已过期或变化的官方属性');coordinator.attributes.refresh(path,force=False)
+   progress('核对整组自动售价');coordinator.pricing.calculate_all()
+   progress('重新核对店铺可用仓库');warehouses={r['warehouse_id']:r for r in self.warehouses()}
    with self.lock:
     bundles=[read(p) for p in coordinator.paths]
-    if revision(bundles)!=expected:raise ValueError('预览已变化，请核对最新参数、价格和库存后再次提交')
+    changes=preview_changes(initial,bundles,allow_automatic=True)
+    if changes:raise ValueError('提交前发现实际内容变化，已刷新预览，请核对后再次提交：\n'+'\n'.join(changes))
+    # Refreshing source evidence with identical visible content is not a new approval.
+    expected=revision(bundles)
     offers=[b['sku'] for b in bundles];existing=self.active(offers)
     if existing:return existing
     stocks={}
@@ -102,7 +126,9 @@ class PublicationService:
    from listing_preview import attribute_errors
    with self.lock:
     latest=[read(p) for p in coordinator.paths]
-    if revision(latest)!=expected:raise ValueError('资料已变化，请刷新后提交')
+    changes=preview_changes(bundles,latest,allow_automatic=True)
+    if changes:raise ValueError('资料已变化，请核对后再提交：\n'+'\n'.join(changes))
+    expected=revision(latest)
     for b in latest:
      errors=attribute_errors(b)
      if errors:raise ValueError(b['sku']+'：'+'；'.join(errors))
@@ -111,6 +137,7 @@ class PublicationService:
     for path,b in zip(coordinator.paths,latest):
      b['attribute_draft'].update(confirmed=True,confirmed_values_hash=review_hash(b['attribute_draft']))
      b['pricing_confirmed_fingerprint']=b.get('pricing_fingerprint');b['pricing_confirmed_price']=b.get('price_cny');write(path,b)
+   progress('校验必填属性、8图、视频和实际提交载荷')
    report=export_preview([p.parent for p in coordinator.paths],self.root/'staging',self.lock)
    if not report['ready']:raise ValueError('；'.join(r['offer_id']+'：'+'；'.join(r['missing']) for r in report['items'] if not r['ready']))
    payload=read(self.root/'staging'/'ozon_import_preview.json')
@@ -131,9 +158,10 @@ class PublicationService:
    self._save(job)
    pending=[i for i in payload['items'] if job['items'][i['offer_id']]['import_state']!='imported']
    if pending:
-    job.update(state='import_intent',message='正在提交商品，勿重复操作');self._save(job)
+    job.update(state='import_intent',message='正在提交商品，勿重复操作');self._save(job);progress('正在调用Ozon导入接口，等待任务ID')
     try:
      result=self.caller('/v3/product/import',{'items':pending});task_id=(result.get('result') or {}).get('task_id')
+     if isinstance(task_id,str) and task_id.isdigit():task_id=int(task_id)
      if type(task_id) is not int or task_id<=0:raise ValueError('未返回明确任务ID')
      job.update(task_id=task_id,state='importing',message='商品已受理，自动查询导入状态')
     except Rejected as exc:job.update(state='rejected',message=str(exc))

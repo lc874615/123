@@ -7,6 +7,7 @@ from asset_audit import inspect
 from listing_bundle import copy_complete,copy_hash
 from pricing_service import read,write
 
+from assisted_fields import is_pdf
 VIDEO_IDS={21841,21837,21845}
 def attribute_errors(bundle):
  state=bundle.get('attribute_draft') or {};errors=[]
@@ -17,6 +18,9 @@ def attribute_errors(bundle):
  if not 0<=time.time()-state.get('fetched_at',0)<=86400:errors.append('官方属性缓存已超过24小时，请刷新')
  if state.get('source_fingerprint')!=source_fingerprint(bundle):errors.append('参数或文案已变化，请重新读取并核对属性')
  for field in state['fields']:
+  if is_pdf(field):
+   if field.get('is_required'):errors.append('平台将PDF列为必填；本工具已按要求关闭PDF，请确认类目或在平台补充真实材料')
+   continue
   if field['id'] in VIDEO_IDS or field['id']==8229:continue
   values=(state.get('values') or {}).get(field_key(field),[])
   from rich_content import is_rich_field,generate
@@ -91,7 +95,7 @@ def build_item(folder,bundle):
  if errors:return None,list(dict.fromkeys(errors))
  attributes=[];groups={}
  for field in state['fields']:
-  if field['id'] in VIDEO_IDS or field['id']==8229:continue
+  if is_pdf(field) or field['id'] in VIDEO_IDS or field['id']==8229:continue
   values=(state.get('values') or {}).get(field_key(field))
   if not values:continue
   complex_id=int(field.get('attribute_complex_id') or 0);row={'id':int(field['id']),'complex_id':complex_id,'values':values}

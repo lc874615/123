@@ -11,7 +11,7 @@ def revision(bundles):
  data=[]
  for b in bundles:
   state=b.get('attribute_draft') or {};category={k:v for k,v in (b.get('category') or {}).items() if k!='attributes_revalidation_required'}
-  data.append({'sku':b.get('sku'),'offer_id':b.get('offer_id'),'category':category,'parameters':b.get('variant_parameters'),'copy':b.get('copy'),'model':b.get('model'),'brand':b.get('brand'),'attributes':{k:state.get(k) for k in ('schema_hash','values','migration_pending','source_fingerprint')},'price':b.get('price_cny'),'pricing_fingerprint':b.get('pricing_fingerprint'),'images':[{k:r.get(k) for k in ('order','role','sha256','https_url','hosting_target')} for r in b.get('images') or []],'video':{k:(b.get('video') or {}).get(k) for k in ('sha256','https_url','image_hashes')},'export_settings':b.get('export_settings'),'fulfillment':b.get('fulfillment'),'stock_revision':b.get('stock_revision')})
+  data.append({'sku':b.get('sku'),'offer_id':b.get('offer_id'),'category':category,'parameters':b.get('variant_parameters'),'copy':b.get('copy'),'model':b.get('model'),'brand':b.get('brand'),'attributes':{k:state.get(k) for k in ('schema_hash','values','migration_pending','source_fingerprint')},'price':b.get('price_cny'),'manual_price':b.get('manual_price'),'pricing_fingerprint':b.get('pricing_fingerprint'),'images':[{k:r.get(k) for k in ('order','role','sha256','https_url','hosting_target')} for r in b.get('images') or []],'video':{k:(b.get('video') or {}).get(k) for k in ('sha256','https_url','image_hashes')},'export_settings':b.get('export_settings'),'fulfillment':b.get('fulfillment'),'stock_revision':b.get('stock_revision'),'reference_decisions':b.get('reference_decisions')})
  return hashlib.sha256(json.dumps(data,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
 
 def binding(field):
@@ -35,7 +35,7 @@ class GroupService:
   if expected is not None and revision(bundles)!=expected:raise ValueError('预览内容已更新，请先核对最新表格再操作')
  def _invalidate(self,bundle):
   bundle.pop('pricing_fingerprint',None);bundle.pop('pricing_confirmed_fingerprint',None)
-  bundle['price_cny']=None
+  bundle['price_cny']=None;bundle.pop('manual_price',None)
   state=bundle.get('attribute_draft')
   if state:state['confirmed']=False
  def _write(self,bundles):
@@ -112,6 +112,43 @@ class GroupService:
    if len(matches)!=1:raise ValueError(b['sku']+'：官方字典未唯一匹配“'+label+'”，请逐格选择官方选项')
    row=next(iter(matches.values()));values.append({'dictionary_value_id':row['id'],'value':row['value']})
   return values
+ def set_prices(self,indices,values,expected=None):
+  if not indices or len(indices)!=len(values):raise ValueError('请选择变体并填写对应售价')
+  prices=[]
+  for value in values:
+   try:price=Decimal(str(value))
+   except Exception:raise ValueError('售价须为有效正数') from None
+   if not price.is_finite() or price<=0 or price!=price.quantize(Decimal('.01')):raise ValueError('售价须为正数且最多两位小数')
+   prices.append(format(price.quantize(Decimal('.01')),'f'))
+  with self.mutex:
+   with self.lock:
+    bundles=[read(p) for p in self.paths];self._check(bundles,expected)
+    for n,price in zip(indices,prices):
+     b=bundles[n];b.update(price_cny=price,manual_price=True,pricing_confirmed_fingerprint=b.get('pricing_fingerprint'),pricing_confirmed_price=price,pricing_status='采用手动售价，自动估算供参考')
+    self._write(bundles)
+  return len(prices)
+ def confirm_references(self,indices,key,expected=None,skip=False):
+  from assisted_fields import inline_references
+  with self.mutex:
+   bundles=self.load();self._check(bundles,expected);changes=[]
+   for n in indices:
+    row=inline_references(bundles[n]).get(key)
+    if row is None:continue
+    if skip:
+     if row['required']:raise ValueError('平台必填属性不能跳过，请填写已核实值')
+     changes.append((n,row,None));continue
+    if not row['suggested']:raise ValueError('该字段没有可靠参考值，请双击填写或选择已核实的官方选项')
+    values=self.resolve_text(n,key,row['suggested']);canonical=self.attributes.prepare_values(bundles[n],key,values);changes.append((n,row,canonical))
+   with self.lock:
+    latest=[read(p) for p in self.paths];self._check(latest,expected)
+    for n,row,values in changes:
+     b=latest[n];b.setdefault('reference_decisions',{})[key]={'source':source_fingerprint(b),'action':'skip' if skip else 'accepted','evidence':row['evidence'],'confidence':row['confidence']}
+     if not skip:
+      state=b['attribute_draft'];state.setdefault('values',{})[key]=values;state['manual_keys']=sorted(set(state.get('manual_keys') or [])|{key});state['confirmed']=False
+     # Attribute-only reference choices do not change pricing inputs.
+    self._write(latest)
+   self.attributes.wake.set()
+  return len(changes)
  def use_only_warehouse(self,warehouses,merchant,expected=None):
   if len(warehouses)!=1:return False
   record=warehouses[0];bundles=self.load()
@@ -169,3 +206,29 @@ class GroupService:
     for b in bundles:b['copy']={**copy.deepcopy(value),'sku':b['sku']};self._invalidate(b)
     self._write(bundles)
    self.after_edit(list(range(len(bundles))))
+
+def preview_changes(before,after,allow_automatic=False):
+ """Compare merchant-visible content, not refreshed cache timestamps/fingerprints."""
+ def sections(b):
+  state=b.get('attribute_draft') or {};category=b.get('category') or {}
+  return {'类目':{k:category.get(k) for k in ('description_category_id','type_id','name','confirmed')},'基础参数':b.get('variant_parameters'),'共用文案':b.get('copy'),'型号与品牌':[b.get('model'),b.get('brand')],'官方属性':state.get('values'),'官方字段要求':sorted([{k:f.get(k) for k in ('id','attribute_complex_id','name','name_ru','type','dictionary_id','is_required','is_collection')} for f in state.get('fields',[])],key=lambda f:(f.get('attribute_complex_id') or 0,f['id'])),'售价':str(b.get('price_cny')),'手动售价设置':b.get('manual_price'),'图片':[{k:r.get(k) for k in ('order','role','sha256','https_url','hosting_target')} for r in b.get('images') or []],'视频':{k:(b.get('video') or {}).get(k) for k in ('sha256','https_url','image_hashes')},'税率与币种':b.get('export_settings'),'仓库与库存设置':[b.get('fulfillment'),b.get('stock_revision')],'参考值核对':b.get('reference_decisions')}
+ if [b.get('sku') for b in before]!=[b.get('sku') for b in after]:return ['变体清单发生变化']
+ result=[]
+ for old,new in zip(before,after):
+  left,right=sections(old),sections(new)
+  if allow_automatic:
+   keys=set((old.get('attribute_draft') or {}).get('auto_reference_keys') or [])|set((new.get('attribute_draft') or {}).get('auto_reference_keys') or [])
+   keys-=set((new.get('attribute_draft') or {}).get('manual_keys') or [])
+   for side in (left,right):side['官方属性']={k:v for k,v in (side['官方属性'] or {}).items() if k not in keys}
+   estimate=(new.get('auto_pricing') or {}).get('price_cny')
+   if not new.get('manual_price') and estimate is not None and str(estimate)==str(new.get('price_cny')):left['售价']=right['售价']
+  for name in left:
+   if left[name]==right[name]:continue
+   text=str(new.get('sku',''))+'：'+name+'变化'
+   if name=='售价':text+='（'+left[name]+' → '+right[name]+'）'
+   elif name in ('基础参数','官方属性'):
+    l=left[name] or {};r=right[name] or {};keys=[k for k in set(l)|set(r) if l.get(k)!=r.get(k)]
+    labels={field_key(f):f.get('name') or f.get('name_ru') or field_key(f) for f in (new.get('attribute_draft') or {}).get('fields',[])}
+    text+='：'+'、'.join(labels.get(k,k) for k in sorted(keys))
+   result.append(text)
+ return result
