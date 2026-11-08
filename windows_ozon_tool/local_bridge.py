@@ -25,6 +25,12 @@ class Store:
   for t in self.tasks:
    if t['state'] in ('claimed','sending','waiting'):t['state']='needs_attention';t['resume_mode']='inspect_only';t['message']='服务已重启，等待自动读取现有网页结果；不重新发送'
    if t.get('copy_state')=='running':t['copy_state']='needs_attention';t['resume_mode']='copy_inspect_only';t['message']='文案被重启中断，等待自动读取现有结果，不重新生成'
+   if t.get('state')=='needs_attention' and t.get('message')=='已备份旧素材；等待从网页重新采集生成图，不重新发送作图':
+    t.update(resume_mode='inspect_only',recollection_requested=True,message='旧版备份任务已恢复到自动采集队列；不重新作图')
+    folder=self.folder/'products'/t['sku'];target=folder/'listing_bundle.json'
+    backups=sorted((folder/'recovery_backups').glob('*/listing_bundle.json'),reverse=True)
+    if not target.exists() and backups:
+     bundle=json.loads(backups[0].read_text(encoding='utf-8-sig'));bundle.update(images=[],recollection_pending=True,video={'local_file':'video/product_8s.mp4','exists':False,'https_url':None});target.write_text(json.dumps(bundle,ensure_ascii=False,indent=2),encoding='utf-8')
   self.control_path=self.folder/'automation_control.json';self.control=json.loads(self.control_path.read_text()) if self.control_path.exists() else {'paused':False,'serial':0}
   self.rebase_paths()
   self.save()
@@ -186,7 +192,7 @@ class Store:
  def recover(self,sku):
   group=[t for t in self.tasks if t['sku']==sku and t.get('set_mode') and t['state'] in ('waiting','needs_attention','claimed','sending','saved')]
   if len(group)!=1:raise ValueError('没有唯一可恢复的整套任务，请核对货号')
-  task=group[0];validate_complete=len(task.get('received_images',[]))==8;task.pop('resume_mode',None);task.update(state='waiting',message='用户请求核对最终编号文件，不重新生成');self.save();return {'id':task['id'],'sku':task['sku'],'set_mode':True,'saved_count':len(task.get('received_images',[])),'expected_images':task.get('expected_images',8),'orderRepairPending':validate_complete}
+  task=group[0];validate_complete=len(task.get('received_images',[]))==8;task.pop('resume_mode',None);task.update(state='waiting',message='用户请求核对最终编号文件，不重新生成');self.save();return {'id':task['id'],'sku':task['sku'],'set_mode':True,'saved_count':len(task.get('received_images',[])),'expected_images':task.get('expected_images',8),'orderRepairPending':validate_complete,'automaticRecovery':bool(task.get('recollection_requested'))}
  def set_result(self,tid,index,encoded):
   task=self.find(tid)
   if not task.get('set_mode') or task['state'] not in ('claimed','sending','waiting','saved'):raise ValueError('整套任务状态无效')
@@ -244,6 +250,7 @@ class Store:
     review.update(main=own,gallery=gallery);bundle['asset_review']=review;write(target,bundle)
   task.update(state='saved' if complete else 'waiting',message=f'已保存 {len(received)}/8 张独立图片');self.save()
   if complete:
+   task.pop('resume_mode',None);task.pop('recollection_requested',None);self.save()
    self.sync_shared_galleries(task)
    threading.Thread(target=self.render_video,args=(task['sku'],),daemon=True).start()
   return {'saved_count':len(received),'complete':complete}
@@ -299,8 +306,10 @@ class Store:
  def recollect(self,tid):
   import shutil
   selected=self.find(tid);leader=selected.get('copy_leader',selected['sku'])
-  group=[t for t in self.tasks if t.get('copy_leader',t['sku'])==leader]
+  group=[t for t in self.tasks if t.get('copy_leader',t['sku'])==leader and t['state']!='cancelled']
   if any(t['state'] in ('claimed','sending','waiting') or t.get('copy_state')=='running' for t in group):raise ValueError('请先停止扩展自动批次，再备份并重新采集')
+  if any(t.get('pause_requested') and not t.get('pause_ack') for t in group):raise ValueError('插件尚未确认停止，等待暂停回执后自动采集')
+  if any(t['sku'] in self.video_running for t in group):raise ValueError('旧视频仍在处理中，请等待完成再采集')
   stamp=time.strftime('%Y%m%d-%H%M%S')+'-'+secrets.token_hex(3)
   names=('images','video','image_manifest.json','listing_bundle.json','copy_prompt.txt')
   planned=[];affected=[]
@@ -316,15 +325,18 @@ class Store:
     dst=backup/name
     if src.is_dir():shutil.copytree(src,dst)
     else:shutil.copy2(src,dst)
-    planned.append(src)
+    if name in ('images','video','image_manifest.json'):planned.append(src)
   # Only remove live outputs once every backup completed successfully.
   for src in planned:
    if src.is_dir():shutil.rmtree(src)
    else:src.unlink()
   for task in affected:
-   task.update(state='needs_attention',received_images=[],message='已备份旧素材；等待从网页重新采集生成图，不重新发送作图')
-   task.pop('copy_state',None);task.pop('video',None)
-  self.save();return stamp
+   target=self.folder/'products'/task['sku']/'listing_bundle.json'
+   if target.exists():
+    bundle=json.loads(target.read_text(encoding='utf-8-sig'));bundle.update(images=[],recollection_pending=True,video={'local_file':'video/product_8s.mp4','exists':False,'https_url':None},hosting={'state':'waiting','verified_images':0},video_hosting={'state':'waiting'});bundle['blockers']=list(dict.fromkeys(bundle.get('blockers',[])+['图片重新采集中']));target.write_text(json.dumps(bundle,ensure_ascii=False,indent=2),encoding='utf-8')
+   task.update(state='needs_attention',resume_mode='inspect_only',recollection_requested=True,recollection_backup=stamp,received_images=[],message='已备份旧素材，已加入整组自动采集队列；不重新发送作图')
+   task.pop('copy_state',None);task.pop('video',None);task.pop('pause_requested',None);task.pop('pause_ack',None)
+  self.set_paused(False);self.save();return stamp
  def claim(self):
   if self.control.get('paused'):raise ValueError('制作已暂停')
   if any(t['state'] in ('claimed','sending','waiting','needs_attention','review') for t in self.tasks):raise ValueError('请先审核上一任务或处理异常，不能继续发送')
@@ -408,7 +420,8 @@ class Store:
      if not copy_complete(current.get('copy')) or copy_hash(current['copy'])!=copy_hash(leader['copy']) or current.get('copy_source')!=source:
       share_copy(folder,source,leader['copy'])
      task['copy_source']=source
-     if task.get('copy_mode')!='attributes' or task.get('copy_state') not in ('running','needs_attention'):task['copy_state']='done';task.pop('resume_mode',None)
+     if task.get('copy_mode')!='attributes' or task.get('copy_state') not in ('running','needs_attention'):task['copy_state']='done'
+     if not task.get('recollection_requested') or task['state']=='saved':task.pop('resume_mode',None)
      if task['state']=='saved' and task.get('video'):task['message']='8图、视频、共用俄语文案及草稿已完成；文案来源：'+source+'；待上架审核'
     except (ValueError,OSError,KeyError) as error:
      task.update(copy_state='needs_attention',message='共用文案同步失败：'+str(error)[:160])
@@ -521,7 +534,7 @@ def server(store,token,port=8765):
     body=json.loads(self.rfile.read(n))
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.4','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.5','paired':True}
      elif self.path=='/control':value=store.control
      elif self.path=='/automation-control':value=store.set_paused(bool(body.get('paused')))
      elif self.path=='/pause-ack':
@@ -904,10 +917,19 @@ def main(test_mode=False,on_ready=None):
  def recollect():
   task=selected()
   if not task:return
-  try:
-   with store.lock:backup=store.recollect(task['id'])
-   messagebox.showinfo('备份完成','整组原素材已备份到各货号 recovery_backups/'+backup+'。\n请在扩展填写首变体货号，点击保存本页现有8张图；不需要重新作图。')
-  except Exception as e:messagebox.showerror('未重新采集',str(e))
+  with store.lock:store.set_paused(True)
+  deadline=time.time()+75
+  def ready():
+   with store.lock:
+    leader=task.get('copy_leader',task['sku']);group=[t for t in store.tasks if t.get('copy_leader',t['sku'])==leader]
+    waiting=any(t.get('pause_requested') and not t.get('pause_ack') or t['sku'] in store.video_running for t in group)
+   if waiting:
+    if time.time()<deadline:root.after(1000,ready);return
+    messagebox.showerror('采集等待中','插件尚未确认停止或旧视频仍在处理；原文件保留。请保持插件已连接后重试。');return
+   try:
+    with store.lock:store.recollect(task['id'])
+   except Exception as e:messagebox.showerror('未重新采集',str(e))
+  ready()
  task_more.add_command(label='备份并重采集已有图片（不重新作图）',command=recollect)
 
  def approve():

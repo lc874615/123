@@ -1,3 +1,11 @@
+# v1.0.5 验证
+
+265项Python测试、27项JavaScript测试通过。新增整组备份恢复、共用文案/售价/类目保留、首变体详情复用、旧版卡住记录迁移、未收到暂停回执时不删除文件。插件轮询只启动recover、不调用claim或start。
+
+Chromium合成页面验证新Work哈希类名、无author角色、视口外折叠文件、后续回复的最终8张、下一个商品任务隔离、未找到标记时拒绝采集、变体单张无编号文件，以及实际content.js自动恢复入口。另完成最终交付、旧布局与结构化图库回归，Tk真实窗口冒烟通过。未访问真实商品对话，未对Ozon或COS执行操作。
+
+复现新增场景：`python -m unittest discover -s windows_ozon_tool -p test_auto_recollection.py -q`、`node edge_extension/browser_recollection.cjs`。
+
 # v1.0.4 验证
 
 本版结果：262项Python测试、26项JavaScript测试（另含新增3个属性JSON断言）通过；Chromium上传、最终文件交付、采集/文案与插件布局4个场景通过；Tk真实窗口冒烟检查通过。

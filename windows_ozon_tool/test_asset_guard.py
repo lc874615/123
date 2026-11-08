@@ -26,7 +26,7 @@ class Tests(unittest.TestCase):
     folder=Path(tmp)/'products'/sku;(folder/'images').mkdir(parents=True);(folder/'images'/'old.png').write_bytes(png('red'));(folder/'listing_bundle.json').write_text('{"copy":{"title_ru":"saved"}}')
    stamp=store.recollect(store.tasks[0]['id'])
    for task in store.tasks:
-    folder=Path(tmp)/'products'/task['sku'];self.assertTrue((folder/'recovery_backups'/stamp/'images'/'old.png').exists());self.assertFalse((folder/'images').exists());self.assertEqual(task['state'],'needs_attention');self.assertEqual(task['received_images'],[])
+    folder=Path(tmp)/'products'/task['sku'];self.assertTrue((folder/'recovery_backups'/stamp/'images'/'old.png').exists());self.assertFalse((folder/'images').exists());self.assertEqual(task['state'],'needs_attention');self.assertEqual(task['received_images'],[]);self.assertEqual(task['resume_mode'],'inspect_only');self.assertTrue(task['recollection_requested']);self.assertTrue((folder/'listing_bundle.json').exists());self.assertFalse(store.control['paused'])
  def test_recollection_preserves_ungenerated_variant_queue(self):
   with tempfile.TemporaryDirectory() as tmp:
    store=Store(tmp)

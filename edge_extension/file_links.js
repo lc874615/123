@@ -20,18 +20,18 @@
   const text=fileLabel(element);
   return element.matches('button,[role="link"],[role="button"]')&&(/\b[^\s/\\]+\.(?:jpe?g|png|webp)\b/i.test(text));
  }
- async function expandFiles(doc,{report=async()=>{},stopped=()=>false,marker='',manual=false,allowPartial=false}={}){
+ async function expandFiles(doc,{report=async()=>{},stopped=()=>false,marker='',manual=false,allowPartial=false,continuations=false}={}){
   const main=globalThis.OzonConversation.main(doc);if(!main)return 0;let count=0;
   let anchor=null;if(marker){const walker=doc.createTreeWalker(main,4);let n;while((n=walker.nextNode()))if(n.nodeValue.includes(marker))anchor=n;}
   if(allowPartial&&marker&&!anchor)return 0;
-  const nextUser=anchor?globalThis.OzonConversation.userNodes(doc).find(n=>!!(anchor.compareDocumentPosition(n)&4)):null;
+  const nextUser=anchor?globalThis.OzonConversation.nextUser(doc,anchor,{continuations}):null;
   for(const button of main.querySelectorAll('button,[role="button"],summary')){
    if(stopped())throw Error('已暂停');
    if(globalThis.OzonConversation.userOwned(button))continue;
    if(!manual&&anchor&&(!(anchor.compareDocumentPosition(button)&4)||nextUser&&!(button.compareDocumentPosition(nextUser)&4)))continue;
-   if(manual){const r=button.getBoundingClientRect();if(!r.width||!r.height||r.bottom<=0||r.top>=doc.defaultView.innerHeight)continue;}
-   const text=(button.textContent||'').trim();
-   if(!/^(?:(?:另有|还有)\s*\d+\s*(?:个|项|个文件)|(?:show\s+)?\d+\s+more(?:\s+files)?|show more(?:\s+files)?)$/i.test(text))continue;
+   if(manual&&!anchor){const r=button.getBoundingClientRect();if(!r.width||!r.height||r.bottom<=0||r.top>=doc.defaultView.innerHeight)continue;}
+   const text=(button.textContent||button.getAttribute('aria-label')||'').trim();
+   if(!/^(?:(?:另有|还有|另外|其余)\s*\d+\s*(?:个|项|个文件)|(?:show\s+)?\d+\s+more(?:\s+files)?|show more(?:\s+files)?|展开(?:全部|更多)?(?:文件|图片)?|显示全部文件)$/i.test(text))continue;
    if(button.getAttribute('aria-expanded')==='true'||button.tagName==='SUMMARY'&&button.parentElement.open)continue;
    let files=false;
    for(let parent=button.parentElement,level=0;parent&&parent!==main&&level<5;parent=parent.parentElement,level++)if(/\.(?:jpe?g|png|webp)\b/i.test(parent.textContent||'')){files=true;break;}
@@ -41,12 +41,12 @@
   if(count)await new Promise(resolve=>setTimeout(resolve,350));
   return count;
  }
- function candidates(doc,{marker='',expected=8,allowPartial=false,manual=false,onlyVisible=false,inventory=false}={}){
+ function candidates(doc,{marker='',expected=8,allowPartial=false,manual=false,onlyVisible=false,inventory=false,continuations=false}={}){
   const main=globalThis.OzonConversation.main(doc);if(!main)return null;
   let anchor=null;if(marker){const walker=doc.createTreeWalker(main,4);let n;while((n=walker.nextNode()))if(n.nodeValue.includes(marker))anchor=n;}
   if(allowPartial&&marker&&!anchor)return null;
-  const nextUser=anchor?globalThis.OzonConversation.userNodes(doc).find(n=>!!(anchor.compareDocumentPosition(n)&4)):null;
-  const images=new Map(),unnumbered=new Set();
+  const nextUser=anchor?globalThis.OzonConversation.nextUser(doc,anchor,{continuations}):null;
+  const images=new Map(),unnumbered=new Map();
   const elements=[...main.querySelectorAll('a[href],button,[role="link"],[role="button"]')].filter(element=>!globalThis.OzonConversation.userOwned(element)&&(!anchor||!!(anchor.compareDocumentPosition(element)&4))&&(!nextUser||!!(element.compareDocumentPosition(nextUser)&4)));
   const resourceElements=elements.filter(element=>resourceRow(element)&&allowedElement(element));
   // The final downloadable file cards outrank earlier prose links and image attempts.
@@ -59,11 +59,12 @@
    const name=(label.match(/[^\s/\\]+\.(?:jpe?g|png|webp)\b/i)?.[0]||pathname.split('/').at(-1)||'').split(/[?#]/)[0];
    const ext=name.match(/\.(jpe?g|png|webp)$/i)?.[1]?.toLowerCase();if(!ext)continue;
    const target=directTarget(element);const link={element:target||element,href:target?target.getAttribute('href'):href,name,extension:ext,direct:!!target};
-   const match=name.match(/^0*(\d{1,3})(?:[_ .-])/);if(!match){unnumbered.add(name);continue;}
+   const match=name.match(/^0*(\d{1,3})(?:[_ .-])/);if(!match){unnumbered.set(name,link);continue;}
    const index=Number(match[1]);
    if(images.has(index)&&images.get(index).name!==name)throw Error('同一图片编号出现多个不同下载链接，无法确认顺序');
    if(!images.get(index)?.direct||link.direct)images.set(index,link);
   }
+  if(expected===1&&anchor&&images.size===0&&unnumbered.size===1)images.set(1,[...unnumbered.values()][0]);
   const ordered=Array.from({length:expected},(_,i)=>images.get(i+1));
   if(inventory)return {count:images.size,present:images.size+unnumbered.size,complete:images.size===expected&&ordered.every(Boolean),images:ordered.filter(Boolean),signature:[...images].map(([n,r])=>n+':'+r.name+'|'+(r.href||'')).join('\n')};
   if(images.size===expected&&ordered.every(Boolean))return {images:ordered};

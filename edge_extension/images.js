@@ -9,12 +9,12 @@
  function visibleImage(image){
   const r=image.getBoundingClientRect();return image.complete&&image.naturalWidth>0&&r.width>0&&r.height>0&&r.bottom>0&&r.top<(image.ownerDocument.defaultView?.innerHeight||10000);
  }
- function structuralGallery(doc,{expected=8,marker='',allowPartial=false}={}){
+ function structuralGallery(doc,{expected=8,marker='',allowPartial=false,continuations=false}={}){
   const main=globalThis.OzonConversation.main(doc);if(!main)return null;
   let anchor=null;
   if(marker){const walker=doc.createTreeWalker(main,4);let n;while((n=walker.nextNode()))if(n.nodeValue.includes(marker))anchor=n;}
   if(allowPartial&&marker&&!anchor)return null;
-  const nextUser=anchor?globalThis.OzonConversation.userNodes(doc).find(n=>!!(anchor.compareDocumentPosition(n)&4)):null;
+  const nextUser=anchor?globalThis.OzonConversation.nextUser(doc,anchor,{continuations}):null;
   const matches=[];
   for(const button of main.querySelectorAll('button[data-testid="generated-image-preview"]')){
    if(globalThis.OzonConversation.userOwned(button)||anchor&&!(anchor.compareDocumentPosition(button)&4)||nextUser&&!(button.compareDocumentPosition(nextUser)&4))continue;
@@ -31,8 +31,8 @@
   if(matches.length>1)throw Error('当前请求包含多个生成图库，无法确定主图顺序，已暂停');
   return matches[0]||null;
  }
- function gallery(doc,{expected=8,marker='',allowPartial=false}={}){
-  const structural=structuralGallery(doc,{expected,marker,allowPartial});if(structural)return structural;
+ function gallery(doc,{expected=8,marker='',allowPartial=false,continuations=false}={}){
+  const structural=structuralGallery(doc,{expected,marker,allowPartial,continuations});if(structural)return structural;
   const main=globalThis.OzonConversation.main(doc);if(!main)return null;
   const all=[...main.querySelectorAll('img')].filter(i=>visibleImage(i)&&!globalThis.OzonConversation.userOwned(i)&&!i.closest('aside,[role="complementary"],#prompt-textarea'));
   let anchor=null;
@@ -57,7 +57,7 @@
   const bitmap=await createImageBitmap(blob);const canvas=document.createElement('canvas');canvas.width=32;canvas.height=32;const ctx=canvas.getContext('2d');ctx.drawImage(bitmap,0,0,32,32);const pixels=ctx.getImageData(0,0,32,32).data;bitmap.close();
   return {digest,base64,pixels};
  }
- async function readGallery(doc,found,{expected=8,sleep=ms=>new Promise(r=>setTimeout(r,ms)),stopped=()=>false,report=async()=>{},onImage=async()=>{},allowPartial=false}={}){
+ async function readGallery(doc,found,{expected=8,sleep=ms=>new Promise(r=>setTimeout(r,ms)),stopped=()=>false,report=async()=>{},onImage=async()=>{},allowPartial=false,continuations=false}={}){
   const original=found.preview,position=original.getBoundingClientRect(),results=[],hashes=new Set();
   if(found.structural&&found.strip.every(i=>i.naturalWidth>=512&&i.naturalHeight>=512)){
    for(let index=0;index<found.strip.length;index++){
@@ -96,13 +96,13 @@
   if(results.length!==expected){if(allowPartial)return null;throw Error('图库原图数量不完整');}
   return results;
  }
- async function collect(doc,{expected=8,previous=new Set(),before=new Set(),marker='',sleep,stopped,report,onImage=async()=>{},allowPartial=false}={}){
+ async function collect(doc,{expected=8,previous=new Set(),before=new Set(),marker='',sleep,stopped,report,onImage=async()=>{},allowPartial=false,continuations=false}={}){
   if(globalThis.OzonConversation.generating(doc))return null;
-  const inventory=inspect(doc,{expected,marker,allowPartial});
+  const inventory=inspect(doc,{expected,marker,allowPartial,continuations});
   if(inventory.overflow){const error=Error('当前任务生成图片超过'+expected+'张，等待最终编号文件；不会截取前'+expected+'张');error.code='DELIVERY_AMBIGUOUS';throw error;}
-  const found=gallery(doc,{expected,marker,allowPartial});
+  const found=gallery(doc,{expected,marker,allowPartial,continuations});
   if(found)return readGallery(doc,found,{expected,sleep,stopped,report,onImage,allowPartial});
-  const scopes=globalThis.OzonConversation.imageScopes(doc,{before,marker});
+  const scopes=globalThis.OzonConversation.imageScopes(doc,{before,marker,continuations});
   const nodes=[];
   for(const scope of scopes){
    nodes.push(...globalThis.OzonConversation.assistantImages(scope).filter(i=>!previous.has(i.currentSrc||i.src)));

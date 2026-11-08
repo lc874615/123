@@ -9,6 +9,8 @@
    if(task._deliveryNotice!==message||Date.now()-(task._deliveryNoticeAt||0)>5000){task._deliveryNotice=message;task._deliveryNoticeAt=Date.now();await report(message);}
    return null;
   }
+  const region=globalThis.OzonConversation.region(doc,scoped);
+  if(scoped.allowPartial&&scoped.marker&&!region.anchor)return waiting('等待本任务原始作图标记加载；不采集其他商品');
   const foundImages=globalThis.OzonImages.inspect(doc,scoped);
   globalThis.__ozonDeliveryInfo={state:'waiting_final',expected,candidateCount:foundImages.count,generating:globalThis.OzonConversation.generating(doc)};
   if(globalThis.OzonConversation.generating(doc)){
