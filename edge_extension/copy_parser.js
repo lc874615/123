@@ -31,10 +31,13 @@
   const nodes=options.marker?(globalThis.OzonConversation.requestReplies(doc,options.marker)||[]):globalThis.OzonConversation.assistantNodes(doc);
   const ordered=nodes.reverse();
   for(const node of (options.bindLatest?ordered.slice(0,1):ordered)){
+   if(globalThis.OzonConversation.auxiliary(node))continue;
    const prior=options.beforeText?.get(node);
    if(options.before?.has(node)&&(!options.beforeText||prior===(node.innerText||node.textContent||'')))continue;
    const blocks=[node,...node.querySelectorAll('pre,code')];
-   for(const b of blocks){for(const text of [b.innerText,b.textContent]){
+   for(const b of blocks){if(globalThis.OzonConversation.auxiliary(b))continue;let texts=[b.innerText,b.textContent];
+    if(options.assistantOnly&&b.cloneNode){const clean=b.cloneNode(true);for(const n of clean.querySelectorAll('aside,[role="complementary"],[class*="summary-panel"],[class*="summary-card"]'))n.remove();texts=[clean.textContent];}
+    for(const text of texts){
     for(const raw of parseAll(text).reverse()){
      if(options.exclude?.has(JSON.stringify(raw)))continue;
      let v=raw;
@@ -43,7 +46,7 @@
      if(!options.sku||v.sku===options.sku)return v;
     }
    }}
-  }return fromPageText(doc,options);
+  }return options.assistantOnly?null:fromPageText(doc,options);
  }
  function fromPageText(doc,options){
   // Work layouts can render reply text without assistant/markdown attributes.
@@ -80,5 +83,13 @@
  }
  function snapshot(doc=document){const values=new Set();for(const node of globalThis.OzonConversation.assistantNodes(doc)){for(const text of [node.innerText,node.textContent])for(const v of parseAll(text))values.add(JSON.stringify(v));}const main=globalThis.OzonConversation.main(doc);if(main)for(const text of [main.innerText,main.textContent])for(const v of parseAll(text))values.add(JSON.stringify(v));return values;}
 
- globalThis.OzonCopy={parse,parseAll,latest,snapshot,recover};
+ function autoExisting(doc,task){
+  const full=v=>v&&typeof v.title_ru==='string'&&typeof v.description_ru==='string'&&Array.isArray(v.tags_ru)&&Array.isArray(v.missing_facts);
+  if(task.previous_marker){const scoped=latest(doc,{sku:task.sku,marker:task.previous_marker,bindLatest:true,assistantOnly:true});if(full(scoped)&&(!scoped.facts_fingerprint||scoped.facts_fingerprint===task.fingerprint))return {...scoped,facts_fingerprint:task.fingerprint};}
+  const value=latest(doc,{sku:task.sku,assistantOnly:true});if(!full(value))return null;
+  if(value.facts_fingerprint&&value.facts_fingerprint!==task.fingerprint)return null;
+  if(task.needsRefresh&&value.facts_fingerprint!==task.fingerprint)return null;
+  return value;
+ }
+ globalThis.OzonCopy={autoExisting,parse,parseAll,latest,snapshot,recover};
 })();

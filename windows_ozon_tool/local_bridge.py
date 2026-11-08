@@ -40,6 +40,8 @@ class Store:
   self.resume_local_media()
   from image_regeneration import ImageJobs
   self.image_jobs=ImageJobs(self)
+  from asset_reconcile import reconcile
+  with self.lock:reconcile(self)
  def repair_recollection_queue(self):
   # Older backups may have removed the leader's files before setting its recovery flag.
   groups={t.get('copy_leader',t['sku']) for t in self.tasks if t.get('recollection_requested')}
@@ -435,22 +437,23 @@ class Store:
   self.tasks=[t for t in self.tasks if t['id'] not in set(ids)];self.save();return len(selected)
  def sync_shared_copies(self):
   from listing_bundle import copy_complete,share_copy,prepare,copy_hash
-  leaders={t.get('copy_leader',t['sku']) for t in self.tasks if t.get('set_mode')}
+  leaders={t.get('copy_leader',t['sku']) for t in self.tasks if t.get('set_mode') and t['state']!='cancelled'}
   for source in leaders:
    path=self.folder/'products'/source/'listing_bundle.json'
    if not path.exists():continue
    try:leader=json.loads(path.read_text(encoding='utf-8-sig'))
    except (ValueError,OSError):continue
-   if not copy_complete(leader.get('copy')):
+   if not copy_complete(leader.get('copy')) or (leader.get('asset_review') or {}).get('copy'):
+
     for task in self.tasks:
      if task.get('copy_leader',task['sku'])==source and task.get('copy_state')=='done':task.pop('copy_state',None);task['message']='共用文案不完整，等待整组生成并同步'
     continue
    for task in self.tasks:
-    if not task.get('set_mode') or task.get('copy_leader',task['sku'])!=source:continue
+    if not task.get('set_mode') or task.get('state')=='cancelled' or task.get('copy_leader',task['sku'])!=source:continue
     folder=self.folder/'products'/task['sku'];target=folder/'listing_bundle.json'
     try:
      folder.mkdir(parents=True,exist_ok=True)
-     pending_copy={'source':source,'copy':{**leader['copy'],'sku':task['sku']}}
+     pending_copy={'source':source,'copy':{**leader['copy'],'sku':task['sku']},'copy_basis':leader.get('copy_basis')}
      pending_path=folder/'shared_copy.json';pending_tmp=pending_path.with_suffix('.tmp')
      pending_tmp.write_text(json.dumps(pending_copy,ensure_ascii=False,indent=2),encoding='utf-8');pending_tmp.replace(pending_path)
      if not target.exists():
@@ -461,6 +464,9 @@ class Store:
      current=json.loads(target.read_text(encoding='utf-8-sig'))
      if not copy_complete(current.get('copy')) or copy_hash(current['copy'])!=copy_hash(leader['copy']) or current.get('copy_source')!=source:
       share_copy(folder,source,leader['copy'])
+     if leader.get('copy_basis'):
+      current=json.loads(target.read_text(encoding='utf-8-sig'))
+      if current.get('copy_basis')!=leader['copy_basis']:current['copy_basis']=leader['copy_basis'];from pricing_service import write;write(target,current)
      task['copy_source']=source
      if task.get('copy_mode')!='attributes' or task.get('copy_state') not in ('running','needs_attention'):task['copy_state']='done'
      if not task.get('recollection_requested') or task['state']=='saved':task.pop('resume_mode',None)
@@ -488,7 +494,7 @@ class Store:
    if (folder/'listing_bundle.json').exists():
     try:
      latest=json.loads((folder/'listing_bundle.json').read_text(encoding='utf-8-sig'))
-     row['category_match_status']=latest.get('category_match_status','未开始')
+     row['asset_review']=latest.get('asset_review',{});row['asset_validation']=latest.get('asset_validation',{});row['category_match_status']=latest.get('category_match_status','未开始')
      row['pricing_status']=latest.get('pricing_status','未开始')
      row['price_confirmed']=bool(latest.get('pricing_confirmed_fingerprint') and latest.get('pricing_confirmed_fingerprint')==latest.get('pricing_fingerprint'))
      hosted=latest.get('hosting') or {};row['hosting_state']=hosted.get('state','not_configured');row['hosting_verified_images']=hosted.get('verified_images',0);row['video_hosting_state']=(latest.get('video_hosting') or {}).get('state','not_started');row['video_url_set']=bool((latest.get('video') or {}).get('https_url'))
@@ -513,10 +519,14 @@ class Store:
   if complete==len(group):return f'{complete}个变体素材已完成：8图、视频、共用俄语文案；待上架审核'
   return f'素材处理中：已完成{complete}/{len(group)}个变体，等待图片、视频或文案完成'
  def next_copy(self):
+  from asset_reconcile import reconcile
+  reconcile(self)
   self.sync_shared_copies()
   for task in self.tasks:
+   copy_path=self.folder/'products'/task['sku']/'listing_bundle.json'
+   if task.get('set_mode') and task['state']=='saved' and task.get('copy_state')=='done' and not copy_path.exists():task.pop('copy_state',None)
    from reference_prefill import needed
-   if task.get('set_mode') and task['state']=='saved' and task.get('copy_state')=='done' and needed(self,task):
+   if task.get('set_mode') and task['state']=='saved' and task.get('copy_state')=='done' and needed(self,task) and not (json.loads((self.folder/'products'/task['sku']/'listing_bundle.json').read_text(encoding='utf-8-sig')).get('asset_review') or {}).get('copy'):
     task['copy_mode']='attributes';return task
    if task.get('copy_state')=='needs_attention' and task.get('message') in ('未找到可用发送按钮','图片回复尚未结束，文案等待下一次自动继续','上一条回复仍在生成'):
     task.pop('copy_state',None);task['message']='前次文案未发送，等待图片回复结束后自动继续';self.save()
@@ -528,7 +538,8 @@ class Store:
      prepare(folder,task)
     if task.get('copy_leader') and task['copy_leader']!=task['sku']:continue
     bundle=json.loads((folder/'listing_bundle.json').read_text(encoding='utf-8-sig'))
-    if copy_complete(bundle.get('copy')):task['copy_state']='done';self.save();continue
+    if copy_complete(bundle.get('copy')) and not (bundle.get('asset_review') or {}).get('copy'):task['copy_state']='done';self.save();continue
+    task['copy_mode']='copy_refresh' if copy_complete(bundle.get('copy')) else 'copy'
     return task
   return None
  def render_video(self,sku):
@@ -576,7 +587,7 @@ def server(store,token,port=8765):
     body=json.loads(self.rfile.read(n))
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.9','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.10','paired':True}
      elif self.path=='/control':value=store.control
      elif self.path=='/automation-control':value=store.set_paused(bool(body.get('paused')))
      elif self.path=='/pause-ack':
@@ -607,57 +618,29 @@ def server(store,token,port=8765):
      elif self.path=='/task-status':value=store.task_status(body['task_id'])
      elif self.path=='/poll':
       store.client={'last_seen':time.time(),'auto_enabled':bool(body.get('auto_enabled',True))}
+      from asset_reconcile import reconcile
+      reconcile(store)
       active=bool(store.blockers()) or store.control.get('paused',False)
       image_pending=bool(store.image_jobs.next())
       copy_task=store.next_copy() if not active and not image_pending else None
       recovery=store.next_recollection()
       value={'recovery_sku':recovery['sku'] if recovery else None,'ready':not active and (image_pending or any(t['state']=='queued' and t.get('auto_batch') for t in store.tasks)),'copy_sku':copy_task['sku'] if copy_task else None,'blocked_reason':store.queue_reason() if active else None,'blockers':store.blockers(),'summary':store.queue_summary()}
      elif self.path=='/copy-task':
-      sku=body['sku']
-      if not valid_article(sku):raise ValueError('货号格式无效')
-      selected=next((t for t in store.tasks if t['sku']==sku),None)
-      if not selected:raise ValueError('货号不存在')
-      sku=selected.get('copy_leader',sku)
-      group=[t for t in store.tasks if t.get('copy_leader',t['sku'])==sku]
-      context={'group_facts':'\n'.join(t['sku']+'：'+t['facts'] for t in group),'group_variants':[{'sku':t['sku'],'facts':t['facts'],'variant_parameters':t.get('variant_parameters',{})} for t in group]}
-      folder=store.folder/'products'/sku
-      if not (folder/'listing_bundle.json').exists():raise ValueError('请先在本地准备上架草稿')
-      from listing_bundle import copy_prompt_for
-      (folder/'copy_prompt.txt').write_text(copy_prompt_for(context),encoding='utf-8')
-      bundle_path=folder/'listing_bundle.json';bundle=json.loads(bundle_path.read_text(encoding='utf-8-sig'));bundle.update(context)
-      temp=bundle_path.with_suffix('.tmp');temp.write_text(json.dumps(bundle,ensure_ascii=False,indent=2),encoding='utf-8');temp.replace(bundle_path)
-      for task in store.tasks:
-       if task['sku']==sku:task['copy_state']='running'
-      from reference_prefill import build,prompt as attribute_prompt
-      attribute_context,references=build(store,sku,inspect_only=bool(body.get('inspect_only')))
-      store.save()
-      marker='【OZON_COPY:'+secrets.token_hex(12)+'】'
-      value={'id':'copy:'+sku,'sku':sku,'marker':marker,'prompt':marker+'\n'+'本次商品组文案保存货号：'+sku+'。只依据下列当前资料，不得沿用历史商品材质。主体材质与配件/内衬材质分别对应，不得混写，也不要因内衬含纸板就把主体写成纸板。输出JSON必须额外包含sku字段，值为'+sku+'。'+(folder/'copy_prompt.txt').read_text(encoding='utf-8')}
-      owner=next(t for t in store.tasks if t['sku']==sku)
-      if owner.get('copy_mode')=='attributes':value['prompt']=marker+'\n只读取属性，不改写已有文案。仅输出JSON，包含sku字段（值为'+sku+'）和variant_attributes。'
-      value['prompt']+='\n'+attribute_prompt(attribute_context);value['references']=references
+      from copy_pipeline import prepare as prepare_copy
+      value=prepare_copy(store,body)
      elif self.path=='/copy-failed':
       sku=body['sku']
       for task in store.tasks:
-       if task['sku']==sku:task.update(copy_state='needs_attention',message=str(body.get('message','文案保存待处理'))[:300])
+       if task['sku']==sku:
+        message=str(body.get('message','文案保存待处理'))[:300];task.update(copy_state='needs_attention',resume_mode='copy_inspect_only',message=message)
+        if message in ('未找到可用发送按钮','图片回复尚未结束，文案等待下一次自动继续','上一条回复仍在生成','未找到输入框'):task['copy_phase']='inspecting'
       store.save();value={'ok':True}
      elif self.path=='/copy-result':
-      from listing_bundle import save_copy
-      sku=body['sku']
-      if not valid_article(sku):raise ValueError('货号格式无效')
-      owner=next(t for t in store.tasks if t['sku']==sku)
-      if owner.get('copy_mode')=='attributes':
-       if body['copy'].get('sku')!=sku:raise ValueError('属性结果货号与当前任务不一致')
-       value={'ok':True}
-      else:value=save_copy(store.folder/'products'/sku,{k:v for k,v in body['copy'].items() if k!='variant_attributes'})
-      from reference_prefill import save as save_attributes
-      save_attributes(store,sku,body['copy']);owner.pop('copy_mode',None)
-      store.sync_shared_copies()
-      from category_match import suggest
-      threading.Thread(target=suggest,args=(store.folder/'products'/sku,),kwargs={'lock':store.lock},daemon=True).start()
-      for task in store.tasks:
-       if task['sku']==sku:task.update(copy_state='done',message='8图、视频、俄文文案及草稿已完成；待定价、类目和托管' if task.get('video') else '最终图片及共用俄语文案已保存；视频并行处理中')
-      store.save()
+      from copy_pipeline import save as save_pipeline_copy
+      value=save_pipeline_copy(store,body)
+      if next(t for t in store.tasks if t['sku']==body['sku']).get('copy_mode')!='attributes':
+       from category_match import suggest
+       threading.Thread(target=suggest,args=(store.folder/'products'/body['sku'],),kwargs={'lock':store.lock},daemon=True).start()
      elif self.path=='/recover':value=store.image_jobs.recover(body['task_id']) if body.get('task_id') and store.image_jobs.get(body['task_id']) else store.recover(body['sku'],automatic=bool(body.get('automatic')))
      elif self.path=='/claim':value=store.claim()
      elif self.path=='/set-result':value=store.set_result(body['task_id'],body['index'],body['image_b64'])

@@ -6,6 +6,14 @@ COPY=VISUAL|{'net_weight','pack_length','pack_width','pack_height','pack_weight'
 
 def canonical(key,value):
  text=str(value or '').strip().casefold()
+ if key=='color' and not any(s in text for s in ('座面','椅腿','框架',':','：')):
+  from prefill_rules import color_values
+  colors=color_values(text)
+  if colors:return ','.join(sorted(c.casefold().replace('ё','е') for c in colors))
+ if key in ('material','accessory_material','assembly'):
+  from prefill_rules import translate
+  translated=translate(text)
+  if translated:text=translated.casefold().replace('ё','е')
  if key in ('quantity','length','width','height','net_weight','pack_length','pack_width','pack_height','pack_weight'):
   try:return str(Decimal(text).normalize())
   except InvalidOperation:return text

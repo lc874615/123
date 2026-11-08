@@ -16,7 +16,7 @@
   const nextUser=anchor?globalThis.OzonConversation.nextUser(doc,anchor,{continuations}):null;
   const matches=[];
   for(const button of main.querySelectorAll('button[data-testid="generated-image-preview"]')){
-   if(globalThis.OzonConversation.userOwned(button)||anchor&&!(anchor.compareDocumentPosition(button)&4)||nextUser&&!(button.compareDocumentPosition(nextUser)&4))continue;
+   if(globalThis.OzonConversation.userOwned(button)||globalThis.OzonConversation.auxiliary(button)||anchor&&!(anchor.compareDocumentPosition(button)&4)||nextUser&&!(button.compareDocumentPosition(nextUser)&4))continue;
    const preview=button.querySelector('img');if(!preview)continue;
    if(expected===1&&preview.complete&&preview.naturalWidth>=512&&preview.naturalHeight>=512){matches.push({preview,strip:[preview],structural:true});continue;}
    for(let root=button.parentElement;root&&root!==main;root=root.parentElement){
@@ -33,7 +33,7 @@
  function gallery(doc,{expected=8,marker='',allowPartial=false,continuations=false}={}){
   const structural=structuralGallery(doc,{expected,marker,allowPartial,continuations});if(structural)return structural;
   const main=globalThis.OzonConversation.main(doc);if(!main)return null;
-  const all=[...main.querySelectorAll('img')].filter(i=>visibleImage(i)&&!globalThis.OzonConversation.userOwned(i)&&!i.closest('aside,[role="complementary"],#prompt-textarea'));
+  const all=[...main.querySelectorAll('img')].filter(i=>visibleImage(i)&&!globalThis.OzonConversation.userOwned(i)&&!globalThis.OzonConversation.auxiliary(i)&&!i.closest('aside,[role="complementary"],#prompt-textarea'));
   const anchor=globalThis.OzonConversation.requestAnchor(doc,marker);
   if(allowPartial&&marker&&!anchor)return null;
   const images=anchor?all.filter(i=>!!(anchor.compareDocumentPosition(i)&4)):all;
@@ -125,10 +125,10 @@
  function inspect(doc,options={}){
   const scope=globalThis.OzonConversation.region(doc,options),expected=options.expected||8;
   if(!scope.root)return {count:0,overflow:false,signature:''};
-  const images=[...scope.root.querySelectorAll('img')].filter(scope.includes);
+  const images=[...scope.root.querySelectorAll('img')].filter(i=>scope.includes(i)&&!globalThis.OzonConversation.auxiliary(i));
   let count=0;
   for(const strip of scope.root.querySelectorAll('[class*="vertical-scroll-fade-mask"]')){
-   const thumbs=[...strip.querySelectorAll('button img')].filter(scope.includes);count=Math.max(count,thumbs.length);
+   const thumbs=[...strip.querySelectorAll('button img')].filter(i=>scope.includes(i)&&!globalThis.OzonConversation.auxiliary(i));count=Math.max(count,thumbs.length);
   }
   for(const preview of images){
    const p=preview.getBoundingClientRect();if(p.width<240||p.height<280)continue;

@@ -251,9 +251,11 @@ class GroupService:
    with self.lock:
     bundles=[read(p) for p in self.paths];self._check(bundles,expected)
     from tag_rules import normalize_tags,is_tag_field
+    from asset_reconcile import copy_basis
+    fingerprint=copy_basis(bundles)
     value={**value,'tags_ru':normalize_tags(value.get('tags_ru'))}
     for b in bundles:
-     b['copy']={**copy.deepcopy(value),'sku':b['sku']};self._invalidate(b)
+     b['copy']={**copy.deepcopy(value),'sku':b['sku']};b['copy_basis']=fingerprint;self._invalidate(b)
      if b.get('asset_review'):b['asset_review']['copy']=False
      state=b.get('attribute_draft') or {}
      for field in state.get('fields',[]):

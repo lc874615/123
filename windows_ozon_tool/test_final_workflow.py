@@ -85,7 +85,7 @@ class FinalWorkflowTests(unittest.TestCase):
    g,a,p=fixtures.GroupTests().setup_group(tmp);sku=g.load()[0]['sku'];tasks=g.paths[0].parent.parent.parent/'tasks.json';write(tasks,[{'sku':sku,'state':'saved'}]);job=p.begin(g,g.token());write(tasks,[]);result=p.step(job['id']);self.assertEqual(result['state'],'cancelled_followup');self.assertFalse(any(x=='/v2/products/stocks' for x,b in a.calls))
  def test_stage_uses_publication_not_stale_image_message(self):
   task={'sku':'A','state':'saved','message':'待上架审核'};job={'state':'on_sale','items':{'A':{'on_sale':True}}};self.assertEqual(stage(task,{},[job]),'已上架');self.assertEqual(group_summary(['已上架','需修改：标签错误']),'已上架 1/2 · 需处理 1')
-  self.assertEqual(stage(task,{'asset_review':{'main':True}},[job]),'素材待更新（手动启动）')
+  self.assertEqual(stage(task,{'asset_review':{'main':True}},[job]),'图片待核对：外观参数已变化')
  def test_long_wait_is_attention_not_automatic_reimport(self):
   with tempfile.TemporaryDirectory() as tmp:
    g,a,p=fixtures.GroupTests().setup_group(tmp);job=p.begin(g,g.token());job['last_progress_at']=time.time()-1000;p._save(job);self.assertTrue(read(p.root/(job['id']+'.json'))['needs_attention']);self.assertEqual(sum(x=='/v3/product/import' for x,b in a.calls),1)

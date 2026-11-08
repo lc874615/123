@@ -9,7 +9,10 @@ def stage(task,bundle,jobs):
   if task.get('state')=='waiting':return '自动采集已有图片：'+task.get('message','正在定位并下载')
   if task.get('resume_mode')=='inspect_only':return '等待自动定位原始图片（无需操作插件）'
  offer=task['sku'];job=next((j for j in jobs if offer in j.get('items',{})),None)
- if pending(bundle):return '素材待更新（手动启动）'
+ if pending(bundle):
+  review=bundle.get('asset_review') or {};validation=bundle.get('asset_validation') or {}
+  if review.get('main') or review.get('gallery') or bundle.get('regeneration_pending'):return '图片待核对：'+'、'.join(validation.get('main_changes',[])+validation.get('gallery_changes',[])) if validation.get('main_changes') or validation.get('gallery_changes') else '图片待核对：外观参数已变化'
+  return '整组文案待自动采集/更新'
  if job:
   item=job['items'][offer];state=job['state']
   if item.get('on_sale'):return '已上架'
@@ -33,7 +36,7 @@ def stage(task,bundle,jobs):
  return '待预览提交'
 
 def group_summary(stages):
- total=len(stages);done=sum(x=='已上架' for x in stages);issues=sum(x.startswith(('需','素材待')) for x in stages)
+ total=len(stages);done=sum(x=='已上架' for x in stages);issues=sum(x.startswith(('需','素材待','图片待核对')) for x in stages)
  if done==total and total:return '整组已上架'
  if done:return f'已上架 {done}/{total}'+(f' · 需处理 {issues}' if issues else ' · 其余处理中')
  if issues:return f'需处理 {issues}/{total}'

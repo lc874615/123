@@ -27,11 +27,11 @@ test('alarm restores SKU and finishes copy after background suspension without r
  await vm.runInNewContext('poll()',ctx);assert.equal(state.activeTask.sku,'GROUP(1)');
  const restarted={...ctx};vm.runInNewContext(fs.readFileSync(__dirname+'/background.js','utf8'),restarted);
  await vm.runInNewContext('poll()',restarted);
- assert.equal(state.activeTask,undefined);assert.match(state.status,/自动保存/);const saved=bodies.filter(([u])=>u.endsWith('/copy-result'));assert.equal(saved.length,1);assert.equal(saved[0][1].sku,'GROUP(1)');assert.ok(!bodies.some(([u])=>u.endsWith('/copy-task')));
+ assert.equal(state.activeTask,undefined);assert.match(state.status,/同步保存到全部变体/);const saved=bodies.filter(([u])=>u.endsWith('/copy-result'));assert.equal(saved.length,1);assert.equal(saved[0][1].sku,'GROUP(1)');assert.ok(!bodies.some(([u])=>u.endsWith('/copy-task')));
 });
 test('obsolete persisted image task is reconciled before claiming one queued task',async()=>{
  const state={pairToken:'test',autoEnabled:true,autoTab:3,activeTask:{id:'DELETED',sku:'OLD',tabId:3}},calls=[],sent=[];
- const chrome={storage:{local:{get:async()=>structuredClone(state),set:async x=>Object.assign(state,structuredClone(x)),remove:async k=>delete state[k]}},runtime:{onMessage:{addListener:()=>{}}},alarms:{onAlarm:{addListener:()=>{}}},scripting:{executeScript:async()=>{}},tabs:{get:async()=>({id:3,url:'https://chatgpt.com/c/test'}),sendMessage:async(id,m)=>{sent.push(m.kind);return m.kind==='preflight'?{ready:true,version:'1.0.9'}:{ok:true};}}};
+ const chrome={storage:{local:{get:async()=>structuredClone(state),set:async x=>Object.assign(state,structuredClone(x)),remove:async k=>delete state[k]}},runtime:{onMessage:{addListener:()=>{}}},alarms:{onAlarm:{addListener:()=>{}}},scripting:{executeScript:async()=>{}},tabs:{get:async()=>({id:3,url:'https://chatgpt.com/c/test'}),sendMessage:async(id,m)=>{sent.push(m.kind);return m.kind==='preflight'?{ready:true,version:'1.0.10'}:{ok:true};}}};
  const ctx={chrome,setTimeout,clearTimeout,AbortSignal,URL,fetch:async(url,options)=>{calls.push(url);let value={ok:true};if(url.endsWith('/task-status'))value={found:false};if(url.endsWith('/poll'))value={ready:true};if(url.endsWith('/claim'))value={id:'NEW_TASK',sku:'NEW'};return {ok:true,json:async()=>value};}};
  vm.runInNewContext(fs.readFileSync(__dirname+'/background.js','utf8'),ctx);await vm.runInNewContext('poll()',ctx);
  assert.equal(state.activeTask.id,'NEW_TASK');assert.deepEqual(sent,['preflight','start']);assert.equal(calls.filter(x=>x.endsWith('/claim')).length,1);
@@ -53,7 +53,7 @@ test('download capture renames only the intended service file and cleans listene
 });
 test('manual recovery and diagnostics use the bound work tab even when popup opens elsewhere',async()=>{
  let listener;const state={pairToken:'test',autoTab:7,autoEnabled:false};const injected=[],sent=[];
- const chrome={storage:{local:{get:async()=>structuredClone(state),set:async x=>Object.assign(state,structuredClone(x)),remove:async k=>delete state[k]}},runtime:{onMessage:{addListener:f=>listener=f}},alarms:{onAlarm:{addListener:()=>{}}},tabs:{get:async id=>({id,url:'https://chatgpt.com/c/'+id,title:id===7?'生成8张Ozon商品图':'工具沟通'}),sendMessage:async(id,m)=>{sent.push([id,m.kind]);return {ok:true};}},scripting:{executeScript:async args=>{injected.push(args.target.tabId);return args.func?[{result:{version:'1.0.9'}}]:[];}}};
+ const chrome={storage:{local:{get:async()=>structuredClone(state),set:async x=>Object.assign(state,structuredClone(x)),remove:async k=>delete state[k]}},runtime:{onMessage:{addListener:f=>listener=f}},alarms:{onAlarm:{addListener:()=>{}}},tabs:{get:async id=>({id,url:'https://chatgpt.com/c/'+id,title:id===7?'生成8张Ozon商品图':'工具沟通'}),sendMessage:async(id,m)=>{sent.push([id,m.kind]);return {ok:true};}},scripting:{executeScript:async args=>{injected.push(args.target.tabId);return args.func?[{result:{version:'1.0.10'}}]:[];}}};
  const ctx={chrome,setTimeout,clearTimeout,AbortSignal,URL,fetch:async(url)=>({ok:true,json:async()=>url.endsWith('/recover')?{id:'TASK',sku:'GROUP(1)'}:{blockers:[]}})};
  vm.runInNewContext(fs.readFileSync(__dirname+'/background.js','utf8'),ctx);
  const call=message=>new Promise(resolve=>listener(message,{},resolve));
@@ -76,7 +76,7 @@ test('stop clears extension activity even when the local notification fails',asy
 
 function finalHarness({state={},responses={},send,virtualTimers=false}={}){
  const data={pairToken:'test',autoEnabled:true,autoTab:3,...state},calls=[],sent=[],timers=[];let startup,listener;
- const chrome={storage:{local:{get:async()=>structuredClone(data),set:async x=>Object.assign(data,structuredClone(x)),remove:async k=>delete data[k]}},runtime:{onMessage:{addListener:f=>listener=f},onStartup:{addListener:f=>startup=f}},alarms:{create:async()=>{},onAlarm:{addListener:()=>{}}},tabs:{get:async()=>({id:3,url:'https://chatgpt.com/c/test'}),query:async()=>[],sendMessage:async(id,m)=>{sent.push(m);return send?send(m):m.kind==='preflight'?{ready:true,version:'1.0.9'}:{ok:true};}},scripting:{executeScript:async()=>{}}};
+ const chrome={storage:{local:{get:async()=>structuredClone(data),set:async x=>Object.assign(data,structuredClone(x)),remove:async k=>delete data[k]}},runtime:{onMessage:{addListener:f=>listener=f},onStartup:{addListener:f=>startup=f}},alarms:{create:async()=>{},onAlarm:{addListener:()=>{}}},tabs:{get:async()=>({id:3,url:'https://chatgpt.com/c/test'}),query:async()=>[],sendMessage:async(id,m)=>{sent.push(m);return send?send(m):m.kind==='preflight'?{ready:true,version:'1.0.10'}:{ok:true};}},scripting:{executeScript:async()=>{}}};
  const ctx={chrome,setTimeout:virtualTimers?(fn,ms)=>{timers.push({fn,ms});return timers.length;}:setTimeout,clearTimeout,AbortSignal,URL,fetch:async(url,o)=>{const p=new URL(url).pathname;calls.push([p,JSON.parse(o.body)]);const value=typeof responses[p]==='function'?responses[p](JSON.parse(o.body)):responses[p];return {ok:true,json:async()=>value??(p==='/control'?{serial:0,paused:false}:{})};}};
  vm.runInNewContext(fs.readFileSync(__dirname+'/background.js','utf8'),ctx);return {data,calls,sent,timers,ctx,startup:()=>startup?.(),call:(m,sender={})=>new Promise(resolve=>listener(m,sender,resolve))};
 }
@@ -107,11 +107,11 @@ test('final image completion schedules the pipeline and starts shared copy exact
  const result=await h.call({kind:'set-result',task_id:'IMAGE',index:7,image_b64:'fixture'},{tab:{id:3}});
  assert.equal(result.ok,true);assert.equal(h.data.activeTask,undefined);assert.ok(h.timers.some(t=>t.ms===1500));
  await vm.runInNewContext('poll()',h.ctx);
- assert.equal(h.calls.filter(([p])=>p==='/copy-task').length,1);assert.equal(h.sent.filter(m=>m.kind==='copy').length,1);assert.equal(h.data.activeTask.id,'copy:GROUP(1)');
+ assert.equal(h.calls.filter(([p,b])=>p==='/copy-task'&&b.prepare_only).length,1);assert.equal(h.calls.filter(([p,b])=>p==='/copy-task'&&!b.prepare_only).length,1);assert.equal(h.sent.filter(m=>m.kind==='copy-extract-auto').length,1);assert.equal(h.sent.filter(m=>m.kind==='copy').length,1);assert.equal(h.data.activeTask.id,'copy:GROUP(1)');
 });
 test('a still-generating page delays copy without marking it failed or disabling automation',async()=>{
  let generating=true;
- const h=finalHarness({virtualTimers:true,responses:{'/poll':{copy_sku:'GROUP(1)'},'/copy-task':{id:'copy:GROUP(1)',sku:'GROUP(1)'}},send:m=>m.kind==='preflight'?{version:'1.0.9',ready:!generating,generating}:{ok:true}});
+ const h=finalHarness({virtualTimers:true,responses:{'/poll':{copy_sku:'GROUP(1)'},'/copy-task':{id:'copy:GROUP(1)',sku:'GROUP(1)'}},send:m=>m.kind==='preflight'?{version:'1.0.10',ready:!generating,generating}:{ok:true}});
  await vm.runInNewContext('poll()',h.ctx);assert.ok(!h.calls.some(([p])=>p==='/copy-task'||p==='/copy-failed'));assert.equal(h.data.autoEnabled,true);assert.ok(h.timers.some(t=>t.ms===3000));
  generating=false;await vm.runInNewContext('poll()',h.ctx);assert.equal(h.sent.filter(m=>m.kind==='copy').length,1);
 });
@@ -125,7 +125,7 @@ test('local backup command resumes every existing image task through read-only r
 });
 test('refreshing the work page resumes the active local recollection automatically',async()=>{
  const state={pairToken:'test',autoEnabled:true,autoTab:7,controlSerial:5,activeTask:{id:'LEADER',sku:'GROUP(1)',tabId:7}},sent=[],bodies=[];
- const chrome={storage:{local:{get:async()=>structuredClone(state),set:async x=>Object.assign(state,structuredClone(x)),remove:async k=>delete state[k]}},runtime:{onMessage:{addListener:()=>{}}},alarms:{onAlarm:{addListener:()=>{}}},scripting:{executeScript:async()=>{}},tabs:{get:async()=>({id:7,url:'https://chatgpt.com/c/work'}),sendMessage:async(id,m)=>{sent.push(m.kind);return m.kind==='preflight'?{version:'1.0.9',imageTaskId:null,ready:false}:{ok:true};}}};
+ const chrome={storage:{local:{get:async()=>structuredClone(state),set:async x=>Object.assign(state,structuredClone(x)),remove:async k=>delete state[k]}},runtime:{onMessage:{addListener:()=>{}}},alarms:{onAlarm:{addListener:()=>{}}},scripting:{executeScript:async()=>{}},tabs:{get:async()=>({id:7,url:'https://chatgpt.com/c/work'}),sendMessage:async(id,m)=>{sent.push(m.kind);return m.kind==='preflight'?{version:'1.0.10',imageTaskId:null,ready:false}:{ok:true};}}};
  const ctx={chrome,setTimeout,clearTimeout,AbortSignal,URL,fetch:async(url,opts)=>{const body=JSON.parse(opts.body);bodies.push([url,body]);let r={};if(url.endsWith('/control'))r={serial:5,paused:false};if(url.endsWith('/task-status'))r={found:true,id:'LEADER',sku:'GROUP(1)',state:'waiting',recollection_requested:true};if(url.endsWith('/recover'))r={id:'LEADER',sku:'GROUP(1)',automaticRecovery:true};return {ok:true,json:async()=>r};}};
  vm.runInNewContext(fs.readFileSync(__dirname+'/background.js','utf8'),ctx);await vm.runInNewContext('poll()',ctx);assert.deepEqual(sent,['preflight','recover']);assert.equal(bodies.find(([u])=>u.endsWith('/recover'))[1].automatic,true);assert.equal(state.activeTask.automaticRecovery,true);assert.ok(!bodies.some(([u])=>u.endsWith('/claim')));
 });

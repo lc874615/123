@@ -12,9 +12,14 @@ def main():
    store.create_set('FIXTURE('+str(i)+')','synthetic chair')
    t=store.tasks[-1];t.update(base_article='FIXTURE',variant_index=i,state='needs_attention',variant_parameters={'name':'椅子','material':'金属'},copy_state='done')
   configure(store.tasks,'FIXTURE')
+  copy_mode=os.environ.get('OZON_TEST_COPY')
+  if copy_mode:
+   import category_match
+   category_match.suggest=lambda *a,**k:None
   for t in store.tasks:
    p=Path(tmp)/'products'/t['sku'];p.mkdir(parents=True,exist_ok=True)
    bundle={'sku':t['sku'],'offer_id':t['sku'],'copy':{'sku':t['sku'],'title_ru':'Стул','description_ru':'Стул из металла','tags_ru':['#стул'],'missing_facts':[]},'copy_source':'FIXTURE(1)','variant_parameters':t['variant_parameters'],'category':{'confirmed':True},'price_cny':'200','images':[],'blockers':[]}
+   if copy_mode:bundle.update(copy={'sku':t['sku'],'title_ru':None,'description_ru':None,'tags_ru':[]},asset_basis=t['variant_parameters'],gallery_basis=t['group_variants'],asset_review={'main':True,'gallery':True,'copy':True,'fields':['color']})
    write(p/'recovery_backups'/'old'/'listing_bundle.json',bundle)
    if os.environ.get('OZON_TEST_HISTORY')=='1' and t['variant_index']==1:write(p/'regeneration_backups'/'old'/'task.json',{**t,'id':'HISTORICAL-LEADER'})
    if t['variant_index']!=1:write(p/'listing_bundle.json',bundle);t.update(recollection_requested=True,resume_mode='inspect_only')
@@ -30,7 +35,7 @@ def main():
     from pricing_service import read
     rows=[]
     for t in store.tasks:
-     bundle=read(Path(tmp)/'products'/t['sku']/'listing_bundle.json');rows.append({'sku':t['sku'],'state':t['state'],'count':len(t.get('received_images',[])),'digests':[r['sha256'] for r in t.get('received_images',[])],'title':bundle['copy']['title_ru'],'price':bundle['price_cny']})
+     bundle=read(Path(tmp)/'products'/t['sku']/'listing_bundle.json');rows.append({'sku':t['sku'],'state':t['state'],'count':len(t.get('received_images',[])),'digests':[r['sha256'] for r in t.get('received_images',[])],'title':bundle['copy']['title_ru'],'price':bundle['price_cny'],'copy_complete':__import__('listing_bundle').copy_complete(bundle.get('copy')),'asset_pending':__import__('asset_state').pending(bundle),'copy_basis':bundle.get('copy_basis')})
     print(json.dumps({'rows':rows}),flush=True)
    elif command.strip()=='quit':break
   http.shutdown();http.server_close()

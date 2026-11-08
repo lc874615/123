@@ -20,7 +20,7 @@
   await globalThis.OzonFiles.expandFiles(doc,scoped);
   const files=globalThis.OzonFiles.candidates(doc,{...scoped,inventory:true});
   globalThis.__ozonDeliveryInfo.fileCount=files?.count||0;
-  if(files?.present&&!files.complete){task._deliveryStable=null;return waiting('最终文件已出现，已识别编号'+files.count+'/'+expected+'；等待完整且唯一的文件列表，不改用前面的过程图');}
+  if(files?.present&&!files.complete){task._deliveryStable=null;return waiting(expected===1?'本任务只需1张主图，但识别到'+(files.candidateTotal||files.count)+'个文件候选，正在核对对应回复，不猜取其他变体图片':'最终文件已出现，已识别编号'+files.count+'/'+expected+'；等待完整且唯一的文件列表，不改用前面的过程图');}
   if(!files?.complete&&foundImages.overflow){task._deliveryStable=null;return waiting('生成图超过'+expected+'张；等待最终01—'+String(expected).padStart(2,'0')+'编号文件，不截取前'+expected+'张');}
   const main=globalThis.OzonConversation.main(doc);
   const signature=(files?.complete?'files:'+files.signature:'gallery:'+foundImages.signature)+'|'+(main?.innerText||main?.textContent||'');

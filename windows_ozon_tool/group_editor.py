@@ -17,7 +17,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  coordinator=GroupService(paths,service,pricing,store)
  coordinator.ensure_fixed_vat()
  if publication.initial_stock is not None and not publication.active([p.parent.name for p in paths]):coordinator.ensure_initial_stock(publication.initial_stock)
- dialog=tk.Toplevel(root);dialog.title('整组预览 · Ozon 商品自动化 1.0.9');dialog.geometry('1280x850');dialog.minsize(950,650)
+ dialog=tk.Toplevel(root);dialog.title('整组预览 · Ozon 商品自动化 1.0.10');dialog.geometry('1280x850');dialog.minsize(950,650)
  busy=False;selected=set(range(len(paths)));focus=['',''];bundles=[];token=None;rendered=None;warehouses={};photos=[];rows={};last_job=None;copy_dirty=False;displayed_copy=None;copy_timer=None;busy_since=0;operation_error='';operation_name=''
  ttk.Label(dialog,text='每列一个变体；双击单格修改，点击参数名选中整行后批量修改。仓库显示当前店铺全部类型和状态。',wraplength=900).pack(pady=6)
  status=ttk.Label(dialog,text='正在加载整组预览',wraplength=1200);status.pack(pady=3)
@@ -133,9 +133,10 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    if busy:status.configure(text=status.cget('text')+' | 正在'+coordinator.status+'（已用'+str(int(time.monotonic()-busy_since))+'秒）'+(' | '+service.status if '官方属性' in coordinator.status else ''))
    if operation_error:status.configure(text='处理未完成：'+operation_error[:220]+' | 详见提交与上架进度页')
    from asset_state import pending
-   changed=[b['sku'] for b in bundles if pending(b)]
+   changed=[b['sku'] for b in bundles if b.get('regeneration_pending') or any((b.get('asset_review') or {}).get(k) for k in ('main','gallery'))]
    if any(b.get('image_regeneration_jobs') for b in bundles):status.configure(text='图片重做已排队或正在采集；进度见图片视频页，无需重新提交上架。')
-   elif changed:status.configure(text='素材待更新：'+'、'.join(changed)+'。仅提示，不自动重作；请在任务中心手动更新素材。')
+   elif changed:status.configure(text='图片待核对：'+'、'.join(changed)+'；变化项见图片视频页。确认图片无误可整组沿用并继续。')
+   elif any((b.get('asset_review') or {}).get('copy') for b in bundles):status.configure(text='图片已校验，整组文案自动采集或补全后同步全部变体。')
    if copy_dirty:status.configure(text=status.cget('text')+' | 共用文案尚未保存')
    submit_button.configure(state='disabled' if busy else 'normal',text='查看当前提交进度' if job else '提交上架');update_button.configure(state='disabled' if busy or job else 'normal');progress_refresh()
    blocker.configure(text=('当前按钮暂不可用：'+coordinator.status+'，已用'+str(int(time.monotonic()-busy_since))+'秒' if busy else '共用文案尚未保存' if copy_dirty else '已有上架任务：点击右侧按钮查看进度，系统不会重复提交' if job else operation_error or ''))
@@ -431,8 +432,15 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
     if time.time()>deadline:raise ValueError('插件停止回执尚未到达，备份与当前图片保留，请保持插件连接')
     time.sleep(.5)
   run(action,lambda count:footer_note.configure(text='已停止 '+str(count)+' 个图片重做任务；原图与备份保留。'),label='停止本组图片重做')
+ def accept_images():
+  if not editable():return
+  def action():
+   from asset_reconcile import reconcile
+   with store.lock:
+    owner=next(t for t in store.tasks if t['sku']==bundles[0]['sku']);count=reconcile(store,accept_group=owner.get('copy_leader',owner['sku']));store.set_paused(False);return count
+  run(action,lambda count:footer_note.configure(text='已沿用本组校验图片，自动继续文案和素材处理；未提交上架。'),label='沿用已检查的整组图片')
  from media_regeneration_ui import build as build_regeneration
- regen_ui=build_regeneration(media_body,lambda:bundles,store,queue_images,stop_images)
+ regen_ui=build_regeneration(media_body,lambda:bundles,store,queue_images,stop_images,accept_images)
  more_menu.add_command(label='刷新图片视频预览',command=media_refresh)
  progress=ttk.Treeview(progress_tab,columns=('offer','warehouse','quantity','state','errors'),show='headings',height=12)
  for key,label,width in [('offer','货号',180),('warehouse','目标仓库',200),('quantity','目标库存 / 当前可用',160),('state','上架阶段',250),('errors','平台结果 / 错误',350)]:progress.heading(key,text=label);progress.column(key,width=width,anchor='center')

@@ -39,10 +39,11 @@ def prepare(folder,task):
   shared=json.loads(pending.read_text(encoding='utf-8-sig'))
   if copy_complete(shared.get('copy')) and shared['copy'].get('sku')==task['sku']:
    bundle.update(copy=shared['copy'],copy_source=shared.get('source'),copy_shared_hash=copy_hash(shared['copy']))
+   if shared.get('copy_basis') or shared['copy'].get('facts_fingerprint'):bundle['copy_basis']=shared.get('copy_basis') or shared['copy']['facts_fingerprint']
    bundle['blockers'].remove('俄文文案待生成')
  target.write_text(json.dumps(bundle,ensure_ascii=False,indent=2),encoding='utf-8');return target
 
-def save_copy(folder,value):
+def save_copy(folder,value,replace=False):
  folder=Path(folder);target=folder/'listing_bundle.json'
  data=json.loads(target.read_text(encoding='utf-8-sig'))
  for key in ('title_ru','description_ru'):
@@ -54,11 +55,10 @@ def save_copy(folder,value):
  from material_guard import validate,conflict
  validate(data,value)
  value=dict(value);value['tags_ru']=normalize_tags(value['tags_ru']);value['missing_facts']=[x for x in value['missing_facts'] if x.strip().lower() not in ('бренд','brand','品牌')]
- if data['copy']==value:return {'saved':True,'review_status':data.get('copy_review_status','pending_human_review')}
- if data['copy'].get('title_ru'):
+ if data['copy'].get('title_ru') and (copy_hash(data['copy'])!=copy_hash(value) or data['copy'].get('missing_facts')!=value.get('missing_facts')):
   old=data['copy'];oldtext=(old.get('title_ru','')+' '+old.get('description_ru','')).lower()
-  if not conflict(data,old):raise ValueError('文案已有内容，不自动覆盖')
-  backup=folder/'copy_before_material_fix.json'
+  if not replace and not conflict(data,old):raise ValueError('文案已有内容，不自动覆盖')
+  backup=folder/('copy_before_refresh_'+__import__('secrets').token_hex(6)+'.json') if replace else folder/'copy_before_material_fix.json'
   if not backup.exists():backup.write_text(json.dumps(old,ensure_ascii=False,indent=2),encoding='utf-8')
  data['copy']=value
  if data.get('asset_review'):data['asset_review']['copy']=False
@@ -81,6 +81,7 @@ def share_copy(folder,source,value):
   backup=folder/('copy_before_shared_sync_'+secrets.token_hex(6)+'.json');backup.write_text(json.dumps(old,ensure_ascii=False,indent=2),encoding='utf-8')
  if data.get('asset_review'):data['asset_review']['copy']=False
  data.update(copy=expected,copy_source=source,copy_shared_hash=copy_hash(value),copy_review_status='pending_human_review')
+ if value.get('facts_fingerprint'):data['copy_basis']=value['facts_fingerprint']
  data['blockers']=[b for b in data.get('blockers',[]) if b!='俄文文案待生成']
  tmp=target.with_suffix('.tmp');tmp.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding='utf-8');tmp.replace(target)
  return data

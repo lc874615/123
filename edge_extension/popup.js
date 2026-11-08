@@ -10,7 +10,7 @@ document.querySelector('#recover').onclick=async()=>{const [tab]=await chrome.ta
 
 document.querySelector('#copy').onclick=async()=>{const [tab]=await chrome.tabs.query({active:true,currentWindow:true});const r=await chrome.runtime.sendMessage({kind:'copy',tabId:tab.id,sku:document.querySelector('#sku').value.trim()});status.textContent=r.error||r.status;};
 
-document.querySelector('#copy-recover').onclick=async()=>{
+const legacyCopyRecover=document.querySelector('#copy-recover');if(legacyCopyRecover)legacyCopyRecover.onclick=async()=>{
  const button=document.querySelector('#copy-recover');button.disabled=true;status.textContent='正在读取并保存现有文案…';
  let timer;
  try{const [tab]=await chrome.tabs.query({active:true,currentWindow:true});

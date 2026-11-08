@@ -60,8 +60,9 @@
   }
   return roots;
  }
+ function auxiliary(node){return !!node.closest?.('aside,[role="complementary"],[class*="summary-panel"],[class*="summary-card"]');}
  function assistantImages(root){
-  return [...root.querySelectorAll('img')].filter(i=>!userOwned(i)&&!i.closest?.('aside,[role="complementary"],#prompt-textarea'));
+  return [...root.querySelectorAll('img')].filter(i=>!userOwned(i)&&!auxiliary(i)&&!i.closest?.('#prompt-textarea'));
  }
  function generating(doc){
   return !!doc.querySelector('[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop streaming"],button[aria-label="停止生成"],button[aria-label="停止流式传输"],main [data-is-streaming="true"],[role="main"] [data-is-streaming="true"]');
@@ -131,6 +132,6 @@
   globalThis.__ozonRecoveryInfo.phase='not_found';
   return false;
  }
- globalThis.OzonConversation={requestAnchor,nextUser,revealRequest,assistantNodes,assistantImages,userOwned,imageScopes,requestReplies,main,contentRoots,userNodes,generating,region};
+ globalThis.OzonConversation={auxiliary,requestAnchor,nextUser,revealRequest,assistantNodes,assistantImages,userOwned,imageScopes,requestReplies,main,contentRoots,userNodes,generating,region};
  if(typeof module!=='undefined')module.exports=globalThis.OzonConversation;
 })();

@@ -4,7 +4,7 @@ import os
 def build(root):
  import tkinter as tk
  from tkinter import ttk
- root.title('Ozon 商品自动化 · 1.0.9');root.geometry('1280x880');root.minsize(1000,680)
+ root.title('Ozon 商品自动化 · 1.0.10');root.geometry('1280x880');root.minsize(1000,680)
  style=ttk.Style(root);style.theme_use('clam')
  font='Microsoft YaHei UI' if os.name=='nt' else 'Noto Sans CJK SC'
  style.configure('.',font=(font,10));style.configure('TButton',padding=(12,7));style.configure('TNotebook.Tab',padding=(24,10));style.configure('Treeview',rowheight=32);style.configure('Treeview.Heading',font=(font,10,'bold'));style.configure('Primary.TButton',foreground='white',background='#2167b7');style.map('Primary.TButton',background=[('active','#18518f')])
