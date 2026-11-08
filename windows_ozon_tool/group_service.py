@@ -65,6 +65,10 @@ class GroupService:
      key=category_key(read(self.paths[n]));self.attributes.refresh(self.paths[n],force=force and key not in forced);forced.add(key)
     except ValueError as exc:errors.append(self.paths[n].parent.name+'：'+str(exc))
   self.status='正在重新计算售价';self.pricing.calculate_all();self.attributes.wake.set();self.status='部分属性未同步：'+'；'.join(errors) if errors else '参数和自动售价已同步'
+ def refresh_preview(self):
+  with self.mutex:
+   self.after_edit(list(range(len(self.paths))),refresh=True,force=False)
+   return self.status
  def set_parameters(self,indices,key,values,expected=None):
   if key not in PARAM_KEYS:raise ValueError('不是可编辑的基础参数')
   if len(indices)!=len(values) or len(set(indices))!=len(indices):raise ValueError('批量目标与输入数量不一致')

@@ -16,6 +16,10 @@ def main():
   for n,path in enumerate(group.paths):
    b=read(path);tasks.append({'id':'T'+str(n),'sku':b['sku'],'state':'saved','name':'00_full_set','set_mode':True,'received_images':read(path.parent/'image_manifest.json'),'video':str(path.parent/'video'/'product_8s.mp4'),'copy_state':'done','base_article':'SAMPLE','copy_leader':group.paths[0].parent.name,'variant_index':n+1,'variant_parameters':b['variant_parameters'],'facts':'资料','references':[]})
   write(data/'tasks.json',tasks)
+  import publication_service
+  original_begin=publication_service.PublicationService.begin;submission_calls=[]
+  def unexpected_submission(*args,**kwargs):submission_calls.append(True);raise AssertionError('local preview update attempted platform submission')
+  publication_service.PublicationService.begin=unexpected_submission
   def ready(root,ui):
    root.report_callback_exception=lambda a,b,c:errors.append(str(b))
    root.geometry('1100x760+15+15');root.update()
@@ -24,6 +28,9 @@ def main():
     assert len(ui['view'].get_children())==1
     ui['view'].selection_set(ui['view'].get_children()[0]);preview=ui['open_preview']();preview.geometry('1000x700+20+20');preview.update();widgets=preview._ozon_ui
     assert len(widgets['notebook'].tabs())==4
+    assert widgets['submit'].cget('text')=='提交上架'
+    assert widgets['update_preview'].cget('text')=='更新整组预览'
+    assert widgets['update_preview'].winfo_rootx()<widgets['submit'].winfo_rootx()
     button=widgets['submit'];assert button.winfo_rooty()+button.winfo_height()<=preview.winfo_rooty()+preview.winfo_height()
     for key in ('price_max','price_old','price_min','price_cost'):
      assert widgets['tree'].exists('s:'+key),key
@@ -34,10 +41,21 @@ def main():
     try:
      assert all(read(p)['copy']['description_ru']=='Общее описание: металлическая корзина с картонной вставкой.' for p in group.paths)
     except Exception as error:errors.append(str(error))
-    preview.destroy();ui['close']()
+    if errors:preview.destroy();ui['close']();return
+    widgets['update_preview'].invoke()
+    def updated():
+     try:
+      assert '未提交至Ozon' in widgets['footer_note'].cget('text')
+      assert not submission_calls
+      assert widgets['submit'].cget('state')!='disabled'
+      assert widgets['update_preview'].winfo_rooty()+widgets['update_preview'].winfo_height()<=preview.winfo_rooty()+preview.winfo_height()
+     except Exception as error:errors.append(str(error))
+     preview.destroy();ui['close']()
+    root.after(2500,updated)
    root.after(3500,check)
-  local_bridge.main(test_mode=True,on_ready=ready)
+  try:local_bridge.main(test_mode=True,on_ready=ready)
+  finally:publication_service.PublicationService.begin=original_begin
   if errors:raise AssertionError(errors)
- print('PASS Tk: three main tabs, grouped tasks, four preview tabs, visible footer, four prices and shared-copy autosave for every variant.')
+ print('PASS Tk: three main tabs, grouped tasks, four preview tabs, visible footer, four prices, shared-copy autosave, and separate local-update/submit buttons; local update never submits.')
 
 if __name__=='__main__':main()

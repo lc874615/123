@@ -17,7 +17,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  coordinator=GroupService(paths,service,pricing,store)
  coordinator.ensure_fixed_vat()
  if publication.initial_stock is not None and not publication.active([p.parent.name for p in paths]):coordinator.ensure_initial_stock(publication.initial_stock)
- dialog=tk.Toplevel(root);dialog.title('整组预览 · Ozon 商品自动化 1.0.6');dialog.geometry('1280x850');dialog.minsize(950,650)
+ dialog=tk.Toplevel(root);dialog.title('整组预览 · Ozon 商品自动化 1.0.7');dialog.geometry('1280x850');dialog.minsize(950,650)
  busy=False;selected=set(range(len(paths)));focus=['',''];bundles=[];token=None;rendered=None;warehouses={};photos=[];rows={};last_job=None;copy_dirty=False;displayed_copy=None;copy_timer=None;busy_since=0;operation_error='';operation_name=''
  ttk.Label(dialog,text='每列一个变体；双击单格修改，点击参数名选中整行后批量修改。仓库显示当前店铺全部类型和状态。',wraplength=900).pack(pady=6)
  status=ttk.Label(dialog,text='正在加载整组预览',wraplength=1200);status.pack(pady=3)
@@ -46,7 +46,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  def run(action,after=None,label='同步参数与售价'):
   nonlocal busy,busy_since,operation_error,operation_name
   if busy:return
-  busy=True;busy_since=time.monotonic();operation_error='';operation_name=label;coordinator.status=label;submit_button.configure(state='disabled');status.configure(text='处理中，参数与售价同步后刷新…')
+  busy=True;busy_since=time.monotonic();operation_error='';operation_name=label;coordinator.status=label;submit_button.configure(state='disabled');update_button.configure(state='disabled');status.configure(text='处理中，参数与售价同步后刷新…')
   def finish(error=None,result=None):
    nonlocal busy,rendered,operation_error
    if not dialog.winfo_exists():return
@@ -134,7 +134,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    changed=[b['sku'] for b in bundles if pending(b)]
    if changed:status.configure(text='素材待更新：'+'、'.join(changed)+'。仅提示，不自动重作；请在任务中心手动更新素材。')
    if copy_dirty:status.configure(text=status.cget('text')+' | 共用文案尚未保存')
-   submit_button.configure(state='disabled' if busy else 'normal',text='查看当前提交进度' if job else '提交/更新整组并上架');progress_refresh()
+   submit_button.configure(state='disabled' if busy else 'normal',text='查看当前提交进度' if job else '提交上架');update_button.configure(state='disabled' if busy or job else 'normal');progress_refresh()
    blocker.configure(text=('当前按钮暂不可用：'+coordinator.status+'，已用'+str(int(time.monotonic()-busy_since))+'秒' if busy else '共用文案尚未保存' if copy_dirty else '已有上架任务：点击右侧按钮查看进度，系统不会重复提交' if job else operation_error or ''))
   except (OSError,ValueError):status.configure(text='正在等待草稿保存完成')
  def refilter(*args):
@@ -466,8 +466,18 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   visible=copy.deepcopy(bundles)
   def stage(message):coordinator.status=message
   run(lambda:publication.begin(coordinator,expected,on_progress=stage,visible_bundles=visible),submitted,label='提交前校验')
- footer_note=ttk.Label(bottom,text='初始库存1000，销售后不重置；已有商品按同货号更新。',wraplength=580)
- submit_button=ttk.Button(bottom,text='提交/更新整组并上架',style='Primary.TButton',command=submit);submit_button.pack(side='right',padx=6);footer_note.pack(side='left',fill='x',expand=True)
+ def update_preview():
+  if copy_dirty:
+   if not busy:save_copy(after=update_preview)
+   return
+  if not editable():return
+  def updated(message):
+   media_refresh()
+   footer_note.configure(text=('部分属性未同步：请查看参数提示。' if str(message).startswith('部分属性未同步') else '整组本地预览已更新。')+'未提交至Ozon；点击“提交上架”才同步。')
+  run(coordinator.refresh_preview,updated,label='更新整组本地预览（不提交）')
+ footer_note=ttk.Label(bottom,text='更新整组预览只保存本地；提交上架才同步Ozon。初始库存1000，销售后不重置。',wraplength=500)
+ submit_button=ttk.Button(bottom,text='提交上架',style='Primary.TButton',command=submit);submit_button.pack(side='right',padx=6)
+ update_button=ttk.Button(bottom,text='更新整组预览',command=update_preview);update_button.pack(side='right',padx=6);footer_note.pack(side='left',fill='x',expand=True)
  def preview_only():
   from listing_preview import export_preview
   def action():
@@ -489,5 +499,5 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  try:
   publication.account_getter();dialog.after(100,load_warehouses)
  except ValueError:status.configure(text='请先连接Ozon API，再读取店铺全部仓库')
- dialog._ozon_ui={'notebook':notebook,'copy_widgets':copy_widgets,'tree':tree,'more':more_menu,'submit':submit_button,'refresh':refresh}
+ dialog._ozon_ui={'notebook':notebook,'copy_widgets':copy_widgets,'tree':tree,'more':more_menu,'submit':submit_button,'update_preview':update_button,'footer_note':footer_note,'refresh':refresh}
  return dialog
