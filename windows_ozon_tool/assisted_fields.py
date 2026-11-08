@@ -80,18 +80,6 @@ def inline_references(bundle):
   if proposal['kind']=='pdf' or current.get(proposal['key']) or proposal['key'] in (state.get('manual_keys') or []):continue
   if (decisions.get(proposal['key']) or {}).get('source')==source:continue
   row=dict(proposal)
-  if not row['suggested'] and row['kind']=='volume':
-   p=bundle.get('variant_parameters') or {}
-   try:
-    dims=[Decimal(str(p.get(k,''))) for k in ('length','width','height')]
-    if all(d.is_finite() and d>0 for d in dims):
-     row['suggested']=format(dims[0]*dims[1]*dims[2]/1000,'f').rstrip('0').rstrip('.') if '.' in format(dims[0]*dims[1]*dims[2]/1000,'f') else format(dims[0]*dims[1]*dims[2]/1000,'f')
-     row['confidence']='外部尺寸参考，非实测内容量';row['note']='按你的要求在表格显示外部体积参考。必须确认内部可用容量后修改或接受，不自动提交。'
-   except (InvalidOperation,ValueError):pass
-  if not row['suggested'] and row['kind']=='sections':
-   category=str((bundle.get('category') or {}).get('name','')).casefold()
-   if any(w in category for w in ('корзин','收纳篮','储物篮')):
-    row['suggested']='1';row['confidence']='低，仅按篮类结构推测';row['note']='未自动识别图片；请核对原始图或实物，套装数量不代表隔层数。'
   row['display']=row['suggested'] or ('待核实标记要求' if row['kind']=='marking' else '待补充依据')
   result[row['key']]=row
  return result

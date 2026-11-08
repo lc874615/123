@@ -31,3 +31,9 @@ console.log('4 cross-reply recovery and candidate confirmation cases passed');
 
 assert.equal(p(JSON.stringify(v).replace('Материал — картон. {detail}', 'Материал — картон.\n{detail}')).description_ru,'Материал — картон.\n{detail}');
 console.log('1 rendered string line break case passed');
+
+const attrs={sku:'CHAIR(1)',variant_attributes:{'CHAIR(1)':[{key:'seat_height',value:'45'}]}};
+assert.deepEqual(p(JSON.stringify(attrs)),attrs);
+assert.deepEqual(p(JSON.stringify({...v,...attrs})),{...v,...attrs});
+assert.equal(p(JSON.stringify({sku:'CHAIR',variant_attributes:[]})),null);
+console.log('3 attribute extraction contract cases passed');

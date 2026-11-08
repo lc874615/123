@@ -153,7 +153,7 @@ class PublicationService:
    for setting in settings:
     if setting.get('currency_code')!='CNY' or not setting.get('currency_confirmed'):raise ValueError('请先确认店铺币种为CNY')
    vats={s.get('vat') for s in settings}
-   if any(v not in ('0','0.05','0.07','0.1','0.2','0.22') for v in vats):raise ValueError('请先填写各变体实际税率')
+   if vats!={'0'}:raise ValueError('实际增值税率固定为0，请刷新预览自动填入')
    from listing_preview import attribute_errors
    with self.lock:
     latest=[read(p) for p in coordinator.paths]

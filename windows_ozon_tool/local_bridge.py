@@ -407,7 +407,8 @@ class Store:
      current=json.loads(target.read_text(encoding='utf-8-sig'))
      if not copy_complete(current.get('copy')) or copy_hash(current['copy'])!=copy_hash(leader['copy']) or current.get('copy_source')!=source:
       share_copy(folder,source,leader['copy'])
-     task['copy_state']='done';task.pop('resume_mode',None);task['copy_source']=source
+     task['copy_source']=source
+     if task.get('copy_mode')!='attributes' or task.get('copy_state') not in ('running','needs_attention'):task['copy_state']='done';task.pop('resume_mode',None)
      if task['state']=='saved' and task.get('video'):task['message']='8图、视频、共用俄语文案及草稿已完成；文案来源：'+source+'；待上架审核'
     except (ValueError,OSError,KeyError) as error:
      task.update(copy_state='needs_attention',message='共用文案同步失败：'+str(error)[:160])
@@ -459,6 +460,9 @@ class Store:
  def next_copy(self):
   self.sync_shared_copies()
   for task in self.tasks:
+   from reference_prefill import needed
+   if task.get('set_mode') and task['state']=='saved' and task.get('copy_state')=='done' and needed(self,task):
+    task['copy_mode']='attributes';return task
    if task.get('copy_state')=='needs_attention' and task.get('message') in ('未找到可用发送按钮','图片回复尚未结束，文案等待下一次自动继续','上一条回复仍在生成'):
     task.pop('copy_state',None);task['message']='前次文案未发送，等待图片回复结束后自动继续';self.save()
    if task.get('set_mode') and task['state']=='saved' and not task.get('copy_state'):
@@ -517,7 +521,7 @@ def server(store,token,port=8765):
     body=json.loads(self.rfile.read(n))
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.1','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.4','paired':True}
      elif self.path=='/control':value=store.control
      elif self.path=='/automation-control':value=store.set_paused(bool(body.get('paused')))
      elif self.path=='/pause-ack':
@@ -567,9 +571,14 @@ def server(store,token,port=8765):
       temp=bundle_path.with_suffix('.tmp');temp.write_text(json.dumps(bundle,ensure_ascii=False,indent=2),encoding='utf-8');temp.replace(bundle_path)
       for task in store.tasks:
        if task['sku']==sku:task['copy_state']='running'
+      from reference_prefill import build,prompt as attribute_prompt
+      attribute_context,references=build(store,sku,inspect_only=bool(body.get('inspect_only')))
       store.save()
       marker='【OZON_COPY:'+secrets.token_hex(12)+'】'
       value={'id':'copy:'+sku,'sku':sku,'marker':marker,'prompt':marker+'\n'+'本次商品组文案保存货号：'+sku+'。只依据下列当前资料，不得沿用历史商品材质。主体材质与配件/内衬材质分别对应，不得混写，也不要因内衬含纸板就把主体写成纸板。输出JSON必须额外包含sku字段，值为'+sku+'。'+(folder/'copy_prompt.txt').read_text(encoding='utf-8')}
+      owner=next(t for t in store.tasks if t['sku']==sku)
+      if owner.get('copy_mode')=='attributes':value['prompt']=marker+'\n只读取属性，不改写已有文案。仅输出JSON，包含sku字段（值为'+sku+'）和variant_attributes。'
+      value['prompt']+='\n'+attribute_prompt(attribute_context);value['references']=references
      elif self.path=='/copy-failed':
       sku=body['sku']
       for task in store.tasks:
@@ -579,7 +588,13 @@ def server(store,token,port=8765):
       from listing_bundle import save_copy
       sku=body['sku']
       if not valid_article(sku):raise ValueError('货号格式无效')
-      value=save_copy(store.folder/'products'/sku,body['copy'])
+      owner=next(t for t in store.tasks if t['sku']==sku)
+      if owner.get('copy_mode')=='attributes':
+       if body['copy'].get('sku')!=sku:raise ValueError('属性结果货号与当前任务不一致')
+       value={'ok':True}
+      else:value=save_copy(store.folder/'products'/sku,{k:v for k,v in body['copy'].items() if k!='variant_attributes'})
+      from reference_prefill import save as save_attributes
+      save_attributes(store,sku,body['copy']);owner.pop('copy_mode',None)
       store.sync_shared_copies()
       from category_match import suggest
       threading.Thread(target=suggest,args=(store.folder/'products'/sku,),kwargs={'lock':store.lock},daemon=True).start()

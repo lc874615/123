@@ -49,7 +49,7 @@ class PreviewSubmissionTests(unittest.TestCase):
    self.assertTrue(any('关闭PDF' in x for x in attribute_errors(b)))
  def test_inline_reference_not_submitted_until_confirmed_and_skippable(self):
   with tempfile.TemporaryDirectory() as tmp:
-   group,api,pub=group_fixtures.GroupTests().setup_group(tmp);b=group.load()[0];b['category']['name']='Корзина для хранения';b['attribute_draft']['fields'].extend([{'id':766,'name_ru':'Объем главного отделения, л','type':'Decimal'},{'id':767,'name_ru':'Число секций, шт','type':'Integer'}]);b['variant_parameters'].update(length='44',width='35',height='25');write(group.paths[0],b)
+   group,api,pub=group_fixtures.GroupTests().setup_group(tmp);b=group.load()[0];b['category']['name']='Корзина для хранения';b['attribute_draft']['fields'].extend([{'id':766,'name_ru':'Объем главного отделения, л','type':'Decimal'},{'id':767,'name_ru':'Число секций, шт','type':'Integer'}]);b['variant_parameters'].update(length='44',width='35',height='25',inner_length='44',inner_width='35',inner_height='25',extra='隔层数:1');write(group.paths[0],b)
    refs=inline_references(b);self.assertEqual(refs['0:766']['suggested'],'38.5');self.assertEqual(refs['0:767']['suggested'],'1');self.assertNotIn('0:766',b['attribute_draft']['values'])
    group.confirm_references([0],'0:766',group.token());self.assertEqual(group.load()[0]['attribute_draft']['values']['0:766'],[{'value':'38.5'}]);self.assertNotIn('0:766',inline_references(group.load()[0]))
    group.confirm_references([0],'0:767',group.token(),skip=True);self.assertNotIn('0:767',inline_references(group.load()[0]));self.assertNotIn('0:767',group.load()[0]['attribute_draft']['values'])
@@ -62,7 +62,7 @@ class PreviewSubmissionTests(unittest.TestCase):
 class AutomaticReferenceTests(unittest.TestCase):
  def test_refresh_fills_reference_values_and_manual_override_removes_red_marker(self):
   with tempfile.TemporaryDirectory() as tmp:
-   group,api,pub=group_fixtures.GroupTests().setup_group(tmp);b=group.load()[0];b['category']['name']='Корзина для хранения';b['variant_parameters'].update(length='44',width='35',height='25');write(group.paths[0],b)
+   group,api,pub=group_fixtures.GroupTests().setup_group(tmp);b=group.load()[0];b['category']['name']='Корзина для хранения';b['variant_parameters'].update(length='44',width='35',height='25',inner_length='44',inner_width='35',inner_height='25',extra='隔层数:1');write(group.paths[0],b)
    original=api.__call__
    def caller(p,body):
     result=original(p,body)

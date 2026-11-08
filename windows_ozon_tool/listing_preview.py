@@ -59,7 +59,7 @@ def build_item(folder,bundle):
  if not state.get('confirmed') or state.get('confirmed_values_hash')!=review_hash(state):errors.append('属性内容待卖家确认')
  if not bundle.get('pricing_confirmed_fingerprint') or bundle.get('pricing_confirmed_fingerprint')!=bundle.get('pricing_fingerprint') or str(bundle.get('pricing_confirmed_price', (bundle.get('auto_pricing') or {}).get('price_cny')))!=str(bundle.get('price_cny')):errors.append('售价待确认或已变化')
  if settings.get('currency_code')!='CNY' or not settings.get('currency_confirmed'):errors.append('请确认店铺币种为CNY')
- if settings.get('vat') not in ('0','0.05','0.07','0.1','0.2','0.22'):errors.append('请确认真实适用的增值税率')
+ if settings.get('vat')!='0':errors.append('实际增值税率应按你的固定规则填写0')
  if copy_complete(bundle.get('copy')):
   from material_guard import validate as validate_material
   try:validate_material(bundle,bundle['copy'])

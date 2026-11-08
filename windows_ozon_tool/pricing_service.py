@@ -34,7 +34,7 @@ def parse_fx(raw,today=None):
 
 def fetch(url,limit):
  from secure_http import read as verified_read
- req=urllib.request.Request(url,headers={'User-Agent':'OzonLocalPricing/1.0.3'})
+ req=urllib.request.Request(url,headers={'User-Agent':'OzonLocalPricing/1.0.4'})
  return verified_read(req,limit,timeout=12)
 
 def adopt_price(bundle):

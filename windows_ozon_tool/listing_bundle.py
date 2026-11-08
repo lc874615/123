@@ -29,6 +29,11 @@ def prepare(folder,task):
  bundle={'sku':task['sku'],'offer_id':task['sku'],'base_article':task.get('base_article',task['sku']),'model':task.get('model'),'asset_basis':task.get('generation_parameters') or task.get('variant_parameters',{}),'variant_index':task.get('variant_index'),'variant_parameters':task.get('variant_parameters',{}),'brand':'Нет бренда','stock':int(task.get('variant_parameters',{}).get('stock','1000')),'facts':facts,'group_facts':task.get('group_facts',facts),'group_variants':task.get('group_variants',[]),'images':checked,'video':{'local_file':'video/product_8s.mp4','exists':(folder/'video'/'product_8s.mp4').exists(),'https_url':None},'copy':{'title_ru':None,'description_ru':None,'tags_ru':[]},'category':{'description_category_id':None,'type_id':None},'price_cny':None,'status':'draft','blockers':['俄文文案待生成','类目及必填属性待匹配','实际定价待核验','图片HTTPS托管未配置']}
  target=folder/'listing_bundle.json'
  if target.exists():raise ValueError('上架草稿已存在，保留已有编辑，未覆盖')
+ bundle['export_settings']={'vat':'0','currency_code':'CNY','currency_confirmed':False}
+ observations=folder/'attribute_observations.json'
+ if observations.exists():
+  recorded=json.loads(observations.read_text(encoding='utf-8-sig'))
+  if recorded.get('sku')==task['sku']:bundle['reference_attributes']=recorded
  pending=folder/'shared_copy.json'
  if pending.exists():
   shared=json.loads(pending.read_text(encoding='utf-8-sig'))

@@ -15,8 +15,9 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  paths=[Path(p)/'listing_bundle.json' for p in group_folders]
  if not paths:messagebox.showinfo('没有变体','请选择尚未取消的商品组');return
  coordinator=GroupService(paths,service,pricing,store)
+ coordinator.ensure_fixed_vat()
  if publication.initial_stock is not None and not publication.active([p.parent.name for p in paths]):coordinator.ensure_initial_stock(publication.initial_stock)
- dialog=tk.Toplevel(root);dialog.title('整组预览 · Ozon 商品自动化 1.0.3');dialog.geometry('1280x850');dialog.minsize(950,650)
+ dialog=tk.Toplevel(root);dialog.title('整组预览 · Ozon 商品自动化 1.0.4');dialog.geometry('1280x850');dialog.minsize(950,650)
  busy=False;selected=set(range(len(paths)));focus=['',''];bundles=[];token=None;rendered=None;warehouses={};photos=[];rows={};last_job=None;copy_dirty=False;displayed_copy=None;copy_timer=None;busy_since=0;operation_error='';operation_name=''
  ttk.Label(dialog,text='每列一个变体；双击单格修改，点击参数名选中整行后批量修改。仓库显示当前店铺全部类型和状态。',wraplength=900).pack(pady=6)
  status=ttk.Label(dialog,text='正在加载整组预览',wraplength=1200);status.pack(pady=3)
@@ -169,7 +170,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    if key=='price':
     text_editor('修改售价（人民币元；手动修改后优先采用）',indices,str(bundles[indices[0]].get('price_cny') or ''),lambda values:coordinator.set_prices(indices,values,expected));return
    if key=='currency':text_editor('输入CNY确认店铺结算币种',indices,'CNY',lambda values:settings_batch(indices,'currency',values,expected));return
-   if key=='vat':text_editor('修改实际税率（0/0.05/0.07/0.1/0.2/0.22）',indices,value_for(bundles[indices[0]],row,indices[0]),lambda values:settings_batch(indices,'vat',values,expected));return
+   if key=='vat':detail.configure(text='实际增值税率按你的固定规则自动填写0。');return
    return
   initial=value_for(bundles[indices[0]],row,indices[0])
   if kind=='a':
@@ -186,7 +187,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   text_editor('修改官方属性：'+field.get('name',''),indices,str(initial) if len(indices)==1 else '',save)
  def settings_batch(indices,key,values,expected):
   # Validate all selected tax values before any write; identical values can be applied together.
-  if key=='vat' and any(v not in ('0','0.05','0.07','0.1','0.2','0.22') for v in values):raise ValueError('税率值无效，未修改任何变体')
+  if key=='vat' and any(v!='0' for v in values):raise ValueError('实际增值税率固定为0')
   coordinator.set_settings_many(indices,key,values,expected)
  def double_click(event):
   iid=tree.identify_row(event.y);col=tree.identify_column(event.x)
@@ -199,6 +200,8 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
     from assisted_fields import inline_references
     n=focus[1] if isinstance(focus[1],int) else 0
     reference=((bundles[n].get('attribute_draft') or {}).get('auto_references') or {}).get(row[1]) or inline_references(bundles[n]).get(row[1])
+    note=((bundles[n].get('attribute_draft') or {}).get('prefill_notes') or {}).get(row[1])
+    if note:detail.configure(text=note+'；请手动选择符合实际的官方选项')
     if reference:detail.configure(text='已自动采用的参考：'+reference['confidence']+'；'+reference['evidence']+'；'+reference['note'])
  tree.bind('<Double-1>',double_click);tree.bind('<<TreeviewSelect>>',track)
  def bulk():

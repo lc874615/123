@@ -1,4 +1,4 @@
-(()=>{if(window.__ozonLocalInstalled)return;window.__ozonLocalInstalled=true;globalThis.__ozonContentVersion='1.0.1';let stop=false,running=false;
+(()=>{if(window.__ozonLocalInstalled)return;window.__ozonLocalInstalled=true;globalThis.__ozonContentVersion='1.0.4';let stop=false,running=false;
 async function collectSource(task,options){
  if(!globalThis.OzonDelivery)throw Error('最终交付采集模块未加载，请更新插件并刷新作图页');
  return globalThis.OzonDelivery.collect(document,{...options,task});
@@ -10,7 +10,7 @@ function findEditor(){
  for(const sel of selectors){const found=[...document.querySelectorAll(sel)].filter(e=>e.getClientRects().length&&!e.disabled&&e.getAttribute('aria-hidden')!=='true');if(found.length===1)return found[0];}
  return null;
 }
-function preflight(){const e=findEditor(),generating=globalThis.OzonConversation.generating(document);return {version:'1.0.1',ready:!!e&&!generating,generating,url:location.origin+location.pathname,message:generating?'上一条回复仍在生成，等待完成后自动继续':e?'输入框已识别':'未找到可见输入框。请在普通ChatGPT文字对话中刷新页面，点击输入区后重试；不能在图片查看器或其他应用中执行。'};}
+function preflight(){const e=findEditor(),generating=globalThis.OzonConversation.generating(document);return {version:'1.0.4',ready:!!e&&!generating,generating,url:location.origin+location.pathname,message:generating?'上一条回复仍在生成，等待完成后自动继续':e?'输入框已识别':'未找到可见输入框。请在普通ChatGPT文字对话中刷新页面，点击输入区后重试；不能在图片查看器或其他应用中执行。'};}
 async function run(task){
  if(running)throw Error('本页正在执行任务');running=true;stop=false;
  try{
@@ -98,8 +98,9 @@ async function copy(task){
  stop=false;
  try{
   if(running||globalThis.OzonConversation.generating(document))throw Error('图片回复尚未结束，文案等待下一次自动继续');
-  const editor=findEditor();if(!editor)throw Error('未找到输入框');
+  let editor=findEditor();if(!editor)throw Error('未找到输入框');
   if(editor.textContent.trim()||editor.value?.trim())throw Error('输入框已有内容，未覆盖');
+  if(task.references?.length){await globalThis.OzonUploads.upload(task.references,{editor,sleep,stopped:()=>stop,report:()=>{}});editor=findEditor();if(!editor)throw Error('原始参考图上传后未找到输入框');}
   const excluded=globalThis.OzonCopy.snapshot();
   const copyNodes=globalThis.OzonConversation.assistantNodes(document);
   const beforeCopy=new Set(copyNodes),beforeText=new Map(copyNodes.map(n=>[n,n.innerText||n.textContent||'']));

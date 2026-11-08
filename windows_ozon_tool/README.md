@@ -1,4 +1,4 @@
-# Ozon 商品自动化 · v1.0.3
+# Ozon 商品自动化 · v1.0.4
 
 双击 **start_edge.bat** 启动。首次使用安装 Python 3.11+（含 Tkinter）。安装.bat 与安装Edge版.bat 都安装本版依赖，启动.bat 与 start_edge 使用同一入口。
 

@@ -146,6 +146,14 @@ class GroupService:
      p['stock']=str(target);b['stock']=target;b['facts']=facts(p);b['stock_revision']=secrets.token_hex(8);changed=True
     if changed:self._write(bundles)
   return changed
+ def ensure_fixed_vat(self):
+  from prefill_rules import fixed_settings
+  with self.mutex:
+   with self.lock:
+    bundles=[read(p) for p in self.paths];changed=False
+    for bundle in bundles:changed=fixed_settings(bundle) or changed
+    if changed:self._write(bundles)
+  return changed
  def set_prices(self,indices,values,expected=None):
   if not indices or len(indices)!=len(values):raise ValueError('请选择变体并填写对应售价')
   prices=[]
@@ -222,7 +230,7 @@ class GroupService:
     for n,value in zip(indices,values):
      b=bundles[n]
      if key=='vat':
-      if value not in ('0','0.05','0.07','0.1','0.2','0.22'):raise ValueError('税率无效')
+      if value!='0':raise ValueError('实际增值税率已按你的规则固定为0')
       b.setdefault('export_settings',{}).update(vat=value,currency_code='CNY')
      elif key=='currency':
       if value!='CNY':raise ValueError('当前自动售价单位为人民币，仅支持已确认店铺CNY币种')
@@ -262,6 +270,7 @@ def preview_changes(before,after,allow_automatic=False):
  for old,new in zip(before,after):
   left,right=sections(old),sections(new)
   if allow_automatic:
+   if (new.get('export_settings') or {}).get('vat')=='0':left['税率与币种']={**(left['税率与币种'] or {}),'vat':'0'}
    from tag_rules import normalize_tags
    for side in (left,right):
     if isinstance(side['共用文案'],dict):side['共用文案']={**side['共用文案'],'tags_ru':normalize_tags(side['共用文案'].get('tags_ru'))}

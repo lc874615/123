@@ -14,7 +14,11 @@ def category_key(bundle):
 def source_fingerprint(bundle):
  values={k:v for k,v in (bundle.get('variant_parameters') or {}).items() if k not in ('cost','margin','stock')}
  copy=bundle.get('copy') or {}
- return hashlib.sha256(json.dumps([values,{k:copy.get(k) for k in ('title_ru','description_ru','tags_ru')},bundle.get('model'),bundle.get('brand'),[{k:r.get(k) for k in ('order','role','https_url','sha256')} for r in bundle.get('images') or []]],sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+ evidence=bundle.get('reference_attributes') or {};stats=[]
+ for ref in evidence.get('references') or []:
+  try:stat=Path(ref['path']).stat();stats.append([stat.st_size,stat.st_mtime_ns])
+  except OSError:stats.append(None)
+ return hashlib.sha256(json.dumps([values,{k:copy.get(k) for k in ('title_ru','description_ru','tags_ru')},evidence,stats,bundle.get('model'),bundle.get('brand'),[{k:r.get(k) for k in ('order','role','https_url','sha256')} for r in bundle.get('images') or []]],sort_keys=True,ensure_ascii=False).encode()).hexdigest()
 def review_hash(state):
  return hashlib.sha256(json.dumps([state.get('schema_hash'),state.get('source_fingerprint'),state.get('values')],sort_keys=True,ensure_ascii=False).encode()).hexdigest()
 def api(path,body):
@@ -27,7 +31,7 @@ def api(path,body):
  if not isinstance(value,dict) or not isinstance(value.get('result'),list):raise ValueError('Ozon属性响应格式异常')
  return value
 
-AUTOFILL_VERSION=5
+AUTOFILL_VERSION=6
 def normalized_name(field):
  return re.sub(r'\s+',' ',(field.get('name_ru') or field.get('name','')).casefold().replace('ё','е').replace('#','')).strip()
 def audience(bundle):
@@ -38,6 +42,10 @@ def audience(bundle):
 def suggested_value(field,bundle):
  """Only declared facts; dictionary values still require an exact official match."""
  name=normalized_name(field);identifier=int(field['id']);p=bundle.get('variant_parameters') or {};copy=bundle.get('copy') or {}
+ from prefill_rules import value_for,field_kind
+ value=value_for(field,bundle)
+ if value is not None:return value
+ if field_kind(field) or name in ('цвет товара','цвет','颜色','商品颜色','название цвета','颜色名称'):return None
  from rich_content import is_rich_field,generate
  if is_rich_field(field):return generate(bundle)
  from tag_rules import is_tag_field,is_series_field,normalize_tags
@@ -146,10 +154,38 @@ class AttributeService:
     except ValueError:pass
    pending[key]=copy.deepcopy(kept)
   return values,pending
+ def resolve_suggestion(self,bundle,field,suggestion,force=False):
+  from prefill_rules import aliases,color_values
+  def lookup(value):
+   accepted=aliases(field,value)
+   if normalized_name(field)=='гарантия':accepted.update(('без гарантии','нет гарантии','без гарантий','无担保','无保修'))
+   if normalized_name(field)=='целевая аудитория':accepted.update(('взрослая','взрослые','成人') if value=='Для взрослых' else ('детская','дети','儿童'))
+   result=self.dictionary(bundle,field,str(value) if len(str(value))>=2 else '',force=force)['result']
+   exact={r['id']:r for r in result if str(r.get('value','')).casefold().replace('ё','е')==str(value).casefold().replace('ё','е')}
+   if len(exact)==1:return next(iter(exact.values()))
+   found={r['id']:r for r in result if str(r.get('value','')).casefold().replace('ё','е') in accepted}
+   if len(found)!=1:
+    result=self.dictionary(bundle,field,force=force)['result'];found={r['id']:r for r in result if str(r.get('value','')).casefold().replace('ё','е') in accepted}
+   if len(found)!=1:raise ValueError('官方选项未唯一匹配：'+str(value))
+   return next(iter(found.values()))
+  requested=suggestion if isinstance(suggestion,list) else [suggestion]
+  if len(requested)>1 and (not field.get('is_collection') or int(field.get('max_value_count') or 100)<len(requested)):
+   if normalized_name(field) not in ('цвет товара','цвет','颜色','商品颜色'):raise ValueError('官方字段不支持多个值')
+   label=', '.join(requested);rows=self.dictionary(bundle,field,label,force=force)['result']
+   rows+=self.dictionary(bundle,field,force=force)['result']
+   expected={x.casefold().replace('ё','е') for x in requested}
+   matches={r['id']:r for r in rows if {x.casefold().replace('ё','е') for x in (color_values(r.get('value')) or [])}==expected}
+   if len(matches)!=1:raise ValueError('该颜色字段只允许一个选项，未找到同时包含全部颜色的官方组合；原始双颜色完整保留')
+   rows=list(matches.values())
+  else:rows=[lookup(v) for v in requested]
+  values=[{'dictionary_value_id':r['id'],'value':r['value']} for r in rows]
+  validate_values(field,values);return values
  def refresh(self,path,force=True):
   path=Path(path)
   with self.lock:
    bundle=read(path)
+   from prefill_rules import fixed_settings
+   if fixed_settings(bundle):write(path,bundle)
    from tag_rules import normalize_tags
    copy_value=bundle.get('copy') or {};normalized=normalize_tags(copy_value.get('tags_ru'))
    if copy_value.get('tags_ru')!=normalized:
@@ -181,7 +217,9 @@ class AttributeService:
     restored,unresolved=self.migrate(bundle,archive,[f for f in fields if field_key(f) not in values])
     values.update(restored);pending.update(unresolved);manual.update(k for k in restored if k in (archive.get('manual_keys') or []))
     for k in restored:pending.pop(k,None)
-   suggestions={}
+   for k in old.get('auto_reference_keys') or []:
+    if k not in manual:values.pop(k,None)
+   suggestions={};prefill_notes={}
    for field in fields:
     key=field_key(field)
     from rich_content import is_rich_field
@@ -196,22 +234,13 @@ class AttributeService:
      if same and 0<=time.time()-old.get('fetched_at',0)<86400 and (old.get('suggestions') or {}).get(key)==suggestion and old_values:
       try:validate_values(field,old_values);values[key]=copy.deepcopy(old_values);continue
       except ValueError:pass
-     try:
-      rows=self.dictionary(bundle,field,str(suggestion))['result'];matches=[r for r in rows if str(r.get('value','')).casefold()==str(suggestion).casefold()]
-      if not matches:
-       aliases={str(suggestion).casefold()}
-       if normalized_name(field)=='гарантия':aliases.update(('без гарантии','нет гарантии','без гарантий','无担保','无保修'))
-       if normalized_name(field)=='целевая аудитория':aliases.update(('взрослая','взрослые','成人') if suggestion=='Для взрослых' else ('детская','дети','儿童'))
-       rows=self.dictionary(bundle,field)['result'];matches=[r for r in rows if str(r.get('value','')).casefold() in aliases]
-      if len(matches)==1:values[key]=[{'dictionary_value_id':matches[0]['id'],'value':matches[0]['value']}]
-     except ValueError:pass
+     try:values[key]=self.resolve_suggestion(bundle,field,suggestion)
+     except ValueError as error:prefill_notes[key]=str(error)
     else:
      proposed=[{'value':str(v)} for v in (suggestion if isinstance(suggestion,list) else [suggestion])]
      try:validate_values(field,proposed);values[key]=proposed
      except ValueError:pass
    from assisted_fields import inline_references
-   for k in old.get('auto_reference_keys') or []:
-    if k not in manual:values.pop(k,None)
    provisional={**bundle,'attribute_draft':{'fields':fields,'values':values,'manual_keys':list(manual)}}
    auto_references={}
    for key,reference in inline_references(provisional).items():
@@ -226,8 +255,12 @@ class AttributeService:
     try:validate_values(field,proposed)
     except ValueError:continue
     values[key]=proposed;auto_references[key]={k:reference[k] for k in ('suggested','evidence','confidence','note','kind')}
+   from prefill_rules import annotation
+   for field in fields:
+    key=field_key(field);reference=annotation(field,bundle)
+    if reference and key in values and key not in manual:auto_references[key]=reference
    for k in values:pending.pop(k,None)
-   state={'autofill_version':AUTOFILL_VERSION,'auto_reference_keys':sorted(auto_references),'auto_references':auto_references,'category_key':[category,type_id],'schema_hash':digest,'fields':fields,'values':values,'suggestions':suggestions,'fetched_at':schema_time,'confirmed':bool(same and unchanged and old.get('autofill_version')==AUTOFILL_VERSION and old.get('confirmed')),'source_fingerprint':source,'manual_keys':sorted(manual) if same else [k for k in values if k in manual],'migration_pending':pending}
+   state={'autofill_version':AUTOFILL_VERSION,'prefill_notes':prefill_notes,'auto_reference_keys':sorted(auto_references),'auto_references':auto_references,'category_key':[category,type_id],'schema_hash':digest,'fields':fields,'values':values,'suggestions':suggestions,'fetched_at':schema_time,'confirmed':bool(same and unchanged and old.get('autofill_version')==AUTOFILL_VERSION and old.get('confirmed')),'source_fingerprint':source,'manual_keys':sorted(manual) if same else [k for k in values if k in manual],'migration_pending':pending}
    with self.lock:
     latest=read(path)
     if category_key(latest)!=(category,type_id) or source_fingerprint(latest)!=source or not latest['category'].get('confirmed'):raise ValueError('读取期间类目已变化，请重新读取')
@@ -273,7 +306,7 @@ class AttributeService:
  def confirm(self,path,vat,currency_confirmed):return self.confirm_many([path],vat,currency_confirmed)
  def confirm_many(self,paths,vat,currency_confirmed,expected=None):
   from listing_preview import attribute_errors
-  if vat not in ('0','0.05','0.07','0.1','0.2','0.22'):raise ValueError('请选择真实适用的增值税率，不自动假定免税')
+  if vat!='0':raise ValueError('按你的固定规则，增值税率只能为0')
   if not currency_confirmed:raise ValueError('请确认店铺结算币种为CNY')
   if not paths:raise ValueError('没有可确认的变体任务')
   prepared=[]
