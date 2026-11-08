@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Ozon 本地作图助手",
-  "version": "0.25.0",
+  "name": "Ozon 商品自动化助手",
+  "version": "1.0.0",
   "description": "连接本地工具，自动采集当前GPT任务的生成图库与独立图片文件。",
   "permissions": [
     "activeTab",
@@ -11,7 +11,8 @@
     "downloads"
   ],
   "host_permissions": [
-    "http://127.0.0.1:8765/*"
+    "http://127.0.0.1:8765/*",
+    "https://chatgpt.com/*"
   ],
   "action": {
     "default_popup": "popup.html"

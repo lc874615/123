@@ -35,7 +35,7 @@ const {chromium}=require('playwright'),assert=require('node:assert/strict'),path
   assert.equal(await page.evaluate(()=>saved.length),8);
   assert.deepEqual(values,await page.evaluate(()=>full.map(src=>src.split(',')[1])));
   assert.ok(values.every(v=>v.length>1000));
-  const diagnostic=await page.evaluate(()=>OzonDiagnostics.snapshot());assert.equal(diagnostic.version,'0.25.0');assert.equal(diagnostic.counts.main,2);assert.equal(diagnostic.images.length,14);assert.equal(diagnostic.roots[0].textLength,0);assert.equal(diagnostic.roots[1].selected,true);assert.equal(diagnostic.json.completeObjects,1);assert.equal(JSON.stringify(diagnostic).includes('Корзины'),false);assert.equal(JSON.stringify(diagnostic).includes('data:image'),false);
+  const diagnostic=await page.evaluate(()=>OzonDiagnostics.snapshot());assert.equal(diagnostic.version,require('./manifest.json').version);assert.equal(diagnostic.counts.main,2);assert.equal(diagnostic.images.length,14);assert.equal(diagnostic.roots[0].textLength,0);assert.equal(diagnostic.roots[1].selected,true);assert.equal(diagnostic.json.completeObjects,1);assert.equal(JSON.stringify(diagnostic).includes('Корзины'),false);assert.equal(JSON.stringify(diagnostic).includes('data:image'),false);
   await page.evaluate(()=>{window.removed=[...document.querySelectorAll('#strip button')].slice(3);for(const n of removed)n.remove();window.partial=[];});
   const partial=await page.evaluate(()=>OzonImages.collect(document,{expected:8,allowPartial:true,marker:'【OZON_TASK:ROLELESS】',onImage:async(index,b64)=>partial.push({index,b64})}));
   assert.equal(partial,null);assert.deepEqual(await page.evaluate(()=>window.partial.map(v=>v.b64)),values.slice(0,3));

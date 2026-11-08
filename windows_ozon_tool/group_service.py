@@ -7,11 +7,13 @@ from variants import FIELDS,facts
 from pricing_service import read,write
 
 PARAM_KEYS={k for k,_,_ in FIELDS}
-def revision(bundles):
+def revision(bundles,legacy=False):
  data=[]
  for b in bundles:
   state=b.get('attribute_draft') or {};category={k:v for k,v in (b.get('category') or {}).items() if k!='attributes_revalidation_required'}
-  data.append({'sku':b.get('sku'),'offer_id':b.get('offer_id'),'category':category,'parameters':b.get('variant_parameters'),'copy':b.get('copy'),'model':b.get('model'),'brand':b.get('brand'),'attributes':{k:state.get(k) for k in ('schema_hash','values','migration_pending','source_fingerprint')},'price':b.get('price_cny'),'manual_price':b.get('manual_price'),'pricing_fingerprint':b.get('pricing_fingerprint'),'images':[{k:r.get(k) for k in ('order','role','sha256','https_url','hosting_target')} for r in b.get('images') or []],'video':{k:(b.get('video') or {}).get(k) for k in ('sha256','https_url','image_hashes')},'export_settings':b.get('export_settings'),'fulfillment':b.get('fulfillment'),'stock_revision':b.get('stock_revision'),'reference_decisions':b.get('reference_decisions')})
+  data.append({'sku':b.get('sku'),'offer_id':b.get('offer_id'),'category':category,'parameters':b.get('variant_parameters'),'copy':b.get('copy'),'model':b.get('model'),'brand':b.get('brand'),'attributes':{k:state.get(k) for k in ('schema_hash','values','migration_pending','source_fingerprint')},'price':b.get('price_cny'),'manual_price':b.get('manual_price'),'pricing_fingerprint':b.get('pricing_fingerprint'),'images':[{k:r.get(k) for k in ('order','role','sha256','https_url','hosting_target')} for r in b.get('images') or []],'video':{k:(b.get('video') or {}).get(k) for k in ('sha256','https_url','image_hashes')},'export_settings':b.get('export_settings'),'fulfillment':b.get('fulfillment'),'stock_revision':b.get('stock_revision'),'reference_decisions':b.get('reference_decisions'),'asset_review':b.get('asset_review'),'regeneration_pending':b.get('regeneration_pending')})
+ if legacy:
+  for row in data:row.pop('asset_review',None);row.pop('regeneration_pending',None)
  return hashlib.sha256(json.dumps(data,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
 
 def binding(field):
@@ -27,7 +29,7 @@ def binding(field):
 
 class GroupService:
  def __init__(self,paths,attributes,pricing,store=None):
-  self.paths=[Path(p) for p in paths];self.attributes=attributes;self.pricing=pricing;self.store=store;self.lock=attributes.lock;self.mutex=threading.RLock();self.status="整组草稿已加载"
+  self.paths=[Path(p) for p in paths];self.attributes=attributes;self.pricing=pricing;self.store=store;self.lock=attributes.lock;self.mutex=getattr(attributes,'business_lock',None) or threading.RLock();attributes.business_lock=self.mutex;self.status="整组草稿已加载"
  def load(self):
   with self.lock:return [read(p) for p in self.paths]
  def token(self):return revision(self.load())
@@ -35,33 +37,40 @@ class GroupService:
   if expected is not None and revision(bundles)!=expected:raise ValueError('预览内容已更新，请先核对最新表格再操作')
  def _invalidate(self,bundle):
   bundle.pop('pricing_fingerprint',None);bundle.pop('pricing_confirmed_fingerprint',None)
-  bundle['price_cny']=None;bundle.pop('manual_price',None)
+  if not bundle.get('manual_price'):bundle['price_cny']=None
   state=bundle.get('attribute_draft')
   if state:state['confirmed']=False
  def _write(self,bundles):
-  all_facts='\n'.join(b['sku']+'：'+b.get('facts','') for b in bundles)
-  variants=[{'sku':b['sku'],'variant_parameters':b.get('variant_parameters',{}),'facts':b.get('facts','')} for b in bundles]
+  prepared={b['sku']:{'sku':b['sku'],'variant_parameters':b.get('variant_parameters',{}),'facts':b.get('facts','')} for b in bundles}
+  existing=(bundles[0].get('group_variants') or []) if bundles else []
+  variants=[copy.deepcopy(prepared.pop(r['sku'],r)) for r in existing if isinstance(r,dict) and r.get('sku')]
+  variants.extend(prepared.values());all_facts='\n'.join(r['sku']+'：'+r.get('facts','') for r in variants)
   for path,b in zip(self.paths,bundles):
    b['group_facts']=all_facts;b['group_variants']=variants;write(path,b)
    if self.store:
     for task in self.store.tasks:
      if task['sku']==b['sku']:task.update(variant_parameters=copy.deepcopy(b.get('variant_parameters',{})),facts=b.get('facts',''),group_facts=all_facts,group_variants=copy.deepcopy(variants))
-  if self.store:self.store.save()
+  if self.store:
+   group_skus={r['sku'] for r in variants}
+   for task in self.store.tasks:
+    if task['sku'] in group_skus:task.update(group_facts=all_facts,group_variants=copy.deepcopy(variants))
+   self.store.save()
  def after_edit(self,indices,refresh=True,force=False):
+  errors=[]
   if refresh:
    forced=set()
    for n in indices:
     try:
      self.status=self.paths[n].parent.name+'：同步官方属性与已填内容'
      key=category_key(read(self.paths[n]));self.attributes.refresh(self.paths[n],force=force and key not in forced);forced.add(key)
-    except ValueError:pass # Draft retains the explicit missing/connection state.
-  self.status='正在重新计算售价';self.pricing.calculate_all();self.attributes.wake.set();self.status='参数和自动售价已同步'
+    except ValueError as exc:errors.append(self.paths[n].parent.name+'：'+str(exc))
+  self.status='正在重新计算售价';self.pricing.calculate_all();self.attributes.wake.set();self.status='部分属性未同步：'+'；'.join(errors) if errors else '参数和自动售价已同步'
  def set_parameters(self,indices,key,values,expected=None):
   if key not in PARAM_KEYS:raise ValueError('不是可编辑的基础参数')
   if len(indices)!=len(values) or len(set(indices))!=len(indices):raise ValueError('批量目标与输入数量不一致')
   with self.mutex:
    with self.lock:
-    bundles=[read(p) for p in self.paths];self._check(bundles,expected)
+    bundles=[read(p) for p in self.paths];self._check(bundles,expected);before=copy.deepcopy(bundles)
     for n,value in zip(indices,values):
      b=bundles[n];p=dict(b.get('variant_parameters') or {});p[key]=str(value).strip();text=facts(p)
      b.update(variant_parameters=p,facts=text,stock=int(p.get('stock','0') or 0))
@@ -70,13 +79,25 @@ class GroupService:
       if binding(field) and binding(field)[0]==key:
        state=b['attribute_draft'];state.get('values',{}).pop(field_key(field),None);state['manual_keys']=[k for k in state.get('manual_keys',[]) if k!=field_key(field)]
      self._invalidate(b)
-    self._write(bundles)
+    from asset_state import mark_changes
+    mark_changes(before,bundles);self._write(bundles)
    self.after_edit(indices,refresh=key not in ('cost','margin','stock'))
  def set_attributes(self,indices,key,values,expected=None):
   if len(indices)!=len(values) or len(set(indices))!=len(indices):raise ValueError('批量目标与输入数量不一致')
+  # Common text has one owner regardless of the editor used.
+  from tag_rules import is_tag_field,is_series_field,normalize_tags
+  source=self.load();field=next((f for f in (source[indices[0]].get('attribute_draft') or {}).get('fields',[]) if field_key(f)==key),None) if indices else None
+  if field:
+   name=(field.get('name_ru') or field.get('name','')).casefold().strip()
+   copy_key='tags_ru' if is_tag_field(field) else 'description_ru' if field['id']==4191 or name in ('аннотация','описание товара','简介') else 'title_ru' if not is_series_field(field) and (field['id']==4180 or name in ('название','名称')) else None
+   if copy_key:
+    proposed=[' '.join(v.get('value','') for v in rows) for rows in values]
+    if len(set(proposed))>1:raise ValueError('标题、简介和标签为全组共用，请填写同一个值')
+    value=copy.deepcopy(source[0].get('copy') or {});value[copy_key]=normalize_tags(proposed[0]) if copy_key=='tags_ru' else proposed[0]
+    return self.set_copy(value,expected)
   with self.mutex:
    with self.lock:
-    bundles=[read(p) for p in self.paths];self._check(bundles,expected);prepared=[]
+    bundles=[read(p) for p in self.paths];self._check(bundles,expected);before=copy.deepcopy(bundles);prepared=[]
     for n,raw in zip(indices,values):
      b=bundles[n];canonical=self.attributes.prepare_values(b,key,raw);field=next(f for f in b['attribute_draft']['fields'] if field_key(f)==key)
      state=b['attribute_draft'];state.setdefault('values',{})[key]=canonical;state['manual_keys']=sorted(set(state.get('manual_keys') or [])|{key});state['confirmed']=False
@@ -94,7 +115,8 @@ class GroupService:
         except Exception:raise ValueError('此官方属性无法自动换算基础尺寸/重量，请核对单位') from None
       b.setdefault('variant_parameters',{})[param]=text;b['facts']=facts(b['variant_parameters'])
      self._invalidate(b);prepared.append(n)
-    self._write(bundles)
+    from asset_state import mark_changes
+    mark_changes(before,bundles);self._write(bundles)
    self.after_edit(prepared)
  def resolve_text(self,index,key,text):
   b=self.load()[index];field=next(f for f in b['attribute_draft']['fields'] if field_key(f)==key)
@@ -138,6 +160,7 @@ class GroupService:
     for n,price in zip(indices,prices):
      b=bundles[n];b.update(price_cny=price,manual_price=True,pricing_confirmed_fingerprint=b.get('pricing_fingerprint'),pricing_confirmed_price=price,pricing_status='采用手动售价，自动估算供参考')
     self._write(bundles)
+  self.pricing.calculate_all()
   return len(prices)
  def confirm_references(self,indices,key,expected=None,skip=False):
   from assisted_fields import inline_references
@@ -215,10 +238,18 @@ class GroupService:
   with self.mutex:
    with self.lock:
     bundles=[read(p) for p in self.paths];self._check(bundles,expected)
-    from tag_rules import normalize_tags
+    from tag_rules import normalize_tags,is_tag_field
     value={**value,'tags_ru':normalize_tags(value.get('tags_ru'))}
-    for b in bundles:b['copy']={**copy.deepcopy(value),'sku':b['sku']};self._invalidate(b)
+    for b in bundles:
+     b['copy']={**copy.deepcopy(value),'sku':b['sku']};self._invalidate(b)
+     if b.get('asset_review'):b['asset_review']['copy']=False
+     state=b.get('attribute_draft') or {}
+     for field in state.get('fields',[]):
+      name=(field.get('name_ru') or field.get('name','')).casefold().strip()
+      if is_tag_field(field) or field['id'] in (4191,4180) or name in ('аннотация','название'):
+       k=field_key(field);state.get('values',{}).pop(k,None);state['manual_keys']=[x for x in state.get('manual_keys',[]) if x!=k]
     self._write(bundles)
+    if self.store:self.store.sync_shared_copies()
    self.after_edit(list(range(len(bundles))))
 
 def preview_changes(before,after,allow_automatic=False):

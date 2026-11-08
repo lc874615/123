@@ -11,7 +11,7 @@ FIELDS=[{'id':85,'name':'品牌','name_ru':'Бренд','type':'string','diction
 class AttributeTests(unittest.TestCase):
  def setup_draft(self,tmp):
   source,path,host,video=video_fixtures.VideoTests().setup_media(tmp);VideoHostingService(source).scan_once();data=read(path)
-  data.update(category={'description_category_id':10,'type_id':20,'confirmed':True},model='RANDOM-MODEL',brand='Нет бренда',variant_parameters={'material':'金属','accessory_material':'纸板','pack_length':'21.5','pack_width':'12','pack_height':'7','pack_weight':'900'},copy={'title_ru':'Тестовое изделие','description_ru':'Основной материал — металл; вкладыш — картон.','tags_ru':['#корзина'],'missing_facts':[]},pricing_fingerprint='price-inputs',pricing_confirmed_fingerprint='price-inputs',pricing_confirmed_price='123');write(path,data)
+  data.update(category={'description_category_id':10,'type_id':20,'confirmed':True},model='RANDOM-MODEL',brand='Нет бренда',variant_parameters={'cost':'20','material':'金属','accessory_material':'纸板','pack_length':'21.5','pack_width':'12','pack_height':'7','pack_weight':'900'},copy={'title_ru':'Тестовое изделие','description_ru':'Основной материал — металл; вкладыш — картон.','tags_ru':['#корзина'],'missing_facts':[]},pricing_fingerprint='price-inputs',pricing_confirmed_fingerprint='price-inputs',pricing_confirmed_price='123');write(path,data)
   def caller(endpoint,body):
    if endpoint.endswith('/attribute'):return {'result':copy.deepcopy(FIELDS)}
    return {'result':[{'id':100 if body.get('value')=='Нет бренда' else 200,'value':body.get('value','Картон')}],'has_next':False}

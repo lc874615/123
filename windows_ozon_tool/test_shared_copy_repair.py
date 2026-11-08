@@ -8,6 +8,24 @@ COPY={'sku':'GROUP(1)','title_ru':'Корзины для хранения','desc
 def encoded(n):
  b=io.BytesIO();Image.new('RGB',(600,800),(n,35,80)).save(b,format='PNG');return base64.b64encode(b.getvalue()).decode()
 class Tests(unittest.TestCase):
+ def test_pending_variant_receives_own_durable_copy_without_images_or_video(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   store=self.seed(tmp);follower=store.tasks[1];follower.update(state='queued',video=None)
+   folder=Path(tmp)/'products'/'GROUP(2)';(folder/'listing_bundle.json').unlink()
+   store.sync_shared_copies()
+   saved=json.loads((folder/'shared_copy.json').read_text())
+   self.assertEqual(saved['copy'],{**COPY,'sku':'GROUP(2)'})
+   self.assertEqual(follower['copy_state'],'done');self.assertEqual(follower['state'],'queued')
+   changed={**COPY,'title_ru':'Обновленный общий заголовок','description_ru':'Обновленное описание','tags_ru':['#новое']}
+   leader=Path(tmp)/'products'/'GROUP(1)'/'listing_bundle.json';data=json.loads(leader.read_text());data['copy']=changed;leader.write_text(json.dumps(data))
+   store.sync_shared_copies()
+   self.assertEqual(json.loads((folder/'shared_copy.json').read_text())['copy'],{**changed,'sku':'GROUP(2)'})
+ def test_existing_pending_draft_is_updated_without_video(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   store=self.seed(tmp);store.tasks[1].update(state='queued',video=None);store.sync_shared_copies()
+   path=Path(tmp)/'products'/'GROUP(2)'/'listing_bundle.json'
+   self.assertEqual(json.loads(path.read_text())['copy'],{**COPY,'sku':'GROUP(2)'})
+   self.assertEqual(store.tasks[1]['state'],'queued')
  def seed(self,root):
   store=Store(root)
   for i in (1,2):

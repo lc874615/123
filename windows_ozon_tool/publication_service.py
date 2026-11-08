@@ -11,14 +11,17 @@ from listing_preview import export_preview
 class Rejected(ValueError):pass
 def explicit_true(value):return value is True or (isinstance(value,str) and value.strip().casefold()=='true')
 READ_PATHS={'/v2/warehouse/list','/v1/product/import/info','/v3/product/info/list','/v2/product/info/stocks-by-warehouse/fbs'}
-WRITE_PATHS={'/v3/product/import','/v2/products/stocks'}
+WRITE_PATHS={'/v3/product/import','/v2/products/stocks','/v1/product/import/prices'}
 def account():
  if not os.environ.get('OZON_CLIENT_ID') or not os.environ.get('OZON_API_KEY'):raise ValueError('请连接具有商品和库存写入权限的Ozon API')
  return os.environ['OZON_CLIENT_ID']
-def request(path,body):
- account()
+def request(path,body,expected_account=None):
+ from account_context import credentials
+ client,key=credentials()
+ if not client or not key:raise ValueError('请先连接Ozon API')
+ if expected_account is not None and client!=expected_account:raise ValueError('店铺已切换，原店铺任务暂停写入')
  if path not in READ_PATHS|WRITE_PATHS:raise ValueError('接口不在本上架流程内')
- req=urllib.request.Request('https://api-seller.ozon.ru'+path,data=json.dumps(body).encode(),headers={'Content-Type':'application/json','Client-Id':os.environ['OZON_CLIENT_ID'],'Api-Key':os.environ['OZON_API_KEY']})
+ req=urllib.request.Request('https://api-seller.ozon.ru'+path,data=json.dumps(body).encode(),headers={'Content-Type':'application/json','Client-Id':client,'Api-Key':key})
  try:
   with urllib.request.urlopen(req,timeout=35) as response:value=json.load(response)
  except urllib.error.HTTPError as exc:
@@ -44,10 +47,23 @@ class PublicationService:
   self.initial_stock=initial_stock
   self.data=Path(data);self.root=self.data/'publications';self.root.mkdir(parents=True,exist_ok=True)
   self.lock=store_lock;self.mutex=threading.RLock();self.caller=caller;self.account_getter=account_getter;self.wake=threading.Event();self.status='尚未提交'
- def warehouses(self):
+  self.relocate_receipts()
+ def relocate_receipts(self):
+  for job in self.jobs():
+   changed=False;paths=[]
+   for source in job.get('source_paths') or []:
+    sku=Path(str(source).replace('\\','/')).parent.name;target=self.data/'products'/sku/'listing_bundle.json'
+    if sku in job.get('items',{}) and target.exists():paths.append(str(target));changed=changed or str(target)!=source
+    else:paths.append(source)
+   if changed:job['source_paths']=paths;write(self.root/(job['id']+'.json'),job)
+ def call_for(self,merchant,path,body):
+  if self.account_getter()!=merchant:raise ValueError('店铺已切换，原店铺任务暂停；切回对应店铺后继续')
+  return request(path,body,expected_account=merchant) if self.caller is request else self.caller(path,body)
+ def warehouses(self,merchant=None):
+  merchant=merchant or self.account_getter()
   result=[];cursor='';seen=set();diagnostic={'endpoint':'/v2/warehouse/list','pages':[],'eligible_count':0};self.warehouse_diagnostic=diagnostic
   for _ in range(100):
-   try:response=self.caller('/v2/warehouse/list',{'limit':200,**({'cursor':cursor} if cursor else {})})
+   try:response=self.call_for(merchant,'/v2/warehouse/list',{'limit':200,**({'cursor':cursor} if cursor else {})})
    except Exception as exc:
     diagnostic['error_type']=type(exc).__name__;self.save_warehouse_diagnostic();raise
    container=response.get('result') if isinstance(response.get('result'),dict) else response
@@ -83,8 +99,15 @@ class PublicationService:
    except (OSError,ValueError):continue
   return sorted(values,key=lambda j:j.get('created_at',0),reverse=True)
  def active(self,offers):
-  return next((j for j in self.jobs() if j.get('state') not in TERMINAL and not j.get('writes_complete') and set(offers)&set(j.get('items',{}))),None)
- def _save(self,job):job['updated_at']=time.time();write(self.root/(job['id']+'.json'),job);self.status=job.get('message',job['state'])
+  try:merchant=self.account_getter()
+  except ValueError:return None
+  return next((j for j in self.jobs() if j.get('account_id')==merchant and j.get('state') not in TERMINAL and not j.get('writes_complete') and set(offers)&set(j.get('items',{}))),None)
+ def _save(self,job):
+  now=time.time();signature=digest({o:{k:i.get(k) for k in ('import_state','price_state','price_errors','stock_state','on_sale','errors','platform_status','current_free_stock')} for o,i in job.get('items',{}).items()})
+  if signature!=job.get('progress_fingerprint'):job['last_progress_at']=now;job['progress_fingerprint']=signature
+  limit=1800 if job.get('writes_complete') else 600
+  job['needs_attention']=now-job.get('last_progress_at',now)>limit and job.get('state') not in TERMINAL
+  job['updated_at']=now;write(self.root/(job['id']+'.json'),job);self.status=job.get('message',job['state'])
  def begin(self,coordinator,expected,on_progress=None,visible_bundles=None):
   progress=on_progress or (lambda message:None);progress('等待本地提交队列')
   with self.mutex:
@@ -103,7 +126,7 @@ class PublicationService:
     if not fresh:
      progress(path.parent.name+'：刷新已过期或变化的官方属性');coordinator.attributes.refresh(path,force=False)
    progress('核对整组自动售价');coordinator.pricing.calculate_all()
-   progress('重新核对店铺可用仓库');warehouses={r['warehouse_id']:r for r in self.warehouses()}
+   progress('重新核对店铺可用仓库');warehouses={r['warehouse_id']:r for r in self.warehouses(merchant)}
    with self.lock:
     bundles=[read(p) for p in coordinator.paths]
     changes=preview_changes(initial,bundles,allow_automatic=True)
@@ -147,11 +170,14 @@ class PublicationService:
    with self.lock:
     if any(hashlib.sha256(Path(r['bundle_file']).read_bytes()).hexdigest()!=r['sha256'] for r in report['source_checksums']):raise ValueError('校验期间资料已更新，请刷新后提交')
     sealed_revision=revision([read(p) for p in coordinator.paths])
-   plan_hash=digest([merchant,payload,stocks])
+   from listing_prices import listing_prices
+   price_settings=[listing_prices(read(p)) for p in coordinator.paths]
+   plan_hash=digest([merchant,payload,stocks,price_settings])
    for previous in self.jobs():
     if previous.get('plan_hash')==plan_hash and (previous.get('state') in ('on_sale','completed_zero_stock') or previous.get('writes_complete')):
      previous['source_revision']=sealed_revision;self._save(previous);return self.step(previous['id'],refresh=True)
-   job={'id':secrets.token_hex(12),'account_id':merchant,'created_at':time.time(),'state':'prepared','plan_hash':plan_hash,'payload':payload,'source_paths':[str(p) for p in coordinator.paths],'source_revision':sealed_revision,'stocks':stocks,'items':{},'message':'整组资料已冻结，准备提交'}
+   job={'id':secrets.token_hex(12),'account_id':merchant,'created_at':time.time(),'state':'prepared','plan_hash':plan_hash,'payload':payload,'source_paths':[str(p) for p in coordinator.paths],'source_revision':sealed_revision,'revision_version':2,'stocks':stocks,'items':{},'message':'整组资料已冻结，准备提交'}
+   job['price_settings']=price_settings
    history=[j for j in self.jobs() if j.get('account_id')==merchant]
    for item in payload['items']:
     offer=item['offer_id'];item_hash=digest(item);stock_sig=digest([merchant,stocks[offer]])
@@ -163,7 +189,7 @@ class PublicationService:
    if pending:
     job.update(state='import_intent',message='正在提交商品，勿重复操作');self._save(job);progress('正在调用Ozon导入接口，等待任务ID')
     try:
-     result=self.caller('/v3/product/import',{'items':pending});task_id=(result.get('result') or {}).get('task_id')
+     result=self.call_for(merchant,'/v3/product/import',{'items':pending});task_id=(result.get('result') or {}).get('task_id')
      if isinstance(task_id,str) and task_id.isdigit():task_id=int(task_id)
      if type(task_id) is not int or task_id<=0:raise ValueError('未返回明确任务ID')
      job.update(task_id=task_id,state='importing',message='商品已受理，等待平台创建；自动查询导入状态')
@@ -179,10 +205,15 @@ class PublicationService:
    if self.account_getter()!=job['account_id']:raise ValueError('API店铺已切换，未继续原店铺的写入')
    if job['state'] in ('prepared','import_intent','import_uncertain'):
     job.update(state='import_uncertain',message='没有明确导入任务ID，保留记录，不自动重发');self._save(job);return job
+   tasks=self.data/'tasks.json'
+   if tasks.exists():
+    active={t.get('sku') for t in read(tasks) if t.get('state')!='cancelled'}
+    if not set(job['items'])<=active:
+     job.update(state='cancelled_followup',message='本地任务已移除/取消，停止后续写入；平台已受理的操作保留');self._save(job);return job
    for item in job['items'].values():
     if item.get('stock_state')=='intent':item.update(stock_state='uncertain',status='重启后库存结果待核对，不自动重写')
    if job.get('task_id'):
-    response=self.caller('/v1/product/import/info',{'task_id':job['task_id']})
+    response=self.call_for(job['account_id'],'/v1/product/import/info',{'task_id':job['task_id']});job['last_success_at']=time.time()
     for row in (response.get('result') or {}).get('items',[]):
      offer=row.get('offer_id')
      if offer not in job['items']:continue
@@ -192,13 +223,15 @@ class PublicationService:
      elif target['import_state']!='imported':target.update(status='平台正在处理导入，等待创建完成',errors=errors)
    self._save(job)
    current=[read(p) for p in job['source_paths']]
+   if not job.get('revision_version') and revision(current,legacy=True)==job['source_revision']:
+    job['source_revision']=revision(current);job['revision_version']=2
    if revision(current)!=job['source_revision']:
     job.update(state='superseded' if job.get('writes_complete') else 'local_changed',message='本地资料已有新版本；原写入结果保留，旧任务停止后续写入');self._save(job);return job
    visible_offers=[o for o,item in job['items'].items() if item['import_state']!='failed']
    products={}
    if visible_offers:
     try:
-     info=self.caller('/v3/product/info/list',{'offer_id':visible_offers});products={r['offer_id']:r for r in info.get('items',[])}
+     info=self.call_for(job['account_id'],'/v3/product/info/list',{'offer_id':visible_offers});products={r['offer_id']:r for r in info.get('items',[])};job['last_success_at']=time.time()
     except Rejected as exc:
      if 'product creation incomplete' not in str(exc).casefold():raise
    blocking=False
@@ -218,7 +251,23 @@ class PublicationService:
     failed=all(i['import_state']=='failed' for i in job['items'].values())
     job.update(state='failed' if failed else 'importing',message='整组导入失败，请查看逐变体错误' if failed else '正在等待本次导入结果，卡片创建与导入校验分别跟踪，不重复提交')
     self._save(job);return job
-   eligible={r['warehouse_id']:r for r in self.warehouses()}
+   price_rows=[r for r in job.get('price_settings',[]) if r['offer_id'] in offers and ((products.get(r['offer_id']) or {}).get('statuses') or {}).get('is_created') and job['items'][r['offer_id']].get('price_state')!='done' and job['items'][r['offer_id']].get('price_retry_at',0)<=time.time()]
+   if price_rows:
+    job.update(message='正在同步最高价格、划线价、促销最低限制和成本');self._save(job)
+    response=self.call_for(job['account_id'],'/v1/product/import/prices',{'prices':price_rows})
+    results={r.get('offer_id'):r for r in response.get('result',[])}
+    for row in price_rows:
+     result=results.get(row['offer_id']) or {};item=job['items'][row['offer_id']]
+     item['price_state']='done' if result.get('updated') is True and not result.get('errors') else 'pending'
+     item['price_errors']=result.get('errors') or []
+     if item['price_state']!='done':
+      item['price_retry_count']=item.get('price_retry_count',0)+1
+      item['price_retry_at']=time.time()+min(900,120*2**min(item['price_retry_count']-1,3))
+      item['status']='四项价格同步未完成；等待间隔重试'
+    self._save(job)
+   if any(job['items'][r['offer_id']].get('price_state')!='done' for r in job.get('price_settings',[]) if r['offer_id'] in offers):
+    job.update(state='waiting_platform',message='等待同步四项价格；错误详见变体价格回执');self._save(job);return job
+   eligible={r['warehouse_id']:r for r in self.warehouses(job['account_id'])}
    stock_rows=[]
    for offer,item in job['items'].items():
     if item['import_state']!='imported' or item['stock_state'] in ('done','uncertain','intent') or item.get('stock_retry_at',0)>time.time():continue
@@ -236,7 +285,7 @@ class PublicationService:
     for row in stock_rows:job['items'][row['offer_id']]['stock_state']='intent'
     job.update(state='stock_intent',message='商品已创建，正在设置所选仓库库存');self._save(job)
     try:
-     response=self.caller('/v2/products/stocks',{'stocks':stock_rows});results={r.get('offer_id'):r for r in response.get('result',[])}
+     response=self.call_for(job['account_id'],'/v2/products/stocks',{'stocks':stock_rows});results={r.get('offer_id'):r for r in response.get('result',[])}
      for row in stock_rows:
       target=job['items'][row['offer_id']];result=results.get(row['offer_id'])
       if result and result.get('warehouse_id')==row['warehouse_id'] and result.get('updated') is True and not result.get('errors'):target.update(stock_state='done',status='库存已设置')
@@ -248,7 +297,7 @@ class PublicationService:
      for row in stock_rows:job['items'][row['offer_id']].update(stock_state='uncertain',status='库存结果不确定，核对中，不自动重写')
     self._save(job)
    ready=[o for o in offers if ((products.get(o) or {}).get('statuses') or {}).get('is_created') and not (products.get(o) or {}).get('is_archived') and not (products.get(o) or {}).get('is_autoarchived')]
-   stock_data,not_ready=self.read_created_stocks(ready) if ready else ([],set())
+   stock_data,not_ready=self.read_created_stocks(ready,job['account_id']) if ready else ([],set())
    for offer,item in job['items'].items():
     setting=job['stocks'][offer];stock=next((r for r in stock_data if r.get('offer_id')==offer and r.get('warehouse_id')==setting['warehouse_id']),None)
     if item['stock_state'] in ('intent','uncertain') and stock and stock.get('free_stock')==setting['stock']:item.update(stock_state='done',status='库存写入已通过查询核对')
@@ -273,12 +322,13 @@ class PublicationService:
    elif any(i['import_state']=='pending' for i in values):job.update(state='importing',message='部分商品仍在创建中；已就绪变体继续库存流程，不重复提交')
    elif not_ready:job.update(state='waiting_creation',message='商品已受理，平台库存查询尚未就绪；自动等待重试，不重复提交')
    else:job.update(state='waiting_platform',message='自动跟进商品创建、库存及平台审核/可售状态')
-   self._save(job);return job
- def read_created_stocks(self,offers):
+   job['last_success_at']=time.time();job['retry_count']=0;self._save(job);return job
+ def read_created_stocks(self,offers,merchant=None):
+  merchant=merchant or self.account_getter()
   def fetch(batch):
    rows=[];cursor='';seen=set()
    for _ in range(100):
-    response=self.caller('/v2/product/info/stocks-by-warehouse/fbs',{'offer_id':batch,'limit':1000,**({'cursor':cursor} if cursor else {})});rows.extend(response.get('products') or [])
+    response=self.call_for(merchant,'/v2/product/info/stocks-by-warehouse/fbs',{'offer_id':batch,'limit':1000,**({'cursor':cursor} if cursor else {})});rows.extend(response.get('products') or [])
     more=response.get('has_next',False)
     if more is False or more is None or str(more).casefold() in ('false','0',''):return rows
     cursor=response.get('cursor','')
@@ -306,11 +356,18 @@ class PublicationService:
   if attribute=='22390':return '组合成类似产品：系列名称最多255字符，本版默认1。'+str(detail)
   if attribute=='23171':return '主题标签：须以#开头，字母/数字/下划线，标签用空格分隔。'+str(detail)
   return str(detail)
+ def resume_account(self,merchant):
+  with self.mutex:
+   for job in self.jobs():
+    if job.get('account_id')==merchant and job.get('state') not in TERMINAL:
+     job['next_poll_at']=0;job['retry_count']=0;self._save(job)
+  self.wake.set()
  def clear_group(self,offers):
   # Serialize against the worker: wait for any current request before archiving.
   # Only local follow-up is removed. Platform effects and assets are untouched.
   with self.mutex:
-   selected=[j for j in self.jobs() if set(offers)&set(j.get('items',{}))]
+   merchant=self.account_getter()
+   selected=[j for j in self.jobs() if j.get('account_id')==merchant and set(offers)&set(j.get('items',{}))]
    backup=self.root/'cleared';backup.mkdir(exist_ok=True)
    for job in selected:
     job.update(state='cancelled_followup',message='用户清空本地进度，停止后续跟进；平台商品未删除',cleared_at=time.time())
@@ -352,7 +409,7 @@ class PublicationService:
      try:self.step(job['id'])
      except Exception as exc:
       if not path.exists():continue
-      current=read(path);current['message']='查询待重试：'+str(exc)[:180];self._save(current)
+      current=read(path);current['message']='安全查询待重试：'+str(exc)[:180];current['retry_count']=current.get('retry_count',0)+1;self._save(current)
      if path.exists():
-      current=read(path);current['next_poll_at']=time.time()+30;self._save(current)
+      current=read(path);current['next_poll_at']=time.time()+min(600,30*2**min(current.get('retry_count',0),4));self._save(current)
    self.wake.wait(15);self.wake.clear()

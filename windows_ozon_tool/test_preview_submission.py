@@ -88,4 +88,4 @@ class AutomaticPriceAdoptionTests(unittest.TestCase):
    group,api,pub=group_fixtures.GroupTests().setup_group(tmp);b=group.load()[0];self.assertEqual(b['pricing_confirmed_price'],b['price_cny']);self.assertNotIn('售价估算待确认',b.get('blockers',[]))
    group.set_prices([0],['200.00'],group.token());group.pricing.calculate_all();b=group.load()[0];self.assertEqual(b['price_cny'],'200.00');self.assertTrue(b['manual_price'])
    with self.assertRaises(ValueError):group.set_prices([0],['NaN'],group.token())
-   group.set_parameters([0],'cost',['40'],group.token());b=group.load()[0];self.assertFalse(b.get('manual_price'));self.assertEqual(b['pricing_confirmed_price'],b['price_cny'])
+   group.set_parameters([0],'cost',['40'],group.token());b=group.load()[0];self.assertTrue(b.get('manual_price'));self.assertEqual(b['price_cny'],'200.00');self.assertEqual(b['pricing_confirmed_price'],b['price_cny'])

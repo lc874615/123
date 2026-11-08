@@ -1,16 +1,22 @@
 """Optional per-Windows-user Ozon API credentials; no plaintext fallback."""
 import json,os
+from contextlib import nullcontext
+from account_context import LOCK
 from pathlib import Path
 from hosting_credentials import protect
 
-def save(data,client_id,api_key,remember=False):
+def save(data,client_id,api_key,remember=False,store_lock=None):
  client_id=client_id.strip();api_key=api_key.strip()
  if not client_id or not api_key:raise ValueError('请填写Client-Id和Api-Key')
  path=Path(data)/'ozon_api.dpapi'
  if remember:
   raw=protect(json.dumps({'client_id':client_id,'api_key':api_key}).encode());temp=path.with_suffix('.tmp');temp.write_bytes(raw);temp.replace(path)
  elif path.exists():path.unlink()
- os.environ['OZON_CLIENT_ID']=client_id;os.environ['OZON_API_KEY']=api_key
+ with LOCK:
+  with store_lock if store_lock is not None else nullcontext():
+   from shop_state import switch
+   switch(data,os.environ.get('OZON_CLIENT_ID',''),client_id)
+   os.environ['OZON_CLIENT_ID']=client_id;os.environ['OZON_API_KEY']=api_key
 
 def restore(data):
  if os.environ.get('OZON_CLIENT_ID') and os.environ.get('OZON_API_KEY'):return True

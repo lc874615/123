@@ -26,9 +26,15 @@ def prepare(folder,task):
  copy_facts=task.get('group_facts',facts)
  copy_prompt=copy_prompt_for(task)
  (folder/'copy_prompt.txt').write_text(copy_prompt,encoding='utf-8')
- bundle={'sku':task['sku'],'offer_id':task['sku'],'base_article':task.get('base_article',task['sku']),'model':task.get('model'),'variant_index':task.get('variant_index'),'variant_parameters':task.get('variant_parameters',{}),'brand':'Нет бренда','stock':int(task.get('variant_parameters',{}).get('stock','1000')),'facts':facts,'group_facts':task.get('group_facts',facts),'group_variants':task.get('group_variants',[]),'images':checked,'video':{'local_file':'video/product_8s.mp4','exists':(folder/'video'/'product_8s.mp4').exists(),'https_url':None},'copy':{'title_ru':None,'description_ru':None,'tags_ru':[]},'category':{'description_category_id':None,'type_id':None},'price_cny':None,'status':'draft','blockers':['俄文文案待生成','类目及必填属性待匹配','实际定价待核验','图片HTTPS托管未配置']}
+ bundle={'sku':task['sku'],'offer_id':task['sku'],'base_article':task.get('base_article',task['sku']),'model':task.get('model'),'asset_basis':task.get('generation_parameters') or task.get('variant_parameters',{}),'variant_index':task.get('variant_index'),'variant_parameters':task.get('variant_parameters',{}),'brand':'Нет бренда','stock':int(task.get('variant_parameters',{}).get('stock','1000')),'facts':facts,'group_facts':task.get('group_facts',facts),'group_variants':task.get('group_variants',[]),'images':checked,'video':{'local_file':'video/product_8s.mp4','exists':(folder/'video'/'product_8s.mp4').exists(),'https_url':None},'copy':{'title_ru':None,'description_ru':None,'tags_ru':[]},'category':{'description_category_id':None,'type_id':None},'price_cny':None,'status':'draft','blockers':['俄文文案待生成','类目及必填属性待匹配','实际定价待核验','图片HTTPS托管未配置']}
  target=folder/'listing_bundle.json'
  if target.exists():raise ValueError('上架草稿已存在，保留已有编辑，未覆盖')
+ pending=folder/'shared_copy.json'
+ if pending.exists():
+  shared=json.loads(pending.read_text(encoding='utf-8-sig'))
+  if copy_complete(shared.get('copy')) and shared['copy'].get('sku')==task['sku']:
+   bundle.update(copy=shared['copy'],copy_source=shared.get('source'),copy_shared_hash=copy_hash(shared['copy']))
+   bundle['blockers'].remove('俄文文案待生成')
  target.write_text(json.dumps(bundle,ensure_ascii=False,indent=2),encoding='utf-8');return target
 
 def save_copy(folder,value):
@@ -49,7 +55,9 @@ def save_copy(folder,value):
   if not conflict(data,old):raise ValueError('文案已有内容，不自动覆盖')
   backup=folder/'copy_before_material_fix.json'
   if not backup.exists():backup.write_text(json.dumps(old,ensure_ascii=False,indent=2),encoding='utf-8')
- data['copy']=value;data['copy_review_status']='pending_human_review';data['blockers']=[x for x in data['blockers'] if x!='俄文文案待生成']
+ data['copy']=value
+ if data.get('asset_review'):data['asset_review']['copy']=False
+ data['copy_review_status']='pending_human_review';data['blockers']=[x for x in data['blockers'] if x!='俄文文案待生成']
  tmp=target.with_suffix('.tmp');tmp.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding='utf-8');tmp.replace(target)
  return {'saved':True,'review_status':'pending_human_review'}
 
@@ -66,6 +74,7 @@ def share_copy(folder,source,value):
  expected={**value,'sku':data['sku']};old=data.get('copy',{})
  if old.get('title_ru') and copy_hash(old)!=copy_hash(expected):
   backup=folder/('copy_before_shared_sync_'+secrets.token_hex(6)+'.json');backup.write_text(json.dumps(old,ensure_ascii=False,indent=2),encoding='utf-8')
+ if data.get('asset_review'):data['asset_review']['copy']=False
  data.update(copy=expected,copy_source=source,copy_shared_hash=copy_hash(value),copy_review_status='pending_human_review')
  data['blockers']=[b for b in data.get('blockers',[]) if b!='俄文文案待生成']
  tmp=target.with_suffix('.tmp');tmp.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding='utf-8');tmp.replace(target)

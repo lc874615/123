@@ -7,7 +7,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from decimal import Decimal
 from pathlib import Path
-from pricing_core import D,Package,solve
+from pricing_core import D,Package,solve,confirmed_fee_breakdown
 from pricing_sources import import_ogl,import_commissions,select_commission,tiers,OFFICIAL_COMMISSION_URL
 
 FX_URL='https://www.cbr.ru/scripts/XML_daily.asp'
@@ -39,11 +39,11 @@ def fetch(url,limit):
  return raw
 
 def adopt_price(bundle):
- result=bundle.get('auto_pricing')
- if not result or bundle.get('price_cny') is None:return False
+ result=bundle.get('manual_pricing') if bundle.get('manual_price') else bundle.get('auto_pricing')
+ if not result or result.get('valid') is False or bundle.get('price_cny') is None:return False
  before=json.dumps(bundle,sort_keys=True,default=str)
  bundle['pricing_confirmed_fingerprint']=bundle.get('pricing_fingerprint');bundle['pricing_confirmed_price']=bundle['price_cny']
- bundle['pricing_status']='自动估算完成，售价已自动采用' if not bundle.get('manual_price') and str(bundle['price_cny'])==str(result.get('price_cny')) else '采用手动售价，自动估算供参考'
+ bundle['pricing_status']='自动估算完成，售价已自动采用' if not bundle.get('manual_price') and str(bundle['price_cny'])==str(result.get('price_cny')) else '采用手动售价，费用利润已重算'+('；'+result['warning'] if result.get('warning') else '')
  bundle['blockers']=[x for x in bundle.get('blockers',[]) if x!='售价估算待确认']
  return before!=json.dumps(bundle,sort_keys=True,default=str)
 
@@ -78,7 +78,7 @@ class PricingService:
  def map_type(self,type_id,type_name,source_row=None,commission_sha256=None):
   with self.source_lock:
    path=self.root/'type_mapping.json';value=read(path) if path.exists() else {};value[str(type_id)]={'type_name':type_name,'source_row':source_row,'commission_sha256':commission_sha256} if source_row is not None else type_name;write(path,value)
- def quote(self,bundle,configs,mapping):
+ def quote(self,bundle,configs,mapping,selling_price=None):
   params=bundle.get('variant_parameters') or {};category=bundle.get('category') or {}
   if not category.get('type_id'):raise ValueError('尚未匹配商品类目/类型：'+bundle.get('category_match_status','请连接Ozon API重新匹配，或打开类目窗口选择') )
   selected=mapping.get(str(category['type_id']))
@@ -93,8 +93,21 @@ class PricingService:
   args=(params['cost'],D(params['margin'])/100,configs['fx']['rub_per_cny'],package,bands)
   policy=configs['ogl'].get('boundary_policy')
   if policy not in ('uploaded_labels','uploaded_formula'):raise ValueError('请确认OGL边界口径后重新导入运费表')
-  candidates=solve(*args,tiers(configs['ogl'],policy=='uploaded_labels'))
-  if not candidates:raise ValueError('没有同时满足包裹限制、货值和目标利润率的物流方案')
+  table=tiers(configs['ogl'],policy=='uploaded_labels')
+  if selling_price is None:
+   candidates=solve(*args,table)
+   if not candidates:raise ValueError('没有同时满足包裹限制、货值和目标利润率的物流方案')
+  else:
+   amount=D(selling_price)
+   if amount<=0:raise ValueError('手动售价须为正数')
+   rub=amount*D(configs['fx']['rub_per_cny']);candidates=[]
+   for tier in table:
+    shipping=tier.shipping(package)
+    if shipping is None or not tier.matches(rub):continue
+    for band in bands:
+     if band.matches(rub):candidates.append({**confirmed_fee_breakdown(amount,params['cost'],shipping,band.rate),'price_rub_reference':rub,'commission_rate':band.rate,'commission_source':band.source,'logistics_tier':tier.name,'logistics_source':tier.source,'logistics_profile':tier.profile})
+   if not candidates:raise ValueError('此手动售价对应的货值没有适用佣金/物流档位')
+   candidates.sort(key=lambda r:r['fees_cny']['ogl_transport']+r['fees_cny']['commission'])
   result=candidates[0]
   return json.loads(json.dumps({**result,'currency':'CNY','fulfillment':'RFBS','target_margin':str(D(params['margin'])/100),'fx':configs['fx'],'boundary_policy_note':configs['ogl'].get('boundary_policy_note',''),'ogl_sha256':configs['ogl']['workbook_sha256'],'commission_sha256':configs['commissions']['sha256'],'commission_version':configs['commissions']['effective_note'],'type_name':name,'category_confirmed':bool(category.get('confirmed')),'estimated':True},default=str))
  def calculate_all(self):
@@ -105,10 +118,16 @@ class PricingService:
   done=0;pending=0;failures=[]
   for path in (self.data/'products').glob('*/listing_bundle.json'):
    try:
-    with self.lock:bundle=read(path)
+    with self.lock:
+     bundle=read(path)
+     previous=bundle.get('auto_pricing') if isinstance(bundle,dict) else None
+     if isinstance(bundle,dict) and bundle.get('price_cny') is not None and not bundle.get('manual_price'):
+      prior=previous.get('price_cny') if isinstance(previous,dict) else None
+      if prior is None or D(bundle['price_cny'])!=D(prior):
+       bundle['manual_price']=True;write(path,bundle)
     if not isinstance(bundle,dict):raise ValueError('商品草稿必须是JSON对象')
-    inputs={k:bundle.get(k) for k in ('variant_parameters','category','category_match_status')}
-    fingerprint_inputs={**inputs,'category':{k:v for k,v in (bundle.get('category') or {}).items() if k!='attributes_revalidation_required'}}
+    inputs={k:bundle.get(k) for k in ('variant_parameters','category','category_match_status','manual_price')}
+    fingerprint_inputs={**inputs,'selected_manual_price':str(bundle.get('price_cny')) if bundle.get('manual_price') else None,'category':{k:v for k,v in (bundle.get('category') or {}).items() if k!='attributes_revalidation_required'}}
     fingerprint=hashlib.sha256(json.dumps([fingerprint_inputs,configs,mapping,source_error],sort_keys=True,default=str).encode()).hexdigest()
     if bundle.get('pricing_fingerprint')==fingerprint:
      with self.lock:
@@ -119,22 +138,29 @@ class PricingService:
      if source_error:raise ValueError('定价来源未就绪：'+source_error)
      result=self.quote(bundle,configs,mapping);error=None
     except Exception as exc:result=None;error=str(exc)
+    manual_result=None
+    if bundle.get('manual_price'):
+     try:
+      if source_error:raise ValueError(source_error)
+      manual_result={**self.quote(bundle,configs,mapping,bundle['price_cny']),'valid':True}
+      manual_result['warning']='低于目标净利润率' if D(manual_result['net_margin'])<D(manual_result['target_margin']) else ''
+     except Exception as exc:manual_result={'valid':False,'message':str(exc),'price_cny':bundle.get('price_cny')}
     with self.lock:
      latest=read(path)
-     if {k:latest.get(k) for k in inputs}!=inputs:continue
+     if {k:latest.get(k) for k in inputs}!=inputs or (bundle.get('manual_price') and latest.get('price_cny')!=bundle.get('price_cny')):continue
      # A manually edited price is preserved; automatic estimates are separately retained.
      previous=latest.get('auto_pricing')
      if previous is not None and not isinstance(previous,dict):raise ValueError('历史估价格式异常，请检查该商品草稿')
      prior=(previous or {}).get('price_cny')
      manual=bool(latest.get('manual_price')) or (latest.get('price_cny') is not None and str(latest['price_cny'])!=str(prior))
      latest.update(pricing_fingerprint=fingerprint,pricing_status=error or ('自动估算，类目待确认' if not result['category_confirmed'] else '自动估算完成，售价已自动采用'))
-     latest['auto_pricing']=result
+     latest['auto_pricing']=result;latest['manual_pricing']=manual_result
      latest.pop('pricing_confirmed_fingerprint',None)
      if not manual:latest['price_cny']=result['price_cny'] if result else None
      blockers=[x for x in (latest.get('blockers') or []) if x not in ('实际定价待核验','自动定价未完成','售价估算待确认')]
-     if not result:blockers.append('自动定价未完成')
+     if not result and not (manual_result or {}).get('valid'):blockers.append('自动定价未完成')
      latest['blockers']=blockers
-     if result:adopt_price(latest)
+     if result or (manual_result or {}).get('valid'):adopt_price(latest)
      write(path,latest)
     done+=bool(result);pending+=not bool(result)
    except (OSError,ValueError,TypeError,KeyError,AttributeError) as exc:failures.append(path.parent.name+'：'+str(exc))
