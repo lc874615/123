@@ -1,4 +1,5 @@
 """Read-only live Ozon category schemas and evidence-backed local attributes."""
+import re
 import copy,hashlib,json,os,threading,time,urllib.error,urllib.request
 from pathlib import Path
 from decimal import Decimal
@@ -26,9 +27,26 @@ def api(path,body):
  if not isinstance(value,dict) or not isinstance(value.get('result'),list):raise ValueError('Ozon属性响应格式异常')
  return value
 
+AUTOFILL_VERSION=2
+def normalized_name(field):
+ return re.sub(r'\s+',' ',(field.get('name_ru') or field.get('name','')).casefold().replace('ё','е').replace('#','')).strip()
+def audience(bundle):
+ p=bundle.get('variant_parameters') or {}
+ text=' '.join(str(p.get(k,'')) for k in ('name','size','extra'))+' '+str((bundle.get('category') or {}).get('name',''))
+ if any(w in text.casefold() for w in ('儿童','婴儿','детск','малыш','婴幼')):return 'Для детей'
+ return 'Для взрослых'
 def suggested_value(field,bundle):
  """Only declared facts; dictionary values still require an exact official match."""
- name=(field.get('name_ru') or field.get('name','')).lower().strip();identifier=int(field['id']);p=bundle.get('variant_parameters') or {};copy=bundle.get('copy') or {}
+ name=normalized_name(field);identifier=int(field['id']);p=bundle.get('variant_parameters') or {};copy=bundle.get('copy') or {}
+ if name in ('вес товара, г','商品重量，克','商品重量, 克'):return p.get('net_weight')
+ if name in ('количество в упаковке, шт','количество товара в единице измерения','единиц в одном товаре','количество товара','每包数量,pcs','一个商品中的件数'):return p.get('quantity')
+ if name in ('количество заводских упаковок','原厂包装数量'):return '1'
+ if name in ('название','名称'):return copy.get('title_ru')
+ if name in ('код продавца','卖家代码'):return bundle.get('offer_id') or bundle.get('sku')
+ if name in ('гарантия','保证'):return 'Без гарантии'
+ if name in ('целевая аудитория','目标受众'):return audience(bundle)
+ if name in ('название цвета','颜色名称'):
+  return suggested_value({'id':0,'name_ru':'Цвет товара'},bundle)
  if identifier==85 or name in ('бренд','品牌'):return 'Нет бренда'
  if identifier==9048 or name in ('название модели','модель','型号','型号名称'):return bundle.get('model')
  if identifier==4191 or name in ('аннотация','описание товара','商品描述','简介'):return copy.get('description_ru')
@@ -129,7 +147,7 @@ class AttributeService:
    digest=hashlib.sha256(json.dumps([category,type_id,fields],ensure_ascii=False,sort_keys=True).encode()).hexdigest()
    old=bundle.get('attribute_draft') or bundle.get('attribute_history') or {};same=old.get('schema_hash')==digest
    source=source_fingerprint(bundle);manual=set(old.get('manual_keys') or []);unchanged=old.get('source_fingerprint')==source
-   values={k:v for k,v in (old.get('values') or {}).items() if unchanged or k in manual} if same else {};pending=copy.deepcopy(old.get('migration_pending') or {}) if same else {}
+   values={k:v for k,v in (old.get('values') or {}).items() if (unchanged and old.get('autofill_version')==AUTOFILL_VERSION) or k in manual} if same else {};pending=copy.deepcopy(old.get('migration_pending') or {}) if same else {}
    if not same and old:values,pending=self.migrate(bundle,old,fields)
    archive=(bundle.get('attribute_archives') or {}).get(str(category)+':'+str(type_id))
    if not same and archive:
@@ -146,6 +164,11 @@ class AttributeService:
     if field.get('dictionary_id'):
      try:
       rows=self.dictionary(bundle,field,str(suggestion))['result'];matches=[r for r in rows if str(r.get('value','')).casefold()==str(suggestion).casefold()]
+      if not matches:
+       aliases={str(suggestion).casefold()}
+       if normalized_name(field)=='гарантия':aliases.update(('без гарантии','нет гарантии','без гарантий','无担保','无保修'))
+       if normalized_name(field)=='целевая аудитория':aliases.update(('взрослая','взрослые','成人') if suggestion=='Для взрослых' else ('детская','дети','儿童'))
+       rows=self.dictionary(bundle,field)['result'];matches=[r for r in rows if str(r.get('value','')).casefold() in aliases]
       if len(matches)==1:values[key]=[{'dictionary_value_id':matches[0]['id'],'value':matches[0]['value']}]
      except ValueError:pass
     else:
@@ -153,7 +176,7 @@ class AttributeService:
      try:validate_values(field,proposed);values[key]=proposed
      except ValueError:pass
    for k in values:pending.pop(k,None)
-   state={'category_key':[category,type_id],'schema_hash':digest,'fields':fields,'values':values,'suggestions':suggestions,'fetched_at':time.time(),'confirmed':bool(same and unchanged and old.get('confirmed')),'source_fingerprint':source,'manual_keys':sorted(manual) if same else [k for k in values if k in manual],'migration_pending':pending}
+   state={'autofill_version':AUTOFILL_VERSION,'category_key':[category,type_id],'schema_hash':digest,'fields':fields,'values':values,'suggestions':suggestions,'fetched_at':time.time(),'confirmed':bool(same and unchanged and old.get('autofill_version')==AUTOFILL_VERSION and old.get('confirmed')),'source_fingerprint':source,'manual_keys':sorted(manual) if same else [k for k in values if k in manual],'migration_pending':pending}
    with self.lock:
     latest=read(path)
     if category_key(latest)!=(category,type_id) or source_fingerprint(latest)!=source or not latest['category'].get('confirmed'):raise ValueError('读取期间类目已变化，请重新读取')
@@ -161,9 +184,9 @@ class AttributeService:
     current=latest.get('attribute_draft') or {}
     if current.get('schema_hash')==digest:
      for k,v in (current.get('values') or {}).items():
-      if current.get('source_fingerprint')==source or k in (current.get('manual_keys') or []):state['values'][k]=v
+      if (current.get('source_fingerprint')==source and current.get('autofill_version')==AUTOFILL_VERSION) or k in (current.get('manual_keys') or []):state['values'][k]=v
      state['manual_keys']=current.get('manual_keys') or []
-     state['confirmed']=bool(current.get('source_fingerprint')==source and current.get('confirmed'))
+     state['confirmed']=bool(current.get('source_fingerprint')==source and current.get('autofill_version')==AUTOFILL_VERSION and current.get('confirmed'))
      if state['confirmed']:state['confirmed_values_hash']=current.get('confirmed_values_hash')
     if old.get('category_key'):
      archive_key=':'.join(str(v) for v in old['category_key']);latest.setdefault('attribute_archives',{})[archive_key]=old
@@ -222,7 +245,7 @@ class AttributeService:
      with self.lock:bundle=read(path)
      if not (bundle.get('category') or {}).get('confirmed'):continue
      state=bundle.get('attribute_draft') or {}
-     if state.get('category_key')==list(category_key(bundle)) and state.get('source_fingerprint')==source_fingerprint(bundle) and time.time()-state.get('fetched_at',0)<86400:
+     if state.get('autofill_version')==AUTOFILL_VERSION and state.get('category_key')==list(category_key(bundle)) and state.get('source_fingerprint')==source_fingerprint(bundle) and time.time()-state.get('fetched_at',0)<86400:
       self.status='当前类目属性已缓存，可核对或导出';continue
      self.status=path.parent.name+'：正在读取官方必填属性';self.refresh(path);self.status='必填属性已读取，待核对缺失项'
     except Exception as exc:self.status='属性待处理：'+str(exc)[:160];self.retry_at[str(path)]=time.time()+60

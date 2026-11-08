@@ -7,7 +7,7 @@ from variants import FIELDS,column_updates
 from pricing_service import read
 from publication_service import TERMINAL
 
-EXCLUDED={8229,21841,21837,21845}
+EXCLUDED={8229,21845}
 def open_editor(root,folder,service,group_folders,category_callback=None,price_callback=None,connection_callback=None,*,pricing,store,publication):
  import tkinter as tk
  from tkinter import ttk,messagebox
@@ -65,6 +65,9 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   kind,key=row
   if kind=='p':return (b.get('variant_parameters') or {}).get(key,'')
   if kind=='a':
+   identifier=int(key.rsplit(':',1)[1])
+   if identifier==21841:return (b.get('video') or {}).get('https_url') or '8秒视频链接待托管'
+   if identifier==21837:return (b.get('copy') or {}).get('title_ru','')
    state=b.get('attribute_draft') or {}
    if not any(field_key(f)==key for f in state.get('fields',[])):return '— 此类目不适用'
    values=(state.get('values') or {}).get(key) or []
@@ -133,6 +136,8 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   if not editable() or iid not in rows:return
   if not indices:messagebox.showinfo('未选择变体','请至少勾选一个变体列',parent=dialog);return
   row,field=rows[iid];kind,key=row;expected=token
+  if kind=='a' and int(key.rsplit(':',1)[1]) in (21841,21837):
+   messagebox.showinfo('自动使用生成视频','视频链接自动使用本变体生成的8秒MP4；视频名称沿用共用标题。',parent=dialog);return
   if kind=='s':
    if key=='category':choose_category(indices);return
    if key=='warehouse':choose_warehouse(indices);return

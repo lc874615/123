@@ -37,11 +37,19 @@ class PublicationService:
   result=[];cursor='';seen=set()
   for _ in range(100):
    response=self.caller('/v2/warehouse/list',{'limit':200,**({'cursor':cursor} if cursor else {})})
-   rows=response.get('warehouses')
+   container=response.get('result') if isinstance(response.get('result'),dict) else response
+   rows=container.get('warehouses')
    if not isinstance(rows,list):raise ValueError('仓库列表响应异常，未选择任何仓库')
-   result.extend(r for r in rows if r.get('is_rfbs') is True and r.get('status')=='created' and not r.get('is_karantin') and type(r.get('warehouse_id')) is int)
-   if not response.get('has_next'):return result
-   cursor=response.get('cursor','')
+   for row in rows:
+    if not isinstance(row,dict):continue
+    r=dict(row);wid=r.get('warehouse_id')
+    if isinstance(wid,str) and wid.isdigit():wid=int(wid)
+    if r.get('is_rfbs') is True and str(r.get('status','')).casefold()=='created' and not r.get('is_karantin') and type(wid) is int and wid>0:
+     r['warehouse_id']=wid;r['name']=r.get('name') or str(wid);result.append(r)
+   more=container.get('has_next',False)
+   if more is False or more is None or str(more).casefold() in ('false','0',''):return result
+   if more is not True and str(more).casefold() not in ('true','1'):raise ValueError('仓库分页标志异常，请重试')
+   cursor=container.get('cursor','')
    if not cursor or cursor in seen:raise ValueError('仓库分页未完整读取，请重试')
    seen.add(cursor)
   raise ValueError('仓库列表超过分页限制')

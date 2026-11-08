@@ -16,11 +16,12 @@ def revision(bundles):
 
 def binding(field):
  name=(field.get('name_ru') or field.get('name','')).strip().casefold()
- for key,names in [('color',('цвет','цвет товара','颜色','商品颜色')),('material',('материал','основной материал','主体材质','主要材质')),('accessory_material',('материал подкладки','内衬材质')),('quantity',('количество предметов в комплекте','количество в упаковке','套装件数','包装件数'))]:
+ for key,names in [('color',('цвет','цвет товара','颜色','商品颜色')),('material',('материал','основной материал','主体材质','主要材质')),('accessory_material',('материал подкладки','内衬材质')),('quantity',('количество предметов в комплекте','количество в упаковке','количество в упаковке, шт','количество товара в единице измерения','количество товара','единиц в одном товаре','套装件数','包装件数'))]:
   if name in names:return key,Decimal(1)
  for key,ru,zh in [('pack_length','длина упаковки','包装长'),('pack_width','ширина упаковки','包装宽'),('pack_height','высота упаковки','包装高'),('length','длина','商品长'),('width','ширина','商品宽'),('height','высота','商品高')]:
   if name in (ru+', см',ru+' (см)',zh+'(cm)'):return key,Decimal(1)
   if name in (ru+', мм',ru+' (мм)',zh+'(mm)'):return key,Decimal('.1')
+ if name in ('вес товара, г','商品净重(g)'):return 'net_weight',Decimal(1)
  if name in ('вес с упаковкой, г','вес товара с упаковкой, г','包装总重(g)'):return 'pack_weight',Decimal(1)
  return None
 

@@ -125,3 +125,20 @@ class GroupTests(unittest.TestCase):
    self.assertEqual(current['state'],'local_changed');self.assertFalse(any(p=='/v2/products/stocks' for p,b in api.calls))
 
 if __name__=='__main__':unittest.main()
+
+class AutofillRegressionTests(unittest.TestCase):
+ def test_requested_fields_use_variant_sources(self):
+  from attribute_service import suggested_value
+  b={'sku':'BASE(2)','variant_parameters':{'net_weight':'1100','quantity':'2','color':'浅灰色','name':'收纳篮'},'copy':{'title_ru':'Общий заголовок','tags_ru':['#дом','#хранение']}}
+  expected={'Вес товара, г':'1100','Количество в упаковке, шт':'2','Количество товара в единице измерения':'2','Единиц в одном товаре':'2','Название цвета':'светло-серый','Количество заводских упаковок':'1','Название':'Общий заголовок','Код продавца':'BASE(2)','Гарантия':'Без гарантии','#Хештеги':'#дом #хранение','Целевая аудитория':'Для взрослых'}
+  for name,value in expected.items():
+   with self.subTest(name=name):self.assertEqual(suggested_value({'id':1,'name_ru':name},b),value)
+  b['variant_parameters']['name']='儿童书包';self.assertEqual(suggested_value({'id':1,'name_ru':'Целевая аудитория'},b),'Для детей')
+ def test_warehouse_string_ids_and_false_pagination(self):
+  import threading
+  with tempfile.TemporaryDirectory() as tmp:
+   calls=[]
+   def call(path,body):
+    calls.append(body);return {'result':{'warehouses':[{'warehouse_id':'777','name':'Real shape','is_rfbs':True,'status':'created'}],'has_next':'false'}}
+   pub=PublicationService(tmp,threading.Lock(),call,lambda:'shop')
+   self.assertEqual(pub.warehouses()[0]['warehouse_id'],777);self.assertEqual(len(calls),1)
