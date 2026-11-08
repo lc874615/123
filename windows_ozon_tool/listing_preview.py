@@ -50,7 +50,7 @@ def public_url(url):
 def build_item(folder,bundle):
  folder=Path(folder);errors=attribute_errors(bundle)
  from asset_state import pending
- if pending(bundle):errors.append('参数已变化，素材待更新；请手动启动更新素材后再提交')
+ if pending(bundle):errors.append('图片重做仍在生成或采集中，请等待本页自动替换完成' if bundle.get('image_regeneration_jobs') else '参数已变化，素材待更新；请手动启动更新素材后再提交')
  if bundle.get('manual_price') and (bundle.get('manual_pricing') or {}).get('valid') is False:errors.append('手动售价没有适用的费用/物流方案：'+str(bundle['manual_pricing'].get('message','')))
  tasks=folder.parent.parent/'tasks.json'
  if tasks.exists() and not any(t.get('sku')==bundle.get('sku') and t.get('state')!='cancelled' for t in read(tasks)):errors.append('该任务已删除或取消，请重新打开整组草稿')

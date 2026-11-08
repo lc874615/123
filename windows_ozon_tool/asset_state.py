@@ -34,4 +34,4 @@ def mark_changes(before,after):
 
 def pending(bundle):
  state=bundle.get('asset_review') or {}
- return bool(bundle.get('regeneration_pending') or any(state.get(k) for k in ('main','gallery','copy')))
+ return bool(bundle.get('image_regeneration_jobs') or bundle.get('regeneration_pending') or any(state.get(k) for k in ('main','gallery','copy')))

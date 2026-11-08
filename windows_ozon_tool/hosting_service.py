@@ -48,6 +48,7 @@ class HostingService:
   return hashlib.sha256(json.dumps({k:config.get(k) for k in ('provider','region','bucket','prefix')},sort_keys=True).encode()).hexdigest()
  def identity(self,folder,bundle):
   if not isinstance(bundle,dict):raise HostingError('商品草稿不是JSON对象，已跳过；其他商品继续处理')
+  if bundle.get('image_regeneration_jobs'):raise WaitingForAssets('图片正在重做，等待新图替换完成后自动上传')
   if bundle.get('recollection_pending'):raise WaitingForAssets('图片正在重新采集，等待完成后自动上传')
   audit=inspect(folder)
   if not audit['verified']:raise WaitingForAssets('等待8张生成图校验完成：'+audit['reason'])

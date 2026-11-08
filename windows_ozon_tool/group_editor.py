@@ -17,7 +17,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  coordinator=GroupService(paths,service,pricing,store)
  coordinator.ensure_fixed_vat()
  if publication.initial_stock is not None and not publication.active([p.parent.name for p in paths]):coordinator.ensure_initial_stock(publication.initial_stock)
- dialog=tk.Toplevel(root);dialog.title('整组预览 · Ozon 商品自动化 1.0.8');dialog.geometry('1280x850');dialog.minsize(950,650)
+ dialog=tk.Toplevel(root);dialog.title('整组预览 · Ozon 商品自动化 1.0.9');dialog.geometry('1280x850');dialog.minsize(950,650)
  busy=False;selected=set(range(len(paths)));focus=['',''];bundles=[];token=None;rendered=None;warehouses={};photos=[];rows={};last_job=None;copy_dirty=False;displayed_copy=None;copy_timer=None;busy_since=0;operation_error='';operation_name=''
  ttk.Label(dialog,text='每列一个变体；双击单格修改，点击参数名选中整行后批量修改。仓库显示当前店铺全部类型和状态。',wraplength=900).pack(pady=6)
  status=ttk.Label(dialog,text='正在加载整组预览',wraplength=1200);status.pack(pady=3)
@@ -120,7 +120,9 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   try:
    current=coordinator.load();current_token=revision(current)
    if current_token!=rendered:
-    bundles=current;token=current_token;rendered=current_token;grid_refresh()
+    media_changed=[[r.get('sha256') for r in b.get('images') or []] for b in bundles]!=[[r.get('sha256') for r in b.get('images') or []] for b in current]
+    bundles=current;token=current_token;rendered=current_token;grid_refresh();regen_ui['refresh']()
+    if media_changed:media_refresh()
    actual_copy=bundles[0].get('copy') or {}
    if not copy_dirty and actual_copy!=displayed_copy:
     for key,widget in copy_widgets.items():
@@ -132,7 +134,8 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    if operation_error:status.configure(text='处理未完成：'+operation_error[:220]+' | 详见提交与上架进度页')
    from asset_state import pending
    changed=[b['sku'] for b in bundles if pending(b)]
-   if changed:status.configure(text='素材待更新：'+'、'.join(changed)+'。仅提示，不自动重作；请在任务中心手动更新素材。')
+   if any(b.get('image_regeneration_jobs') for b in bundles):status.configure(text='图片重做已排队或正在采集；进度见图片视频页，无需重新提交上架。')
+   elif changed:status.configure(text='素材待更新：'+'、'.join(changed)+'。仅提示，不自动重作；请在任务中心手动更新素材。')
    if copy_dirty:status.configure(text=status.cget('text')+' | 共用文案尚未保存')
    submit_button.configure(state='disabled' if busy else 'normal',text='查看当前提交进度' if job else '提交上架');update_button.configure(state='disabled' if busy or job else 'normal');progress_refresh()
    blocker.configure(text=('当前按钮暂不可用：'+coordinator.status+'，已用'+str(int(time.monotonic()-busy_since))+'秒' if busy else '共用文案尚未保存' if copy_dirty else '已有上架任务：点击右侧按钮查看进度，系统不会重复提交' if job else operation_error or ''))
@@ -368,15 +371,16 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   run(lambda:coordinator.set_copy(value,expected),saved,label='自动保存整组共用文案')
  ttk.Label(copy_tab,text='自动保存并同步全组。标题和简介不能为空；标签会自动规范格式。').pack(pady=6)
  media_canvas=tk.Canvas(media_tab,highlightthickness=0);media_canvas.pack(side='left',fill='both',expand=True);media_scroll=ttk.Scrollbar(media_tab,orient='vertical',command=media_canvas.yview);media_scroll.pack(side='right',fill='y');media_canvas.configure(yscrollcommand=media_scroll.set);media_body=ttk.Frame(media_canvas);media_id=media_canvas.create_window((0,0),window=media_body,anchor='nw');media_body.bind('<Configure>',lambda e:media_canvas.configure(scrollregion=media_canvas.bbox('all')));media_canvas.bind('<Configure>',lambda e:media_canvas.itemconfigure(media_id,width=e.width))
+ media_cards=ttk.Frame(media_body);media_cards.pack(fill='x')
  def media_wheel(event):
-  if str(event.widget).startswith(str(media_tab)):media_canvas.yview_scroll(-int(event.delta/120),'units')
+  if str(event.widget).startswith(str(media_tab)) and event.widget.winfo_class()!='Text':media_canvas.yview_scroll(-int(event.delta/120),'units')
  dialog.bind_all('<MouseWheel>',media_wheel,add='+')
  def media_refresh():
   from PIL import Image,ImageOps,ImageTk
-  for child in media_body.winfo_children():child.destroy()
+  for child in media_cards.winfo_children():child.destroy()
   photos.clear()
   for n,b in enumerate(bundles):
-   frame=ttk.LabelFrame(media_body,text=b['sku']);frame.grid(row=n//4,column=n%4,padx=8,pady=8,sticky='n')
+   frame=ttk.LabelFrame(media_cards,text=b['sku']);frame.grid(row=n//4,column=n%4,padx=8,pady=8,sticky='n')
    if b.get('images'):
     path=paths[n].parent/b['images'][0]['local_file']
     try:
@@ -403,6 +407,32 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   path=paths[index].parent/'video'/'product_8s.mp4'
   if os.name=='nt' and path.is_file():os.startfile(str(path))
   elif (bundles[index].get('video') or {}).get('https_url'):webbrowser.open(bundles[index]['video']['https_url'])
+ def queue_images(kind,skus,addition):
+  if copy_dirty:
+   if not busy:save_copy(after=lambda:queue_images(kind,skus,addition))
+   return
+  if not editable():return
+  def action():
+   with store.lock:return store.image_jobs.create(bundles[0]['sku'],kind,skus,addition)
+  def queued(result):
+   footer_note.configure(text='已备份并加入 '+str(len(result))+' 个图片任务；插件自动生成、采集并替换，进度见本页下方。')
+   regen_ui['refresh']()
+  run(action,queued,label='备份并创建图片重做任务')
+ def stop_images():
+  if busy:return
+  targets=offers()
+  with store.lock:store.set_paused(True)
+  def action():
+   deadline=time.time()+75
+   while True:
+    with store.lock:
+     jobs=store.image_jobs.active(targets);waiting=any(j.get('pause_requested') and not j.get('pause_ack') for j in jobs)
+     if not waiting:return store.image_jobs.cancel(targets)
+    if time.time()>deadline:raise ValueError('插件停止回执尚未到达，备份与当前图片保留，请保持插件连接')
+    time.sleep(.5)
+  run(action,lambda count:footer_note.configure(text='已停止 '+str(count)+' 个图片重做任务；原图与备份保留。'),label='停止本组图片重做')
+ from media_regeneration_ui import build as build_regeneration
+ regen_ui=build_regeneration(media_body,lambda:bundles,store,queue_images,stop_images)
  more_menu.add_command(label='刷新图片视频预览',command=media_refresh)
  progress=ttk.Treeview(progress_tab,columns=('offer','warehouse','quantity','state','errors'),show='headings',height=12)
  for key,label,width in [('offer','货号',180),('warehouse','目标仓库',200),('quantity','目标库存 / 当前可用',160),('state','上架阶段',250),('errors','平台结果 / 错误',350)]:progress.heading(key,text=label);progress.column(key,width=width,anchor='center')
@@ -453,6 +483,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    return
   if busy:return
   if active_job():notebook.select(progress_tab);return
+  if store.image_jobs.active(offers()):notebook.select(media_tab);footer_note.configure(text='图片重做尚未结束，请等待新图、视频及托管完成后再提交上架。');return
   if not editable():return
   from category_catalog import setup_errors
   errors=setup_errors(coordinator.load(),os.environ.get('OZON_CLIENT_ID',''))
@@ -495,9 +526,9 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  def poll():
   if not dialog.winfo_exists():return
   refresh();dialog.after(1500,poll)
- refresh();media_refresh();poll()
+ refresh();poll()
  try:
   publication.account_getter();dialog.after(100,load_warehouses)
  except ValueError:status.configure(text='请先连接Ozon API，再读取店铺全部仓库')
- dialog._ozon_ui={'notebook':notebook,'copy_widgets':copy_widgets,'tree':tree,'more':more_menu,'submit':submit_button,'update_preview':update_button,'footer_note':footer_note,'refresh':refresh}
+ dialog._ozon_ui={'notebook':notebook,'copy_widgets':copy_widgets,'tree':tree,'more':more_menu,'submit':submit_button,'update_preview':update_button,'footer_note':footer_note,'regeneration':regen_ui,'refresh':refresh}
  return dialog

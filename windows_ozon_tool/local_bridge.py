@@ -38,6 +38,8 @@ class Store:
   self.sync_shared_copies()
   self.normalize_saved_images()
   self.resume_local_media()
+  from image_regeneration import ImageJobs
+  self.image_jobs=ImageJobs(self)
  def repair_recollection_queue(self):
   # Older backups may have removed the leader's files before setting its recovery flag.
   groups={t.get('copy_leader',t['sku']) for t in self.tasks if t.get('recollection_requested')}
@@ -52,6 +54,7 @@ class Store:
   tasks=[t for t in self.tasks if t.get('recollection_requested') and t['state'] not in ('saved','cancelled')]
   return min(tasks,key=lambda t:(bool(t.get('gallery_source')),t.get('variant_index') or 0)) if tasks else None
  def save(self):
+  if hasattr(self,'image_jobs'):self.image_jobs.save()
   temp=self.path.with_suffix('.tmp');temp.write_text(json.dumps(self.tasks,ensure_ascii=False,indent=2),encoding='utf-8');temp.replace(self.path)
  def create(self,sku,facts,references=None):
   if not valid_article(sku):raise ValueError('货号格式无效')
@@ -121,7 +124,7 @@ class Store:
  def set_paused(self,paused):
   self.control={'paused':bool(paused),'serial':self.control.get('serial',0)+1}
   self.control_path.write_text(json.dumps(self.control),encoding='utf-8')
-  for task in self.tasks:
+  for task in self.tasks+(self.image_jobs.jobs if hasattr(self,'image_jobs') else []):
    if paused and task.get('copy_state')=='running':task.update(copy_state='needs_attention',pause_requested=True,pause_ack=False,resume_mode='copy_inspect_only',message='文案制作已暂停，继续时只读取已有结果')
    if paused and task['state'] in ('claimed','sending','waiting'):
     task.update(state='needs_attention',pause_requested=True,pause_ack=False,message='已请求暂停，等待插件停止；恢复时只读取已有结果')
@@ -159,6 +162,7 @@ class Store:
   if not selected:raise ValueError('未找到商品组')
   leader=selected.get('copy_leader',sku);group=[t for t in self.tasks if t.get('copy_leader',t['sku'])==leader and t.get('state')!='cancelled']
   if any(t['state'] in ('claimed','sending','waiting') or t.get('copy_state')=='running' or t['sku'] in self.video_running for t in group):raise ValueError('请先暂停当前制作并等待视频处理完成，再手动更新素材')
+  if self.image_jobs.active([t['sku'] for t in group]):raise ValueError('本组正在重做图片，请先在图片视频页等待完成或停止本组重做')
   stamp=time.strftime('%Y%m%d-%H%M%S')+'-'+secrets.token_hex(4);plans=[]
   # Back up the whole group before changing live tasks.
   for t in group:
@@ -190,7 +194,9 @@ class Store:
     task.update(state='queued',message='上传适配已更新，恢复尚未发送的任务');count+=1
   self.save();return {'resumed':count}
  def blockers(self):
-  return [{'id':t['id'],'sku':t['sku'],'state':t['state'],'copy_state':t.get('copy_state'),'message':t.get('message',''),'resume_mode':t.get('resume_mode'),'recollection_requested':bool(t.get('recollection_requested')),'expected_images':t.get('expected_images',8)} for t in self.tasks if t['state'] in ('claimed','sending','waiting','needs_attention','review') or t.get('copy_state') in ('running','needs_attention')]
+  if hasattr(self,'image_jobs'):self.image_jobs.tick()
+  tasks=self.tasks+([j for j in self.image_jobs.jobs if j['state'] not in ('saved','cancelled','queued')] if hasattr(self,'image_jobs') else [])
+  return [{'id':t['id'],'sku':t['sku'],'state':t['state'],'copy_state':t.get('copy_state'),'message':t.get('message',''),'resume_mode':t.get('resume_mode'),'recollection_requested':bool(t.get('recollection_requested')),'expected_images':t.get('expected_images',8)} for t in tasks if t['state'] in ('claimed','sending','waiting','needs_attention','review','processing','committing') or t.get('copy_state') in ('running','needs_attention')]
  def queue_reason(self):
   if self.control.get('paused'):return '制作已暂停；点击继续制作或在插件继续'
   blockers=self.blockers()
@@ -200,15 +206,23 @@ class Store:
   if not self.client.get('auto_enabled'):return '扩展已连接，但自动批次未启用'
   return '扩展已连接，等待下一次轮询领取（最长约30秒）'
  def task_status(self,tid):
+  if hasattr(self,'image_jobs') and self.image_jobs.get(tid):
+   self.image_jobs.tick();job=self.image_jobs.get(tid);return {'found':True,**job,'saved_count':len(job['received_images'])}
   task=next((t for t in self.tasks if t['id']==tid),None)
   if not task:return {'found':False}
   return {'found':True,'id':task['id'],'sku':task['sku'],'state':task['state'],'copy_state':task.get('copy_state'),'saved_count':len(task.get('received_images',[])),'expected_images':task.get('expected_images',8),'message':task.get('message',''),'resume_mode':task.get('resume_mode'),'pause_requested':task.get('pause_requested',False),'recollection_requested':bool(task.get('recollection_requested'))}
  def recover(self,sku,automatic=False):
   group=[t for t in self.tasks if t['sku']==sku and t.get('set_mode') and t['state'] in ('waiting','needs_attention','claimed','sending','saved')]
   if len(group)!=1:raise ValueError('没有唯一可恢复的整套任务，请核对货号')
+  if any(str(r.get('generation_task_id','')).startswith('image-') for r in group[0].get('received_images') or []):
+   leader=group[0].get('copy_leader',sku);products=[t for t in self.tasks if t.get('copy_leader',t['sku'])==leader and t['state']!='cancelled'];jobs=self.image_jobs.active([t['sku'] for t in products])
+   if any(j['state']=='queued' for j in jobs):raise ValueError('本组有尚未发送的图片重做任务，请先完成或停止重做')
+   if not jobs:self.image_jobs.recollect(products);jobs=self.image_jobs.active([t['sku'] for t in products])
+   return self.image_jobs.recover(jobs[0]['id'])
   from recovery_targets import markers
   task=group[0];validate_complete=len(task.get('received_images',[]))==8;task.pop('resume_mode',None);task.update(state='waiting',message='用户请求核对最终编号文件，不重新生成');self.save();return {'id':task['id'],'sku':task['sku'],'set_mode':True,'saved_count':len(task.get('received_images',[])),'expected_images':task.get('expected_images',8),'orderRepairPending':validate_complete,'automaticRecovery':bool(automatic or task.get('recollection_requested')),'recovery_markers':markers(self.folder/'products'/sku,task)}
  def set_result(self,tid,index,encoded):
+  if hasattr(self,'image_jobs') and self.image_jobs.get(tid):return self.image_jobs.accept(tid,index,encoded)
   task=self.find(tid)
   if not task.get('set_mode') or task['state'] not in ('claimed','sending','waiting','saved'):raise ValueError('整套任务状态无效')
   received=task.setdefault('received_images',[])
@@ -297,6 +311,7 @@ class Store:
    threading.Thread(target=self.render_video,args=(task['sku'],),daemon=True).start()
   self.save()
  def repair_order(self,tid):
+  if hasattr(self,'image_jobs') and self.image_jobs.get(tid):return self.image_jobs.reset(tid)
   import shutil
   task=self.find(tid)
   if not task.get('set_mode') or task['state'] not in ('waiting','claimed','sending','needs_attention'):raise ValueError('当前任务不允许自动重新采集')
@@ -323,6 +338,13 @@ class Store:
   self.repair_recollection_queue()
   selected=self.find(tid);leader=selected.get('copy_leader',selected['sku'])
   group=[t for t in self.tasks if t.get('copy_leader',t['sku'])==leader and t['state']!='cancelled']
+  active_jobs=self.image_jobs.active([t['sku'] for t in group])
+  if active_jobs:
+   if any(j['state']=='queued' for j in active_jobs):raise ValueError('本组还有未发送的图片重做任务，请先完成或在图片视频页停止重做，再采集已有图片')
+   if any(j.get('pause_requested') and not j.get('pause_ack') for j in active_jobs):raise ValueError('等待图片任务停止回执后自动恢复采集')
+   for j in active_jobs:j.update(state='needs_attention',resume_mode='inspect_only',pause_requested=False)
+   self.set_paused(False);return 'existing-image-jobs'
+  if any(any(r.get('generation_task_id') for r in t.get('received_images') or []) for t in group):return self.image_jobs.recollect(group)
   if any(t['state'] in ('claimed','sending','waiting') or t.get('copy_state')=='running' for t in group):raise ValueError('请先停止扩展自动批次，再备份并重新采集')
   if any(t.get('pause_requested') and not t.get('pause_ack') for t in group):raise ValueError('插件尚未确认停止，等待暂停回执后自动采集')
   if any(t['sku'] in self.video_running for t in group):raise ValueError('旧视频仍在处理中，请等待完成再采集')
@@ -355,16 +377,18 @@ class Store:
   self.set_paused(False);self.save();return stamp
  def claim(self):
   if self.control.get('paused'):raise ValueError('制作已暂停')
-  if any(t['state'] in ('claimed','sending','waiting','needs_attention','review') for t in self.tasks):raise ValueError('请先审核上一任务或处理异常，不能继续发送')
+  if self.blockers():raise ValueError('请先审核上一任务或处理异常，不能继续发送')
+  if hasattr(self,'image_jobs') and self.image_jobs.next():return self.image_jobs.claim()
   t=next((t for t in self.tasks if t['state']=='queued'),None)
   if not t:raise ValueError('没有排队任务，请在本地窗口创建商品')
   t['generation_parameters']=copy.deepcopy(t.get('variant_parameters') or {});t['generation_variants']=copy.deepcopy(t.get('group_variants') or []);t['state']='claimed'
   if t.get('set_mode'):
-   from image_prompts import generation_prompt
-   t['prompt']=generation_prompt(t['facts'],t.get('group_facts',''),t.get('expected_images',8))
+   from image_prompts import generation_prompt,reference_contract
+   t['prompt']=generation_prompt(t['facts'],t.get('group_facts',''),t.get('expected_images',8))+'\n'+reference_contract(t)
   t['prompt']=t['prompt'].replace('。如以文件或ZIP交付，8张文件须按01_至08_编号，01_为主图，ZIP不得包含原始参考图。','。仅交付8张独立图片，按01_至08_编号。');t['prompt']+='\n交付要求：仅输出独立图片及逐张下载入口，不要打包，不提供ZIP或其他压缩包。';self.save();result=dict(t);result['references']=[{'name':r['name'],'mime':r['mime'],'purpose':r.get('purpose','variant_main'),'base64':base64.b64encode(Path(r['path']).read_bytes()).decode()} for r in t.get('references',[])];return result
  def find(self,tid):
   t=next((t for t in self.tasks if t['id']==tid),None)
+  if not t and hasattr(self,'image_jobs'):t=self.image_jobs.get(tid)
   if not t:raise ValueError('任务不存在')
   return t
  def retry(self,tid):
@@ -373,6 +397,7 @@ class Store:
   if any(x['state'] in ('claimed','sending','waiting') for x in self.tasks):raise ValueError('还有执行中的任务，请先暂停')
   t.update(state='queued',message='用户确认网页未发送后重新排队');self.save()
  def cancel_product(self,sku):
+  if self.image_jobs.active([sku]):raise ValueError('该商品正在重做图片，请先在图片视频页停止本组重做')
   group=[t for t in self.tasks if t['sku']==sku]
   if not group:raise ValueError('商品不存在')
   if any(t['state'] in ('claimed','sending','waiting') for t in group):raise ValueError('请先在扩展停止自动批次，等待任务暂停后再取消')
@@ -401,6 +426,7 @@ class Store:
  def delete_task(self,tid):return self.delete_tasks([tid])
  def delete_tasks(self,ids):
   selected=[self.find(tid) for tid in ids];skus={t['sku'] for t in selected}
+  if self.image_jobs.active(skus):raise ValueError('本组有图片重做任务，请先在图片视频页停止本组重做')
   for task in selected:
    if task.get('pause_requested') and not task.get('pause_ack'):raise ValueError('插件尚未确认停止，请等候暂停回执后删除')
    if task['state'] in ('claimed','sending','waiting') or task.get('copy_state')=='running' or task['sku'] in self.video_running:raise ValueError('任务正在执行，请先暂停并核对后删除')
@@ -550,7 +576,7 @@ def server(store,token,port=8765):
     body=json.loads(self.rfile.read(n))
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.8','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.9','paired':True}
      elif self.path=='/control':value=store.control
      elif self.path=='/automation-control':value=store.set_paused(bool(body.get('paused')))
      elif self.path=='/pause-ack':
@@ -582,9 +608,10 @@ def server(store,token,port=8765):
      elif self.path=='/poll':
       store.client={'last_seen':time.time(),'auto_enabled':bool(body.get('auto_enabled',True))}
       active=bool(store.blockers()) or store.control.get('paused',False)
-      copy_task=store.next_copy() if not active else None
+      image_pending=bool(store.image_jobs.next())
+      copy_task=store.next_copy() if not active and not image_pending else None
       recovery=store.next_recollection()
-      value={'recovery_sku':recovery['sku'] if recovery else None,'ready':not active and any(t['state']=='queued' and t.get('auto_batch') for t in store.tasks),'copy_sku':copy_task['sku'] if copy_task else None,'blocked_reason':store.queue_reason() if active else None,'blockers':store.blockers(),'summary':store.queue_summary()}
+      value={'recovery_sku':recovery['sku'] if recovery else None,'ready':not active and (image_pending or any(t['state']=='queued' and t.get('auto_batch') for t in store.tasks)),'copy_sku':copy_task['sku'] if copy_task else None,'blocked_reason':store.queue_reason() if active else None,'blockers':store.blockers(),'summary':store.queue_summary()}
      elif self.path=='/copy-task':
       sku=body['sku']
       if not valid_article(sku):raise ValueError('货号格式无效')
@@ -631,7 +658,7 @@ def server(store,token,port=8765):
       for task in store.tasks:
        if task['sku']==sku:task.update(copy_state='done',message='8图、视频、俄文文案及草稿已完成；待定价、类目和托管' if task.get('video') else '最终图片及共用俄语文案已保存；视频并行处理中')
       store.save()
-     elif self.path=='/recover':value=store.recover(body['sku'],automatic=bool(body.get('automatic')))
+     elif self.path=='/recover':value=store.image_jobs.recover(body['task_id']) if body.get('task_id') and store.image_jobs.get(body['task_id']) else store.recover(body['sku'],automatic=bool(body.get('automatic')))
      elif self.path=='/claim':value=store.claim()
      elif self.path=='/set-result':value=store.set_result(body['task_id'],body['index'],body['image_b64'])
      elif self.path=='/result':value=store.result(body['task_id'],body['image_b64'])
@@ -939,7 +966,7 @@ def main(test_mode=False,on_ready=None):
   def ready():
    with store.lock:
     leader=task.get('copy_leader',task['sku']);group=[t for t in store.tasks if t.get('copy_leader',t['sku'])==leader]
-    waiting=any(t.get('pause_requested') and not t.get('pause_ack') or t['sku'] in store.video_running for t in group)
+    waiting=any(t.get('pause_requested') and not t.get('pause_ack') or t['sku'] in store.video_running for t in group+store.image_jobs.active([t['sku'] for t in group]))
    if waiting:
     if time.time()<deadline:root.after(1000,ready);return
     messagebox.showerror('采集等待中','插件尚未确认停止或旧视频仍在处理；原文件保留。请保持插件已连接后重试。');return

@@ -36,11 +36,11 @@ def main():
      assert widgets['tree'].exists('s:'+key),key
     widgets['notebook'].select(1);root.update();text=widgets['copy_widgets']['description_ru'];text.delete('1.0','end');text.insert('1.0','Общее описание: металлическая корзина с картонной вставкой.');text.edit_modified(True)
    except Exception as error:
-    errors.append(str(error));ui['close']();return
+    errors.append(__import__('traceback').format_exc());ui['close']();return
    def check():
     try:
      assert all(read(p)['copy']['description_ru']=='Общее описание: металлическая корзина с картонной вставкой.' for p in group.paths)
-    except Exception as error:errors.append(str(error))
+    except Exception as error:errors.append(__import__('traceback').format_exc())
     if errors:preview.destroy();ui['close']();return
     widgets['update_preview'].invoke()
     def updated():
@@ -49,13 +49,32 @@ def main():
       assert not submission_calls
       assert widgets['submit'].cget('state')!='disabled'
       assert widgets['update_preview'].winfo_rooty()+widgets['update_preview'].winfo_height()<=preview.winfo_rooty()+preview.winfo_height()
-     except Exception as error:errors.append(str(error))
-     preview.destroy();ui['close']()
+     except Exception as error:errors.append(__import__('traceback').format_exc())
+     if errors:preview.destroy();ui['close']();return
+     controls=widgets['regeneration'];widgets['notebook'].select(2);calls=[]
+     ui['store'].image_jobs.create=lambda sku,kind,selected,addition:(calls.append((sku,kind,selected,addition)) or ['fixture-job'])
+     controls['shared_add'].insert('1.0','场景加入人物');controls['shared_start'].invoke()
+     def shared_queued():
+      try:
+       assert calls[-1][1:] == ('shared_details',[],'场景加入人物')
+       for var in controls['selected'].values():var.set(True)
+       controls['main_add'].insert('1.0','保留原商品腿部造型');controls['main_start'].invoke()
+      except Exception as error:errors.append(__import__('traceback').format_exc());preview.destroy();ui['close']();return
+      def main_queued():
+       try:
+        assert calls[-1][1]=='variant_main' and set(calls[-1][2])=={read(p)['sku'] for p in group.paths}
+        assert calls[-1][3]=='保留原商品腿部造型'
+        assert not submission_calls
+        assert controls['shared_add'].get('1.0','end-1c')=='场景加入人物'
+       except Exception as error:errors.append(__import__('traceback').format_exc())
+       preview.destroy();ui['close']()
+      root.after(1000,main_queued)
+     root.after(1000,shared_queued)
     root.after(2500,updated)
    root.after(3500,check)
   try:local_bridge.main(test_mode=True,on_ready=ready)
   finally:publication_service.PublicationService.begin=original_begin
   if errors:raise AssertionError(errors)
- print('PASS Tk: three main tabs, grouped tasks, four preview tabs, visible footer, four prices, shared-copy autosave, and separate local-update/submit buttons; local update never submits.')
+ print('PASS Tk: three main tabs, grouped tasks, four preview tabs, visible footer, four prices, shared-copy autosave, and separate local-update/submit buttons; local update never submits; media regeneration controls queue shared details and selected main jobs.')
 
 if __name__=='__main__':main()

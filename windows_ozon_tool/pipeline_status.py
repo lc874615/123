@@ -4,6 +4,7 @@ from asset_state import pending
 from listing_bundle import copy_complete
 
 def stage(task,bundle,jobs):
+ if bundle.get('image_regeneration_jobs'):return '图片重做与自动采集中（原图已备份）'
  if task.get('recollection_requested'):
   if task.get('state')=='waiting':return '自动采集已有图片：'+task.get('message','正在定位并下载')
   if task.get('resume_mode')=='inspect_only':return '等待自动定位原始图片（无需操作插件）'

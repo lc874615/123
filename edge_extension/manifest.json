@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Ozon 商品自动化助手",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "连接本地工具，自动采集当前GPT任务的生成图库与独立图片文件。",
   "permissions": [
     "activeTab",
