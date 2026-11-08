@@ -268,16 +268,23 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
     path=paths[n].parent/b['images'][0]['local_file']
     try:
      with Image.open(path) as image:photo=ImageTk.PhotoImage(ImageOps.contain(image.convert('RGB'),(140,180)))
-     photos.append(photo);ttk.Label(frame,image=photo).pack(padx=6,pady=6)
+     photos.append(photo);thumbnail=ttk.Label(frame,image=photo,cursor='hand2');thumbnail.pack(padx=6,pady=6);thumbnail.bind('<Button-1>',lambda e,n=n:show_image(n,0))
     except (OSError,ValueError):ttk.Label(frame,text='主图不可读').pack(pady=20)
    ttk.Button(frame,text='查看8张图片',command=lambda n=n:gallery(n)).pack(pady=3)
    ttk.Button(frame,text='播放本地8秒视频',command=lambda n=n:play_video(n)).pack(pady=3)
+ def show_image(index,start):
+  from image_viewer import open_viewer
+  return open_viewer(dialog,paths[index].parent,bundles[index].get('images') or [],start,bundles[index]['sku']+' · 图片预览')
  def gallery(index):
   window=tk.Toplevel(dialog);window.title(bundles[index]['sku']+' · 01主图 / 02—08详情');images=[]
   from PIL import Image,ImageOps,ImageTk
   for i,row in enumerate(bundles[index].get('images') or []):
-   with Image.open(paths[index].parent/row['local_file']) as source:photo=ImageTk.PhotoImage(ImageOps.contain(source.convert('RGB'),(150,200)))
-   images.append(photo);cell=ttk.Frame(window);cell.grid(row=i//4,column=i%4,padx=5,pady=5);ttk.Label(cell,image=photo).pack();ttk.Label(cell,text=f'{i+1:02d} '+('本变体主图' if i==0 else '共用详情图')).pack()
+   cell=ttk.Frame(window);cell.grid(row=i//4,column=i%4,padx=5,pady=5)
+   try:
+    with Image.open(paths[index].parent/row['local_file']) as source:photo=ImageTk.PhotoImage(ImageOps.contain(source.convert('RGB'),(150,200)))
+    images.append(photo);thumbnail=ttk.Label(cell,image=photo,cursor='hand2');thumbnail.pack();thumbnail.bind('<Button-1>',lambda e,n=index,start=i:show_image(n,start))
+   except (OSError,ValueError,KeyError):ttk.Label(cell,text='图片不可读').pack()
+   ttk.Label(cell,text=f'{i+1:02d} '+('本变体主图' if i==0 else '共用详情图')).pack()
   window._photos=images
  def play_video(index):
   path=paths[index].parent/'video'/'product_8s.mp4'
