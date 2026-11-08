@@ -22,7 +22,7 @@
  }
  async function expandFiles(doc,{report=async()=>{},stopped=()=>false,marker='',manual=false,allowPartial=false,continuations=false}={}){
   const main=globalThis.OzonConversation.main(doc);if(!main)return 0;let count=0;
-  let anchor=null;if(marker){const walker=doc.createTreeWalker(main,4);let n;while((n=walker.nextNode()))if(n.nodeValue.includes(marker))anchor=n;}
+  const anchor=globalThis.OzonConversation.requestAnchor(doc,marker);
   if(allowPartial&&marker&&!anchor)return 0;
   const nextUser=anchor?globalThis.OzonConversation.nextUser(doc,anchor,{continuations}):null;
   for(const button of main.querySelectorAll('button,[role="button"],summary')){
@@ -43,7 +43,7 @@
  }
  function candidates(doc,{marker='',expected=8,allowPartial=false,manual=false,onlyVisible=false,inventory=false,continuations=false}={}){
   const main=globalThis.OzonConversation.main(doc);if(!main)return null;
-  let anchor=null;if(marker){const walker=doc.createTreeWalker(main,4);let n;while((n=walker.nextNode()))if(n.nodeValue.includes(marker))anchor=n;}
+  const anchor=globalThis.OzonConversation.requestAnchor(doc,marker);
   if(allowPartial&&marker&&!anchor)return null;
   const nextUser=anchor?globalThis.OzonConversation.nextUser(doc,anchor,{continuations}):null;
   const images=new Map(),unnumbered=new Map();

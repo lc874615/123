@@ -1,5 +1,5 @@
 """Temporary localhost fixture for browser_recollection_group.cjs; never uses shop credentials."""
-import json,socket,sys,tempfile,threading
+import json,os,socket,sys,tempfile,threading
 from pathlib import Path
 from local_bridge import Store,server
 from product_group import configure
@@ -16,11 +16,12 @@ def main():
    p=Path(tmp)/'products'/t['sku'];p.mkdir(parents=True,exist_ok=True)
    bundle={'sku':t['sku'],'offer_id':t['sku'],'copy':{'sku':t['sku'],'title_ru':'Стул','description_ru':'Стул из металла','tags_ru':['#стул'],'missing_facts':[]},'copy_source':'FIXTURE(1)','variant_parameters':t['variant_parameters'],'category':{'confirmed':True},'price_cny':'200','images':[],'blockers':[]}
    write(p/'recovery_backups'/'old'/'listing_bundle.json',bundle)
+   if os.environ.get('OZON_TEST_HISTORY')=='1' and t['variant_index']==1:write(p/'regeneration_backups'/'old'/'task.json',{**t,'id':'HISTORICAL-LEADER'})
    if t['variant_index']!=1:write(p/'listing_bundle.json',bundle);t.update(recollection_requested=True,resume_mode='inspect_only')
   store.render_video=lambda sku:None
   with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
   http=server(store,'fixture-token',port);threading.Thread(target=http.serve_forever,daemon=True).start()
-  print(json.dumps({'port':port,'tasks':[{'id':t['id'],'sku':t['sku'],'expected':t['expected_images']} for t in store.tasks]}),flush=True)
+  print(json.dumps({'port':port,'tasks':[{'id':'HISTORICAL-LEADER' if os.environ.get('OZON_TEST_HISTORY')=='1' and t['variant_index']==1 else t['id'],'sku':t['sku'],'expected':t['expected_images']} for t in store.tasks]}),flush=True)
   for command in sys.stdin:
    if command.strip()=='backup':
     with store.lock:store.set_paused(True);stamp=store.recollect(store.tasks[0]['id'])

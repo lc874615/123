@@ -11,8 +11,7 @@
  }
  function structuralGallery(doc,{expected=8,marker='',allowPartial=false,continuations=false}={}){
   const main=globalThis.OzonConversation.main(doc);if(!main)return null;
-  let anchor=null;
-  if(marker){const walker=doc.createTreeWalker(main,4);let n;while((n=walker.nextNode()))if(n.nodeValue.includes(marker))anchor=n;}
+  const anchor=globalThis.OzonConversation.requestAnchor(doc,marker);
   if(allowPartial&&marker&&!anchor)return null;
   const nextUser=anchor?globalThis.OzonConversation.nextUser(doc,anchor,{continuations}):null;
   const matches=[];
@@ -35,8 +34,7 @@
   const structural=structuralGallery(doc,{expected,marker,allowPartial,continuations});if(structural)return structural;
   const main=globalThis.OzonConversation.main(doc);if(!main)return null;
   const all=[...main.querySelectorAll('img')].filter(i=>visibleImage(i)&&!globalThis.OzonConversation.userOwned(i)&&!i.closest('aside,[role="complementary"],#prompt-textarea'));
-  let anchor=null;
-  if(marker){const walker=doc.createTreeWalker(main,4);let n;while((n=walker.nextNode()))if(n.nodeValue.includes(marker))anchor=n;}
+  const anchor=globalThis.OzonConversation.requestAnchor(doc,marker);
   if(allowPartial&&marker&&!anchor)return null;
   const images=anchor?all.filter(i=>!!(anchor.compareDocumentPosition(i)&4)):all;
   const large=images.filter(i=>{const r=i.getBoundingClientRect();return r.width>=240&&r.height>=280&&i.naturalWidth>=512&&i.naturalHeight>=512;});

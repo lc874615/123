@@ -68,29 +68,69 @@
  }
  function nextUser(doc,anchor,{continuations=false}={}){return userNodes(doc).find(n=>!!(anchor.compareDocumentPosition(n)&4)&&(!continuations||/【OZON_(?:TASK|COPY):/.test(String(n.innerText||'')+' '+String(n.textContent||''))));}
  function region(doc,{marker='',allowPartial=false,continuations=false}={}){
-  const root=main(doc);let anchor=null;
-  if(root&&marker&&doc.createTreeWalker){const walker=doc.createTreeWalker(root,4);let node;while((node=walker.nextNode()))if(node.nodeValue.includes(marker))anchor=node;}
+  const root=main(doc),anchor=requestAnchor(doc,marker);
   const next=anchor?nextUser(doc,anchor,{continuations}):null;
   return {root,anchor,includes:n=>!!root&&!userOwned(n)&&!(allowPartial&&marker&&!anchor)&&(!anchor||!!(anchor.compareDocumentPosition(n)&4))&&(!next||!!(n.compareDocumentPosition(next)&4))};
  }
- async function revealRequest(doc,marker,{sleep=ms=>new Promise(r=>setTimeout(r,ms)),stopped=()=>false,report=async()=>{}}={}){
-  const find=()=>userNodes(doc).find(n=>(String(n.innerText||'')+' '+String(n.textContent||'')).includes(marker));
-  const expanded=new WeakSet();
-  async function expandPrompts(){let changed=false;for(const user of userNodes(doc))for(const b of user.querySelectorAll('button,[role="button"]')){const label=(b.textContent||b.getAttribute('aria-label')||'').trim();if(!expanded.has(b)&&/^(?:展开|显示更多|查看更多|read more|show more)$/i.test(label)&&b.getAttribute('aria-expanded')!=='true'){expanded.add(b);b.click();changed=true;}}if(changed)await sleep(250);}
-  await expandPrompts();let found=find();if(found){found.scrollIntoView?.({block:'center'});await sleep(350);return true;}
-  const root=main(doc);if(!root)return false;
-  const candidates=[root,...root.querySelectorAll('*')];for(let n=root.parentElement;n;n=n.parentElement)candidates.push(n);
-  const scroller=candidates.filter(n=>n.scrollHeight>n.clientHeight+100&&n.clientHeight>150&&/auto|scroll/.test(doc.defaultView.getComputedStyle(n).overflowY)).sort((a,b)=>b.clientHeight-a.clientHeight)[0]||doc.scrollingElement;
-  if(!scroller)return false;const start=scroller.scrollTop;let previous=-1,stalled=0;
-  await report('正在自动定位本任务的原始作图回复；只读取已有结果');scroller.scrollTop=0;await sleep(400);
-  for(let i=0;i<60;i++){
-   if(stopped())throw Error('已暂停，已有文件保留');
-   await expandPrompts();found=find();if(found){found.scrollIntoView?.({block:'center'});await sleep(350);return true;}
-   const position=scroller.scrollTop;if(position===previous)stalled++;else stalled=0;if(stalled>=3)break;previous=position;
-   scroller.scrollTop+=Math.max(scroller.clientHeight*.8,400);await sleep(300);
-  }
-  scroller.scrollTop=start;return false;
+ function requestAnchor(doc,marker){
+  if(!marker)return null;
+  const user=userNodes(doc).find(n=>(String(n.innerText||'')+' '+String(n.textContent||'')).includes(marker));
+  if(user)return user;
+  const root=main(doc);if(root&&doc.createTreeWalker){const walker=doc.createTreeWalker(root,4);let n;while((n=walker.nextNode()))if(n.nodeValue.includes(marker))return n;}
+  return null;
  }
- globalThis.OzonConversation={nextUser,revealRequest,assistantNodes,assistantImages,userOwned,imageScopes,requestReplies,main,contentRoots,userNodes,generating,region};
+ async function revealRequest(doc,marker,{sleep=ms=>new Promise(r=>setTimeout(r,ms)),stopped=()=>false,report=async()=>{},alternatives=[],onMarker=()=>{}}={}){
+  globalThis.__ozonRecoveryInfo={phase:'locating',scrollers:0,checkedSegments:0,historyCandidates:alternatives.filter(m=>m!==marker).length};
+  const expanded=new WeakSet();
+  async function expandPrompts(){let changed=false;for(const user of userNodes(doc))for(const b of user.querySelectorAll('button,[role="button"]')){const label=(b.textContent||b.getAttribute('aria-label')||'').trim();if(!expanded.has(b)&&/^(?:展开|显示更多|查看更多|read more|show more)$/i.test(label)&&b.getAttribute('aria-expanded')!=='true'){expanded.add(b);b.click();changed=true;}}if(changed)await sleep(300);}
+  async function found(wanted){
+   await expandPrompts();
+   for(const candidate of wanted){const node=userNodes(doc).find(n=>(String(n.innerText||'')+' '+String(n.textContent||'')).includes(candidate));if(!node)continue;
+    node.scrollIntoView?.({block:'center',behavior:'instant'});await sleep(500);
+    if(requestAnchor(doc,candidate)){globalThis.__ozonRecoveryInfo={...globalThis.__ozonRecoveryInfo,phase:'located',historical:candidate!==marker};onMarker(candidate);return true;}
+   }return false;
+  }
+  if(await found([marker]))return true;
+  const root=main(doc);if(!root)return false;
+  const all=[root,...root.querySelectorAll('*')];for(let n=root.parentElement;n;n=n.parentElement)all.push(n);if(doc.scrollingElement)all.push(doc.scrollingElement);
+  const width=root.getBoundingClientRect().width;
+  // Work can scroll an overflow:hidden surface programmatically. Do not require auto/scroll CSS.
+  const scrollers=[...new Set(all)].filter(n=>n.scrollHeight>n.clientHeight+80&&n.clientHeight>=150&&n.getBoundingClientRect().width>=Math.min(width*.6,400)).sort((a,b)=>{const user=userNodes(doc)[0],hasA=!!user&&a.contains(user),hasB=!!user&&b.contains(user);if(hasA!==hasB)return hasB-hasA;if(hasA&&a.contains(b))return 1;if(hasA&&b.contains(a))return -1;return b.clientHeight*b.clientWidth-a.clientHeight*a.clientWidth;}).slice(0,4);
+  globalThis.__ozonRecoveryInfo.scrollers=scrollers.length;
+  async function scan(wanted){
+   globalThis.__ozonRecoveryInfo.phase=wanted[0]===marker?'loading_current_history':'loading_backup_history';
+   const deadline=Date.now()+45000;
+   if(await found(wanted))return true;
+   for(const scroller of scrollers){
+    if(Date.now()>deadline)break;
+    const start=scroller.scrollTop;let count=0,lastNotice=0;
+    for(const direction of [-1,1]){
+     if(Date.now()>deadline)break;
+     let stable=0,last='';
+     for(let i=0;i<120;i++){
+      if(Date.now()>deadline)break;
+      if(stopped())throw Error('已暂停，已有文件保留');
+      if(await found(wanted))return true;
+      if(Date.now()-lastNotice>4000){lastNotice=Date.now();await report('正在自动'+(direction<0?'向上加载历史回复':'检查历史回复')+'（第'+(++count)+'段）；只采集本商品已有图片');}
+      globalThis.__ozonRecoveryInfo.checkedSegments++;
+      const step=Math.max(scroller.clientHeight*.75,250),target=Math.max(0,Math.min(scroller.scrollHeight-scroller.clientHeight,scroller.scrollTop+direction*step));
+      scroller.scrollTop=target;scroller.dispatchEvent(new doc.defaultView.Event('scroll'));await sleep(500);
+      if(await found(wanted))return true;
+      const signature=scroller.scrollTop+'|'+scroller.scrollHeight+'|'+(userNodes(doc)[0]?.textContent||'').slice(-160);
+      stable=signature===last?stable+1:0;last=signature;
+      // Keep waiting at history boundaries for lazy loading, rather than failing after 400ms.
+      if(stable>=8)break;
+     }
+    }
+    scroller.scrollTop=start;await sleep(250);
+   }return false;
+  }
+  if(await scan([marker]))return true;
+  const historical=[...new Set(alternatives)].filter(m=>typeof m==='string'&&m!==marker);
+  if(historical.length){await report('当前标记未出现，正在核对同货号、同参数的历史任务标记');if(await scan(historical))return true;}
+  globalThis.__ozonRecoveryInfo.phase='not_found';
+  return false;
+ }
+ globalThis.OzonConversation={requestAnchor,nextUser,revealRequest,assistantNodes,assistantImages,userOwned,imageScopes,requestReplies,main,contentRoots,userNodes,generating,region};
  if(typeof module!=='undefined')module.exports=globalThis.OzonConversation;
 })();

@@ -8,7 +8,7 @@ const {chromium}=require('playwright'),assert=require('node:assert/strict'),path
  try{
   const fixture=await line();browser=await chromium.launch({executablePath:process.env.OZON_TEST_CHROMIUM||'/usr/bin/chromium',headless:true,args:['--no-sandbox']});const page=await browser.newPage();await page.route('https://chatgpt.com/**',r=>r.fulfill({contentType:'text/html',body:'<main id="transcript" style="height:600px;overflow-y:auto"></main>'}));await page.goto('https://chatgpt.com/c/synthetic-seven-variants');
   await page.evaluate(tasks=>{
-   const originalNow=Date.now;Date.now=()=>originalNow()*10;window.savedTaskIds=[];
+   const originalNow=Date.now,originalTimeout=setTimeout;Date.now=()=>originalNow()*10;window.setTimeout=(fn,ms,...args)=>originalTimeout(fn,Math.min(ms,60),...args);window.savedTaskIds=[];
    const pictures=Array.from({length:15},(_,i)=>{const c=document.createElement('canvas');c.width=600;c.height=800;const x=c.getContext('2d');x.fillStyle=`rgb(${i*15},80,100)`;x.fillRect(0,0,600,800);return c.toDataURL('image/png');});
    const scroller=document.querySelector('#transcript');
    function markup(t,i){const n=i===0?8:1;const files=Array.from({length:n},(_,k)=>`<span class="group/resource-row"><a href="${pictures[i===0?k:i+8]}">${String(k+1).padStart(2,'0')}_variant_${i}.png</a></span>`);return `<section style="height:1500px"><div class="group/user-message">${t.sku} 【OZON_TASK:${t.id}】<img style="width:70px" src="${pictures[14]}"></div><div class="block-reply"><div class="MarkdownRoot-X">商品图片</div><div class="resource-card">${files.slice(0,3).join('')}${n>3?'<button class="expand">另外5个</button>':''}<div class="hidden-files" hidden>${files.slice(3).join('')}</div></div></div></section>`;}

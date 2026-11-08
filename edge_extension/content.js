@@ -1,4 +1,4 @@
-(()=>{if(window.__ozonLocalInstalled)return;window.__ozonLocalInstalled=true;globalThis.__ozonContentVersion='1.0.6';let stop=false,running=false,activeImageTaskId=null;
+(()=>{if(window.__ozonLocalInstalled)return;window.__ozonLocalInstalled=true;globalThis.__ozonContentVersion='1.0.8';let stop=false,running=false,activeImageTaskId=null;
 async function collectSource(task,options){
  if(!globalThis.OzonDelivery)throw Error('最终交付采集模块未加载，请更新插件并刷新作图页');
  return globalThis.OzonDelivery.collect(document,{...options,task});
@@ -10,7 +10,7 @@ function findEditor(){
  for(const sel of selectors){const found=[...document.querySelectorAll(sel)].filter(e=>e.getClientRects().length&&!e.disabled&&e.getAttribute('aria-hidden')!=='true');if(found.length===1)return found[0];}
  return null;
 }
-function preflight(){const e=findEditor(),generating=globalThis.OzonConversation.generating(document);return {version:'1.0.6',imageTaskId:running?activeImageTaskId:null,ready:!!e&&!generating,generating,url:location.origin+location.pathname,message:generating?'上一条回复仍在生成，等待完成后自动继续':e?'输入框已识别':'未找到可见输入框。请在普通ChatGPT文字对话中刷新页面，点击输入区后重试；不能在图片查看器或其他应用中执行。'};}
+function preflight(){const e=findEditor(),generating=globalThis.OzonConversation.generating(document);return {version:'1.0.8',imageTaskId:running?activeImageTaskId:null,ready:!!e&&!generating,generating,url:location.origin+location.pathname,message:generating?'上一条回复仍在生成，等待完成后自动继续':e?'输入框已识别':'未找到可见输入框。请在普通ChatGPT文字对话中刷新页面，点击输入区后重试；不能在图片查看器或其他应用中执行。'};}
 async function run(task){
  if(running)throw Error('本页正在执行任务');running=true;activeImageTaskId=task.id;stop=false;
  try{
@@ -36,7 +36,7 @@ async function run(task){
   while(Date.now()<deadline){
    if(stop)throw Error('已暂停；请检查网页结果');
    if(task.set_mode){
-    const images=await collectImages(task,{allowPartial:true,expected:task.expected_images||8,previous:previousImages,before:oldReplies,marker:'【OZON_TASK:'+task.id+'】',sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message),onImage:(index,b64)=>saveImage(task,index,b64)});
+    const images=await collectImages(task,{allowPartial:true,expected:task.expected_images||8,previous:previousImages,before:oldReplies,marker:task.recovery_marker||'【OZON_TASK:'+task.id+'】',sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message),onImage:(index,b64)=>saveImage(task,index,b64)});
     if(images)return;
     if(Date.now()-lastReport>5000){lastReport=Date.now();if(!task._deliveryNotice)await tell(task,'waiting','等待当前任务的最终图片交付；不会重新发送作图请求');}
 
@@ -59,10 +59,10 @@ async function run(task){
  }catch(e){await tell(task,'needs_attention',e.message).catch(()=>{});}finally{running=false;activeImageTaskId=null;}
 }
 async function collectImages(task,options){
- const marker='【OZON_TASK:'+task.id+'】';
+ const marker=task.recovery_marker||'【OZON_TASK:'+task.id+'】';
  if(task.orderRepairPending){
   const main=globalThis.OzonConversation.main(document);
-  if(!(main?.innerText||main?.textContent||'').includes(marker))throw Error('自动重采集未找到当前任务标记，已有文件保留，请切回对应作图页面');
+  if(!(String(main?.innerText||'')+' '+String(main?.textContent||'')).includes(marker))throw Error('自动重采集未找到当前任务标记，已有文件保留，请切回对应作图页面');
   const images=await collectSource(task,{...options,allowPartial:false,onImage:async()=>{}});
   if(!images)return null;
   const reset=await chrome.runtime.sendMessage({kind:'repair-order',task_id:task.id});if(reset?.error)throw Error(reset.error);
@@ -88,11 +88,11 @@ async function recover(task){
  if(running)throw Error('本页正在执行任务');running=true;activeImageTaskId=task.id;stop=false;
  try{
   if(task.automaticRecovery){
-   const found=await globalThis.OzonConversation.revealRequest(document,'【OZON_TASK:'+task.id+'】',{sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message)});
-   if(!found)throw Error('未找到本任务的原始作图标记；请保持对应作图对话打开。未采集其他商品、未重新作图');
+   const found=await globalThis.OzonConversation.revealRequest(document,'【OZON_TASK:'+task.id+'】',{sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message),alternatives:task.recovery_markers||[],onMarker:marker=>{task.recovery_marker=marker;}});
+   if(!found)throw Error('历史回复已自动查找，但未找到本任务的原始作图标记；请保持对应作图对话打开。未采集其他商品、未重新作图');
   }
-  let images=await collectImages(task,{manual:!task.automaticRecovery,continuations:!!task.automaticRecovery,expected:task.expected_images||8,marker:'【OZON_TASK:'+task.id+'】',sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message),onImage:(index,b64)=>saveImage(task,index,b64)});
-  const until=Date.now()+20*60*1000;while(!images&&Date.now()<until&&!stop){await sleep(1500);images=await collectImages(task,{manual:!task.automaticRecovery,continuations:!!task.automaticRecovery,expected:task.expected_images||8,marker:'【OZON_TASK:'+task.id+'】',sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message),onImage:(index,b64)=>saveImage(task,index,b64)});}
+  let images=await collectImages(task,{manual:!task.automaticRecovery,continuations:!!task.automaticRecovery,expected:task.expected_images||8,marker:task.recovery_marker||'【OZON_TASK:'+task.id+'】',sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message),onImage:(index,b64)=>saveImage(task,index,b64)});
+  const until=Date.now()+20*60*1000;while(!images&&Date.now()<until&&!stop){await sleep(1500);images=await collectImages(task,{manual:!task.automaticRecovery,continuations:!!task.automaticRecovery,expected:task.expected_images||8,marker:task.recovery_marker||'【OZON_TASK:'+task.id+'】',sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message),onImage:(index,b64)=>saveImage(task,index,b64)});}
   if(!images)throw Error('等待最终编号图片文件超时，未重新生成；已有图片保留');
 
  }catch(e){await tell(task,'needs_attention',e.message).catch(()=>{});}finally{running=false;activeImageTaskId=null;}

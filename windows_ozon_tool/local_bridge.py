@@ -206,7 +206,8 @@ class Store:
  def recover(self,sku,automatic=False):
   group=[t for t in self.tasks if t['sku']==sku and t.get('set_mode') and t['state'] in ('waiting','needs_attention','claimed','sending','saved')]
   if len(group)!=1:raise ValueError('没有唯一可恢复的整套任务，请核对货号')
-  task=group[0];validate_complete=len(task.get('received_images',[]))==8;task.pop('resume_mode',None);task.update(state='waiting',message='用户请求核对最终编号文件，不重新生成');self.save();return {'id':task['id'],'sku':task['sku'],'set_mode':True,'saved_count':len(task.get('received_images',[])),'expected_images':task.get('expected_images',8),'orderRepairPending':validate_complete,'automaticRecovery':bool(automatic or task.get('recollection_requested'))}
+  from recovery_targets import markers
+  task=group[0];validate_complete=len(task.get('received_images',[]))==8;task.pop('resume_mode',None);task.update(state='waiting',message='用户请求核对最终编号文件，不重新生成');self.save();return {'id':task['id'],'sku':task['sku'],'set_mode':True,'saved_count':len(task.get('received_images',[])),'expected_images':task.get('expected_images',8),'orderRepairPending':validate_complete,'automaticRecovery':bool(automatic or task.get('recollection_requested')),'recovery_markers':markers(self.folder/'products'/sku,task)}
  def set_result(self,tid,index,encoded):
   task=self.find(tid)
   if not task.get('set_mode') or task['state'] not in ('claimed','sending','waiting','saved'):raise ValueError('整套任务状态无效')
@@ -549,7 +550,7 @@ def server(store,token,port=8765):
     body=json.loads(self.rfile.read(n))
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.6','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.8','paired':True}
      elif self.path=='/control':value=store.control
      elif self.path=='/automation-control':value=store.set_paused(bool(body.get('paused')))
      elif self.path=='/pause-ack':
