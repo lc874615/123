@@ -587,7 +587,7 @@ def server(store,token,port=8765):
     body=json.loads(self.rfile.read(n))
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.11','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.12','paired':True}
      elif self.path=='/control':value=store.control
      elif self.path=='/automation-control':value=store.set_paused(bool(body.get('paused')))
      elif self.path=='/pause-ack':
@@ -819,6 +819,8 @@ def main(test_mode=False,on_ready=None):
      leader['prompt']+='。本次附件前'+str(len(leader['main_references']))+'张仅用于变体1主图，之后'+str(len(shared))+'张仅用于7张共用详情图。主图必须与当前变体参数一致。详情图按全组颜色混搭、尺寸对照方式生成，注明不同规格为选项而非全部随货交付。'
 
      store.save()
+     # Explicit Create-and-process starts only after every variant and reference is committed.
+     store.set_paused(False)
     except Exception:
      store.tasks=previous;store.save();raise
    notebook.select(pages['tasks'])

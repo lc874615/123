@@ -1,7 +1,7 @@
 let copyCandidates=[],candidateSku='';
 const status=document.querySelector('#status');
 chrome.storage.local.get(['pairToken','status','lastSku','activeTask']).then(x=>{document.querySelector('#token').value=x.pairToken||'';if(x.status)status.textContent=x.status;document.querySelector('#sku').value=x.activeTask?.sku||x.lastSku||'';});
-document.querySelector('#pair').onclick=async()=>{await chrome.storage.local.set({pairToken:document.querySelector('#token').value.trim()});await health();};
+document.querySelector('#pair').onclick=async()=>{try{await chrome.storage.local.set({pairToken:document.querySelector('#token').value.trim()});const [tab]=await chrome.tabs.query({active:true,currentWindow:true});const r=await chrome.runtime.sendMessage({kind:'pair-connect',tabId:tab?.id});status.textContent=r?.error||r?.status||'配对检查未完成';await health();await refreshBinding();}catch(e){status.textContent=e.message;}};
 document.querySelector('#run').onclick=async()=>{const [tab]=await chrome.tabs.query({active:true,currentWindow:true});try{const r=await chrome.runtime.sendMessage({kind:'enable',tabId:tab.id});status.textContent=r.error||r.status;await refreshBinding();}catch(e){status.textContent=e.message;}};
 document.querySelector('#stop').onclick=async()=>{const r=await chrome.runtime.sendMessage({kind:'stop'});status.textContent=r.status||r.error;};
 chrome.storage.onChanged.addListener(x=>{if(x.status){status.textContent=x.status.newValue;if(/失败|需处理|超时|未找到|不匹配|异常|中断/.test(x.status.newValue))document.querySelector('#advanced').open=true;}if(x.lastSku||x.activeTask){const sku=x.activeTask?.newValue?.sku||x.lastSku?.newValue;if(sku){document.querySelector('#current-sku').textContent=sku;document.querySelector('#sku').value=sku;}}updateButtons();});
