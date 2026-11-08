@@ -112,6 +112,13 @@ class GroupService:
    if len(matches)!=1:raise ValueError(b['sku']+'：官方字典未唯一匹配“'+label+'”，请逐格选择官方选项')
    row=next(iter(matches.values()));values.append({'dictionary_value_id':row['id'],'value':row['value']})
   return values
+ def use_only_warehouse(self,warehouses,merchant,expected=None):
+  if len(warehouses)!=1:return False
+  record=warehouses[0];bundles=self.load()
+  indices=[n for n,b in enumerate(bundles) if (b.get('fulfillment') or {}).get('warehouse_id')!=record['warehouse_id'] or (b.get('fulfillment') or {}).get('account_id')!=merchant]
+  if not indices:return False
+  self.set_settings(indices,'warehouse',{'warehouse_id':record['warehouse_id'],'warehouse_name':record['name'],'account_id':merchant},expected)
+  return True
  def confirm_current_categories(self,indices,expected=None):
   with self.mutex:
    with self.lock:

@@ -168,3 +168,28 @@ class CategoryInteractionTests(unittest.TestCase):
   with tempfile.TemporaryDirectory() as tmp:
    group,api,pub=GroupTests().setup_group(tmp);b=read(group.paths[0]);b['category']['confirmed']=False;write(group.paths[0],b)
    group.confirm_current_categories([0],group.token());self.assertTrue(group.load()[0]['category']['confirmed']);self.assertFalse(any(p.endswith('/tree') for p,body in api.calls))
+
+class OGLWarehouseTests(unittest.TestCase):
+ def test_created_ogl_warehouse_is_eligible_even_when_not_rfbs(self):
+  import threading
+  with tempfile.TemporaryDirectory() as tmp:
+   def call(path,body):return {'warehouses':[{'warehouse_id':77,'name':'Synthetic OGL','warehouse_type':'ogl','is_rfbs':False,'status':'created'},{'warehouse_id':78,'warehouse_type':'ogl','is_rfbs':False,'status':'disabled'}],'has_next':False}
+   pub=PublicationService(tmp,threading.Lock(),call,lambda:'shop');self.assertEqual([r['warehouse_id'] for r in pub.warehouses()],[77])
+ def test_only_warehouse_is_applied_to_whole_group_once(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   group,api,pub=GroupTests().setup_group(tmp,True)
+   for path in group.paths:
+    b=read(path);b.pop('fulfillment',None);write(path,b)
+   rows=[{'warehouse_id':77,'name':'Synthetic OGL'}]
+   self.assertTrue(group.use_only_warehouse(rows,'test-shop',group.token()))
+   self.assertTrue(all(b['fulfillment']['warehouse_id']==77 for b in group.load()))
+   token=group.token();self.assertFalse(group.use_only_warehouse(rows,'test-shop',token));self.assertEqual(group.token(),token)
+   self.assertFalse(group.use_only_warehouse(rows+[{'warehouse_id':88,'name':'Second'}],'test-shop',token))
+ def test_ogl_submission_rechecks_warehouse_and_sets_stock(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   group,api,pub=GroupTests().setup_group(tmp)
+   original=pub.caller
+   def call(path,body):
+    if path=='/v2/warehouse/list':return {'warehouses':[{'warehouse_id':77,'name':'OGL','warehouse_type':'ogl','is_rfbs':False,'status':'created'}],'has_next':False}
+    return original(path,body)
+   pub.caller=call;job=pub.begin(group,group.token());pub.step(job['id']);pub.step(job['id']);self.assertEqual(api.stocks[(group.load()[0]['sku'],77)],5)

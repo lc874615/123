@@ -49,7 +49,7 @@ class PublicationService:
     if not isinstance(row,dict):continue
     r=dict(row);wid=r.get('warehouse_id')
     if isinstance(wid,str) and wid.isdigit():wid=int(wid)
-    if explicit_true(r.get('is_rfbs')) and str(r.get('status','')).strip().casefold()=='created' and not explicit_true(r.get('is_karantin')) and type(wid) is int and wid>0:
+    if (explicit_true(r.get('is_rfbs')) or str(r.get('warehouse_type','')).strip().casefold()=='ogl') and str(r.get('status','')).strip().casefold()=='created' and not explicit_true(r.get('is_karantin')) and type(wid) is int and wid>0:
      r['warehouse_id']=wid;r['name']=r.get('name') or str(wid);result.append(r)
    more=container.get('has_next',False)
    if more is False or more is None or str(more).casefold() in ('false','0',''):
@@ -63,7 +63,7 @@ class PublicationService:
   path=self.data/'warehouse_diagnostic.json';write(path,getattr(self,'warehouse_diagnostic',{'message':'尚未读取仓库'}));return path
  def warehouse_summary(self):
   data=getattr(self,'warehouse_diagnostic',{});rows=[r for page in data.get('pages',[]) for r in page.get('rows',[])]
-  return '接口返回 '+str(len(rows))+' 个仓库，其中rFBS '+str(sum(explicit_true(r.get('is_rfbs')) for r in rows))+' 个，可用rFBS '+str(data.get('eligible_count',0))+' 个。仅显示状态created且未隔离的rFBS仓库；请检查店铺与仓库配送模式。'
+  return '接口返回 '+str(len(rows))+' 个仓库，其中rFBS '+str(sum(explicit_true(r.get('is_rfbs')) for r in rows))+' 个，OGL '+str(sum(str(r.get('warehouse_type','')).strip().casefold()=='ogl' for r in rows))+' 个，可用OGL/rFBS '+str(data.get('eligible_count',0))+' 个。显示状态created且未隔离的OGL/rFBS仓库；请检查店铺与仓库配送模式。'
  def jobs(self):
   values=[]
   for path in self.root.glob('*.json'):
@@ -89,7 +89,7 @@ class PublicationService:
     stocks={}
     for b in bundles:
      setting=b.get('fulfillment') or {};wid=setting.get('warehouse_id')
-     if wid not in warehouses or setting.get('account_id')!=merchant:raise ValueError(b['sku']+'：请重新选择本店铺当前可用的rFBS仓库')
+     if wid not in warehouses or setting.get('account_id')!=merchant:raise ValueError(b['sku']+'：请重新选择本店铺当前可用的OGL/rFBS仓库')
      raw=str((b.get('variant_parameters') or {}).get('stock','')).strip()
      if not raw.isdigit() or int(raw)>2147483647:raise ValueError(b['sku']+'：库存必须是有效的非负整数')
      stocks[b['sku']]={'warehouse_id':wid,'warehouse_name':warehouses[wid]['name'],'stock':int(raw),'stock_revision':b.get('stock_revision','initial')}
