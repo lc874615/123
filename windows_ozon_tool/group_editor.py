@@ -16,7 +16,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  if not paths:messagebox.showinfo('没有变体','请选择尚未取消的商品组');return
  coordinator=GroupService(paths,service,pricing,store)
  if publication.initial_stock is not None and not publication.active([p.parent.name for p in paths]):coordinator.ensure_initial_stock(publication.initial_stock)
- dialog=tk.Toplevel(root);dialog.title('整组预览 · Ozon 商品自动化 1.0.1');dialog.geometry('1280x850');dialog.minsize(950,650)
+ dialog=tk.Toplevel(root);dialog.title('整组预览 · Ozon 商品自动化 1.0.2');dialog.geometry('1280x850');dialog.minsize(950,650)
  busy=False;selected=set(range(len(paths)));focus=['',''];bundles=[];token=None;rendered=None;warehouses={};photos=[];rows={};last_job=None;copy_dirty=False;displayed_copy=None;copy_timer=None;busy_since=0;operation_error='';operation_name=''
  ttk.Label(dialog,text='每列一个变体；双击单格修改，点击参数名选中整行后批量修改。仓库必须从当前店铺可用OGL/rFBS仓库中选择。',wraplength=900).pack(pady=6)
  status=ttk.Label(dialog,text='正在加载整组预览',wraplength=1200);status.pack(pady=3)
