@@ -8,7 +8,7 @@ from pricing_service import read
 from publication_service import TERMINAL
 
 EXCLUDED={8229,21845}
-def open_editor(root,folder,service,group_folders,category_callback=None,price_callback=None,connection_callback=None,*,pricing,store,publication):
+def open_editor(root,folder,service,group_folders,category_callback=None,price_callback=None,connection_callback=None,*,pricing,store,publication,hosting=None):
  import tkinter as tk
  from tkinter import ttk,messagebox
  from tkinter.scrolledtext import ScrolledText
@@ -219,6 +219,75 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
     record=result[choices.current()];expected=coordinator.token();merchant=publication.account_getter();window.destroy();run(lambda:coordinator.set_settings(indices,'warehouse',{'warehouse_id':record['warehouse_id'],'warehouse_name':record['name'],'account_id':merchant},expected))
    ttk.Button(window,text='应用到所选变体并重算售价',command=apply).pack(pady=8)
   run(publication.warehouses,show)
+ def assisted_review():
+  from assisted_fields import proposals,create_manual
+  indices=chosen()
+  if not indices:return
+  window=tk.Toplevel(dialog);window.title('属性建议 · 核对依据后确认');window.geometry('1000x700')
+  variant=tk.StringVar(value=paths[indices[0]].parent.name);selector=ttk.Combobox(window,textvariable=variant,state='readonly',values=[paths[n].parent.name for n in indices]);selector.pack(pady=5)
+  box=tk.Listbox(window,exportselection=False,height=7);box.pack(fill='x',padx=8);info=ScrolledText(window,height=12,wrap='word');info.pack(fill='both',expand=True,padx=8,pady=5);entry=tk.StringVar();ttk.Entry(window,textvariable=entry,width=90).pack(pady=5);current=[]
+  def index():return next(n for n in indices if paths[n].parent.name==variant.get())
+  def show(event=None):
+   if not box.curselection():return
+   r=current[box.curselection()[0]];entry.set(r['suggested']);info.delete('1.0','end');info.insert('1.0','字段：'+r['field'].get('name','')+' / '+r['field'].get('name_ru','')+'\n平台要求：'+('必填' if r['required'] else '选填')+'\n依据程度：'+r['confidence']+'\n依据：'+r['evidence']+'\n说明：'+r['note']+'\n\n确认前请检查真实参数；字典字段填写已核实的官方选项名称。')
+  def load(event=None):
+   nonlocal current
+   current=proposals(coordinator.load()[index()]);box.delete(0,'end')
+   for r in current:box.insert('end',r['field'].get('name','')+' · '+r['confidence'])
+   if current:box.selection_set(0);show()
+  selector.bind('<<ComboboxSelected>>',load);box.bind('<<ListboxSelect>>',show)
+  def apply():
+   if not editable() or not box.curselection():return
+   r=current[box.curselection()[0]];n=index();value=entry.get().strip()
+   if not value:return
+   if r['kind']=='pdf':messagebox.showinfo('PDF需真实文件','请使用“选择真实PDF”或“生成并托管参数说明书”。',parent=window);return
+   expected=token
+   def action():
+    resolved=coordinator.resolve_text(n,r['key'],value);coordinator.set_attributes([n],r['key'],[resolved],expected)
+   run(action,lambda result:load())
+  def document(generate=False):
+   if not editable() or not box.curselection():return
+   r=current[box.curselection()[0]];n=index()
+   if r['kind']!='pdf':messagebox.showinfo('请选择PDF字段','请先选中PDF文件字段。',parent=window);return
+   if hosting is None:messagebox.showerror('未连接托管','请先配置COS托管。',parent=window);return
+   from tkinter import filedialog
+   from pathlib import Path
+   if generate:
+    if not messagebox.askyesno('确认生成普通参数说明书','仅生成已确认参数的信息文件，不包含未经确认的使用/养护说明；不能代替证书或检测材料。请确认该PDF字段允许普通说明书，并已核对参数。',parent=window):return
+    selected_file=None
+   else:
+    selected_file=filedialog.askopenfilename(parent=window,filetypes=[('PDF','*.pdf')])
+    if not selected_file:return
+   expected=token;b=coordinator.load()[n]
+   def action():
+    import hashlib
+    file=create_manual(b,paths[n].parent/'documents'/'product_information.pdf') if generate else Path(selected_file)
+    raw=file.read_bytes();config,credentials=hosting.settings()
+    if not config.get('enabled'):raise ValueError('请先启用COS托管')
+    client=hosting.host_factory(config,credentials);asset=client.upload_document(raw,hashlib.sha256(raw).hexdigest())
+    resolved=coordinator.resolve_text(n,r['key'],asset['https_url']);coordinator.set_attributes([n],r['key'],[resolved],expected)
+    updated=coordinator.load()[n]
+    for field in (updated.get('attribute_draft') or {}).get('fields',[]):
+     name=(field.get('name_ru') or field.get('name','')).casefold()
+     if 'pdf' in name and ('название файла' in name or '文件名称' in name):
+      key=field_key(field);values=coordinator.resolve_text(n,key,file.name);coordinator.set_attributes([n],key,[values],coordinator.token())
+    return str(file)
+   run(action,lambda result:messagebox.showinfo('PDF已回填','PDF已托管并回填到该变体。'+('本地文件：'+result if generate else ''),parent=window))
+  buttons=ttk.Frame(window);buttons.pack(pady=7)
+  ttk.Button(buttons,text='确认并保存本变体建议值',command=apply).pack(side='left',padx=3)
+  ttk.Button(buttons,text='查看本变体原始参考图',command=lambda:open_reference(index())).pack(side='left',padx=3)
+  ttk.Button(buttons,text='选择真实PDF并托管',command=lambda:document(False)).pack(side='left',padx=3)
+  ttk.Button(buttons,text='生成并托管参数说明书',command=lambda:document(True)).pack(side='left',padx=3);load()
+ def open_reference(index):
+  from image_viewer import open_viewer
+  b=coordinator.load()[index];refs=b.get('main_references') or b.get('references') or []
+  # Reference locations differ across older bundles; consult the original task too.
+  if not refs and store:
+   task=next((t for t in store.tasks if t.get('sku')==b.get('sku')),{});refs=task.get('main_references') or task.get('reference_images') or task.get('references') or []
+  rows=[{'local_file':r if isinstance(r,str) else r.get('local_file') or r.get('path','')} for r in refs]
+  if not rows:messagebox.showinfo('未找到原始参考图','当前草稿未记录参考图片位置，请用你保留的原图或实物核对。生成图不能作为隔层结构的可靠依据。',parent=dialog);return
+  open_viewer(dialog,paths[index].parent,rows,0,b['sku']+' · 原始参考图')
+ ttk.Button(bar,text='待确认属性建议 / PDF',command=assisted_review).pack(side='left',padx=3)
  def dictionary_editor(index,key,field,expected):
   window=tk.Toplevel(dialog);window.title(paths[index].parent.name+' · 官方字典：'+field.get('name',''));window.geometry('780x500');query=tk.StringVar();ttk.Entry(window,textvariable=query,width=60).pack(pady=6)
   box=tk.Listbox(window,selectmode='extended' if field.get('is_collection') else 'browse',exportselection=False);box.pack(fill='both',expand=True,padx=8);loaded={};visible=[];cursor=[0]

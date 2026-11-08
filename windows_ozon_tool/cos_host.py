@@ -31,6 +31,10 @@ class CosHost:
   self.hostname=config['bucket']+'.cos.'+config['region']+'.myqcloud.com'
   self.base='https://'+self.hostname;self.opener=urllib.request.build_opener(NoRedirect())
  def verify(self,url,digest,size):return self._verify(url,digest,size,'image/',LIMIT)
+ def verify_document(self,url,digest,size):return self._verify(url,digest,size,'application/pdf',20*1024*1024)
+ def upload_document(self,raw,digest):
+  if not raw.startswith(b'%PDF-') or len(raw)>20*1024*1024 or hashlib.sha256(raw).hexdigest()!=digest:raise HostingError('PDF文件或校验值无效')
+  return self._put(raw,digest,self.config['prefix']+'/documents/'+digest+'.pdf','application/pdf',False)
  def verify_video(self,url,digest,size):return self._verify(url,digest,size,'video/',100*1024*1024)
  def _verify(self,url,digest,size,mime_prefix,limit):
   parsed=urllib.parse.urlsplit(url)
@@ -70,5 +74,5 @@ class CosHost:
     raise HostingError(reason+'（HTTP '+str(exc.code)+'）') from None
    # A previous attempt may have succeeded. Verify the immutable object rather than overwrite.
   except (urllib.error.URLError,TimeoutError,OSError):raise HostingError('COS上传超时或网络不可达，保留已完成进度，稍后重试') from None
-  (self.verify_video if video else self.verify)(url,digest,len(raw))
+  (self.verify_document if mime=='application/pdf' else self.verify_video if video else self.verify)(url,digest,len(raw))
   return {'https_url':url,'object_key':key,'provider':'tencent_cos','sha256':digest,'size':len(raw),'verified_at':time.time()}
