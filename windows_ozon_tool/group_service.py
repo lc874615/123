@@ -112,6 +112,17 @@ class GroupService:
    if len(matches)!=1:raise ValueError(b['sku']+'：官方字典未唯一匹配“'+label+'”，请逐格选择官方选项')
    row=next(iter(matches.values()));values.append({'dictionary_value_id':row['id'],'value':row['value']})
   return values
+ def confirm_current_categories(self,indices,expected=None):
+  with self.mutex:
+   with self.lock:
+    bundles=[read(p) for p in self.paths];self._check(bundles,expected)
+    for n in indices:
+     category=bundles[n].get('category') or {}
+     if not all(type(category.get(k)) is int and category[k]>0 for k in ('description_category_id','type_id')):raise ValueError('当前没有有效类目，请搜索并选择官方类目')
+    for n in indices:
+     bundles[n]['category']['confirmed']=True;bundles[n]['category_match_status']='预览页已确认当前类目'
+    self._write(bundles)
+   self.after_edit(indices)
  def change_category(self,indices,category,expected=None):
   if not all(type(category.get(k)) is int and category[k]>0 for k in ('description_category_id','type_id')):raise ValueError('请选择官方类目与类型')
   with self.mutex:

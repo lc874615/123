@@ -9,6 +9,7 @@ from pricing_service import read,write
 from listing_preview import export_preview
 
 class Rejected(ValueError):pass
+def explicit_true(value):return value is True or (isinstance(value,str) and value.strip().casefold()=='true')
 READ_PATHS={'/v2/warehouse/list','/v1/product/import/info','/v3/product/info/list','/v2/product/info/stocks-by-warehouse/fbs'}
 WRITE_PATHS={'/v3/product/import','/v2/products/stocks'}
 def account():
@@ -34,25 +35,35 @@ class PublicationService:
   self.data=Path(data);self.root=self.data/'publications';self.root.mkdir(parents=True,exist_ok=True)
   self.lock=store_lock;self.mutex=threading.RLock();self.caller=caller;self.account_getter=account_getter;self.wake=threading.Event();self.status='尚未提交'
  def warehouses(self):
-  result=[];cursor='';seen=set()
+  result=[];cursor='';seen=set();diagnostic={'endpoint':'/v2/warehouse/list','pages':[],'eligible_count':0};self.warehouse_diagnostic=diagnostic
   for _ in range(100):
-   response=self.caller('/v2/warehouse/list',{'limit':200,**({'cursor':cursor} if cursor else {})})
+   try:response=self.caller('/v2/warehouse/list',{'limit':200,**({'cursor':cursor} if cursor else {})})
+   except Exception as exc:
+    diagnostic['error_type']=type(exc).__name__;self.save_warehouse_diagnostic();raise
    container=response.get('result') if isinstance(response.get('result'),dict) else response
    rows=container.get('warehouses')
-   if not isinstance(rows,list):raise ValueError('仓库列表响应异常，未选择任何仓库')
+   if not isinstance(rows,list):
+    diagnostic['response_keys']=sorted(response.keys());self.save_warehouse_diagnostic();raise ValueError('仓库列表响应异常；请导出仓库诊断，未选择任何仓库')
+   diagnostic['pages'].append({'count':len(rows),'rows':[{'keys':sorted(r.keys()),'status':r.get('status'),'is_rfbs':r.get('is_rfbs'),'warehouse_type':r.get('warehouse_type'),'quarantined':r.get('is_karantin'),'id_type':type(r.get('warehouse_id')).__name__} for r in rows if isinstance(r,dict)]})
    for row in rows:
     if not isinstance(row,dict):continue
     r=dict(row);wid=r.get('warehouse_id')
     if isinstance(wid,str) and wid.isdigit():wid=int(wid)
-    if r.get('is_rfbs') is True and str(r.get('status','')).casefold()=='created' and not r.get('is_karantin') and type(wid) is int and wid>0:
+    if explicit_true(r.get('is_rfbs')) and str(r.get('status','')).strip().casefold()=='created' and not explicit_true(r.get('is_karantin')) and type(wid) is int and wid>0:
      r['warehouse_id']=wid;r['name']=r.get('name') or str(wid);result.append(r)
    more=container.get('has_next',False)
-   if more is False or more is None or str(more).casefold() in ('false','0',''):return result
+   if more is False or more is None or str(more).casefold() in ('false','0',''):
+    diagnostic['eligible_count']=len(result);self.save_warehouse_diagnostic();return result
    if more is not True and str(more).casefold() not in ('true','1'):raise ValueError('仓库分页标志异常，请重试')
    cursor=container.get('cursor','')
    if not cursor or cursor in seen:raise ValueError('仓库分页未完整读取，请重试')
    seen.add(cursor)
   raise ValueError('仓库列表超过分页限制')
+ def save_warehouse_diagnostic(self):
+  path=self.data/'warehouse_diagnostic.json';write(path,getattr(self,'warehouse_diagnostic',{'message':'尚未读取仓库'}));return path
+ def warehouse_summary(self):
+  data=getattr(self,'warehouse_diagnostic',{});rows=[r for page in data.get('pages',[]) for r in page.get('rows',[])]
+  return '接口返回 '+str(len(rows))+' 个仓库，其中rFBS '+str(sum(explicit_true(r.get('is_rfbs')) for r in rows))+' 个，可用rFBS '+str(data.get('eligible_count',0))+' 个。仅显示状态created且未隔离的rFBS仓库；请检查店铺与仓库配送模式。'
  def jobs(self):
   values=[]
   for path in self.root.glob('*.json'):

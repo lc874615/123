@@ -74,7 +74,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    if values:return '；'.join(str(v.get('value') or v.get('dictionary_value_id')) for v in values)
    old=(state.get('migration_pending') or {}).get(key)
    return '待匹配原值：'+'；'.join(v.get('value','') for v in old) if old else ''
-  if key=='category':return (b.get('category') or {}).get('name') or '待选择'
+  if key=='category':return ((b.get('category') or {}).get('name') or '待选择')+'（'+('已确认' if (b.get('category') or {}).get('confirmed') else '待确认，双击')+'）'
   if key=='price':return b.get('price_cny') or b.get('pricing_status','等待计算')
   if key=='vat':return (b.get('export_settings') or {}).get('vat','')
   if key=='warehouse':
@@ -180,8 +180,18 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   def show(result):
    nonlocal warehouses
    warehouses={str(r['warehouse_id']):r for r in result};warehouse_choice.configure(values=[r['name']+' / '+str(r['warehouse_id']) for r in result]);status.configure(text=f'已读取本店铺可用rFBS仓库 {len(result)} 个，请选择仓库。')
+   if not result:messagebox.showinfo('没有可选择的仓库',publication.warehouse_summary()+'\n可点击“导出仓库诊断”进一步检查。',parent=dialog)
   run(action,show)
  ttk.Button(bar,text='读取店铺可用仓库',command=load_warehouses).pack(side='right',padx=3)
+ def export_warehouse_diagnostic():
+  from tkinter import filedialog
+  target=filedialog.asksaveasfilename(parent=dialog,title='保存仓库诊断（不含密钥、仓库名称或地址）',defaultextension='.json',initialfile='warehouse_diagnostic.json')
+  if target:
+   try:
+    from pricing_service import write
+    write(Path(target),getattr(publication,'warehouse_diagnostic',{'message':'请先读取仓库'}));messagebox.showinfo('已保存','仓库诊断已保存，不含API密钥。',parent=dialog)
+   except OSError:messagebox.showerror('保存失败','请选择可写入的文件位置',parent=dialog)
+ ttk.Button(bar,text='导出仓库诊断',command=export_warehouse_diagnostic).pack(side='right',padx=3)
  def warehouse_apply(event=None):
   if not editable():return
   if not chosen():messagebox.showinfo('未选择变体','请先勾选目标变体列',parent=dialog);return
@@ -220,24 +230,36 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    values=[{'dictionary_value_id':visible[n]['id'],'value':visible[n]['value']} for n in box.curselection()];window.destroy();run(lambda:coordinator.set_attributes([index],key,[values],expected))
   ttk.Button(window,text='保存官方选项并重算售价',command=save).pack(pady=7);fetch(False)
  def choose_category(indices):
-  def action():
-   from category_match import leaves
-   zh=list(leaves(service.caller('/v1/description-category/tree',{'language':'ZH_HANS'})['result']));ru={(r['description_category_id'],r['type_id']):r for r in leaves(service.caller('/v1/description-category/tree',{'language':'RU'})['result'])}
-   return [{**r,'zh_path':r['path'],'name':ru.get((r['description_category_id'],r['type_id']),r)['name'],'path':ru.get((r['description_category_id'],r['type_id']),r)['path']} for r in zh]
-  def show(result):
-   window=tk.Toplevel(dialog);window.title('选择官方上架类目 · 同步刷新参数');window.geometry('1000x600');ttk.Label(window,text='目标：'+'、'.join(paths[n].parent.name for n in indices)).pack(pady=4);query=tk.StringVar();ttk.Label(window,text='中文或俄文关键词搜索；只迁移新类目仍适用且可验证的已填内容。').pack(pady=6);ttk.Entry(window,textvariable=query,width=75).pack()
-   box=tk.Listbox(window,exportselection=False);box.pack(fill='both',expand=True,padx=10,pady=5);matches=[];count=ttk.Label(window);count.pack()
-   def filter_categories(*args):
-    nonlocal matches
-    found=[r for r in result if all(word in (r['zh_path']+' '+r['path']).casefold() for word in query.get().casefold().split())];matches=found[:500];box.delete(0,'end')
-    for r in matches:box.insert('end',r['zh_path']+' | '+r['name'])
-    count.configure(text=f'匹配 {len(found)} 项，最多显示500项，请输入关键词缩小范围')
-   query.trace_add('write',filter_categories);filter_categories()
-   def apply():
-    if not box.curselection():return
-    category=matches[box.curselection()[0]];expected=coordinator.token();window.destroy();run(lambda:coordinator.change_category(indices,category,expected))
-   ttk.Button(window,text='应用类目、迁移已填值并重新定价',command=apply).pack(pady=7)
-  run(action,show)
+  # Show the known category immediately. A click no longer fetches both full trees.
+  window=tk.Toplevel(dialog);window.title('确认当前类目 / 搜索其他官方类目');window.geometry('1000x600')
+  text='\n'.join(paths[n].parent.name+'：'+str((bundles[n].get('category') or {}).get('path') or (bundles[n].get('category') or {}).get('name') or '未匹配')+'（'+('已确认' if (bundles[n].get('category') or {}).get('confirmed') else '待确认')+'）' for n in indices)
+  ttk.Label(window,text=text,wraplength=950).pack(pady=8)
+  def confirm_current():
+   expected=token;window.destroy();run(lambda:coordinator.confirm_current_categories(indices,expected))
+  ttk.Button(window,text='确认沿用当前类目（无需重新搜索）',command=confirm_current).pack(pady=5)
+  query=tk.StringVar();ttk.Label(window,text='需要换类目时，加载列表后输入中文或俄文关键词。列表缓存24小时。').pack(pady=5);ttk.Entry(window,textvariable=query,width=75).pack()
+  box=tk.Listbox(window,exportselection=False);box.pack(fill='both',expand=True,padx=10,pady=5);result=[];matches=[];count=ttk.Label(window,text='当前类目可直接确认；无需等待全量类目列表。');count.pack()
+  def filter_categories(*args):
+   nonlocal matches
+   found=[r for r in result if all(word in (r['zh_path']+' '+r['path']).casefold() for word in query.get().casefold().split())];matches=found[:500];box.delete(0,'end')
+   for r in matches:box.insert('end',r['zh_path']+' | '+r['name'])
+   count.configure(text=f'匹配 {len(found)} 项，最多显示500项')
+  query.trace_add('write',filter_categories)
+  def fetch(force=False):
+   from category_catalog import load_catalog
+   count.configure(text='后台读取官方类目列表…')
+   def show(loaded):
+    nonlocal result
+    if not window.winfo_exists():return
+    result=loaded;filter_categories()
+   run(lambda:load_catalog(service,publication.account_getter(),force),show)
+  toolbar=ttk.Frame(window);toolbar.pack(pady=5)
+  ttk.Button(toolbar,text='加载可搜索类目（优先缓存）',command=fetch).pack(side='left',padx=4)
+  ttk.Button(toolbar,text='重新获取官方列表',command=lambda:fetch(True)).pack(side='left',padx=4)
+  def apply():
+   if not box.curselection():return
+   category=matches[box.curselection()[0]];expected=token;window.destroy();run(lambda:coordinator.change_category(indices,category,expected))
+  ttk.Button(window,text='应用选中类目、迁移参数并重新定价',command=apply).pack(pady=7)
  # Common copy has a separate readable editor, shared by every variant.
  copy_widgets={}
  for key,label,height in [('title_ru','共用俄语标题',2),('description_ru','共用俄语简介',8),('tags_ru','共用标签（每行一个）',4)]:
@@ -325,6 +347,10 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  def submit():
   if copy_dirty:messagebox.showinfo('文案未保存','请先保存整组共用文案',parent=dialog);notebook.select(copy_tab);return
   if not editable():return
+  from category_catalog import setup_errors
+  errors=setup_errors(coordinator.load(),os.environ.get('OZON_CLIENT_ID',''))
+  if errors:
+   messagebox.showinfo('提交前还需设置', '\n\n'.join(errors),parent=dialog);notebook.select(parameter_tab);return
   expected=token
   def submitted(job):
    nonlocal last_job

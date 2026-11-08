@@ -142,3 +142,29 @@ class AutofillRegressionTests(unittest.TestCase):
     calls.append(body);return {'result':{'warehouses':[{'warehouse_id':'777','name':'Real shape','is_rfbs':True,'status':'created'}],'has_next':'false'}}
    pub=PublicationService(tmp,threading.Lock(),call,lambda:'shop')
    self.assertEqual(pub.warehouses()[0]['warehouse_id'],777);self.assertEqual(len(calls),1)
+
+class CategoryInteractionTests(unittest.TestCase):
+ def test_setup_guidance_points_to_confirmation_and_warehouse(self):
+  from category_catalog import setup_errors
+  errors=setup_errors([{'sku':'A','category':{'confirmed':False},'export_settings':{'vat':'0','currency_code':'CNY','currency_confirmed':True}}],'shop')
+  self.assertEqual(len(errors),2);self.assertIn('确认沿用当前类目',errors[0]);self.assertIn('读取店铺可用仓库',errors[1])
+ def test_catalog_cache_avoids_repeated_network_fetches(self):
+  from category_catalog import load_catalog
+  from types import SimpleNamespace
+  calls=[]
+  def call(endpoint,body):
+   calls.append(body);return {'result':[{'description_category_id':10,'category_name':'Parent','children':[{'type_id':20,'type_name':'Child','children':[]}]}]}
+  with tempfile.TemporaryDirectory() as tmp:
+   service=SimpleNamespace(root=Path(tmp),caller=call)
+   self.assertTrue(load_catalog(service,'shop'));self.assertTrue(load_catalog(service,'shop'));self.assertEqual(len(calls),2)
+   load_catalog(service,'shop',True);self.assertEqual(len(calls),4)
+ def test_warehouse_explicit_string_flags_and_diagnostic(self):
+  import threading
+  with tempfile.TemporaryDirectory() as tmp:
+   def call(path,body):return {'warehouses':[{'warehouse_id':'12','name':'private name','address':'private address','is_rfbs':'true','status':'created','is_karantin':'false'}],'has_next':False}
+   pub=PublicationService(tmp,threading.Lock(),call,lambda:'shop');self.assertEqual(pub.warehouses()[0]['warehouse_id'],12)
+   text=pub.save_warehouse_diagnostic().read_text();self.assertNotIn('private name',text);self.assertNotIn('private address',text)
+ def test_confirm_current_category_does_not_fetch_full_tree(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   group,api,pub=GroupTests().setup_group(tmp);b=read(group.paths[0]);b['category']['confirmed']=False;write(group.paths[0],b)
+   group.confirm_current_categories([0],group.token());self.assertTrue(group.load()[0]['category']['confirmed']);self.assertFalse(any(p.endswith('/tree') for p,body in api.calls))
