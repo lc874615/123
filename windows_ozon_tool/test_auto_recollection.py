@@ -39,6 +39,17 @@ class AutoRecollectionTests(unittest.TestCase):
    store.save();restored=Store(tmp)
    for task in restored.tasks:
     self.assertEqual(task['resume_mode'],'inspect_only');self.assertTrue(task['recollection_requested']);bundle=read(Path(tmp)/'products'/task['sku']/'listing_bundle.json');self.assertEqual(bundle['copy']['title_ru'],'Стул');self.assertEqual(bundle['images'],[])
+ def test_missing_leader_outputs_are_still_queued_and_automatic_is_explicit(self):
+  import shutil
+  with tempfile.TemporaryDirectory() as tmp,patch('local_bridge.threading.Thread'):
+   store=self.make_group(tmp);leader=store.tasks[0];folder=Path(tmp)/'products'/leader['sku'];shutil.rmtree(folder/'images');(folder/'listing_bundle.json').unlink();leader['received_images']=[]
+   store.recollect(store.tasks[2]['id']);self.assertTrue(leader['recollection_requested']);self.assertEqual(store.next_recollection()['sku'],leader['sku'])
+   leader.pop('recollection_requested');self.assertTrue(store.recover(leader['sku'],automatic=True)['automaticRecovery'])
+ def test_restart_repairs_leader_flag_and_restores_its_previous_draft(self):
+  import shutil
+  with tempfile.TemporaryDirectory() as tmp,patch('local_bridge.threading.Thread'):
+   store=self.make_group(tmp);stamp=store.recollect(store.tasks[0]['id']);leader=store.tasks[0];leader.pop('recollection_requested');leader.update(state='waiting',message='回复已结束，正在核对最终图片交付与编号');(Path(tmp)/'products'/leader['sku']/'listing_bundle.json').unlink();store.save()
+   restored=Store(tmp);self.assertEqual(restored.next_recollection()['sku'],leader['sku']);self.assertTrue(restored.tasks[0]['recollection_requested']);self.assertEqual(read(Path(tmp)/'products'/leader['sku']/'listing_bundle.json')['price_cny'],'200')
  def test_unacknowledged_stop_and_running_video_keep_all_original_files(self):
   with tempfile.TemporaryDirectory() as tmp:
    store=self.make_group(tmp);task=store.tasks[0];task.update(pause_requested=True,pause_ack=False)

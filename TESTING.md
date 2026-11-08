@@ -1,3 +1,11 @@
+# v1.0.6 验证
+
+267项Python与28项JavaScript测试通过。新增首变体没有当前本地输出仍进入恢复队列、从旧备份还原草稿、重启修复遗漏标记、刷新页面自动恢复。Tk窗口冒烟检查和原有单次恢复/最终交付浏览器回归通过。
+
+新增真正联动测试 `node edge_extension/browser_recollection_group.cjs`：临时本地Store与HTTP服务 + 实际background.js/content.js + Chromium虚拟化对话，初始显示后面的变体，首变体文件缺失。仅发送一次本地备份命令，无任何插件面板操作，自动完成7个变体，每个8/8；7张独立主图、共同7张详情，售价/文案保留。/recover全部携带automatic=true，/claim为0次，start/copy发送为0次。
+
+测试使用临时合成数据；不访问用户作图对话，不调用真实Ozon或COS服务。Fixture清除继承的店铺环境变量，并在退出时删除临时数据和关闭本地服务。
+
 # v1.0.5 验证
 
 265项Python测试、27项JavaScript测试通过。新增整组备份恢复、共用文案/售价/类目保留、首变体详情复用、旧版卡住记录迁移、未收到暂停回执时不删除文件。插件轮询只启动recover、不调用claim或start。

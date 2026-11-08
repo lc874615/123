@@ -4,6 +4,9 @@ from asset_state import pending
 from listing_bundle import copy_complete
 
 def stage(task,bundle,jobs):
+ if task.get('recollection_requested'):
+  if task.get('state')=='waiting':return '自动采集已有图片：'+task.get('message','正在定位并下载')
+  if task.get('resume_mode')=='inspect_only':return '等待自动定位原始图片（无需操作插件）'
  offer=task['sku'];job=next((j for j in jobs if offer in j.get('items',{})),None)
  if pending(bundle):return '素材待更新（手动启动）'
  if job:

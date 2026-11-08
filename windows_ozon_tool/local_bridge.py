@@ -31,12 +31,26 @@ class Store:
     backups=sorted((folder/'recovery_backups').glob('*/listing_bundle.json'),reverse=True)
     if not target.exists() and backups:
      bundle=json.loads(backups[0].read_text(encoding='utf-8-sig'));bundle.update(images=[],recollection_pending=True,video={'local_file':'video/product_8s.mp4','exists':False,'https_url':None});target.write_text(json.dumps(bundle,ensure_ascii=False,indent=2),encoding='utf-8')
+  self.repair_recollection_queue()
   self.control_path=self.folder/'automation_control.json';self.control=json.loads(self.control_path.read_text()) if self.control_path.exists() else {'paused':False,'serial':0}
   self.rebase_paths()
   self.save()
   self.sync_shared_copies()
   self.normalize_saved_images()
   self.resume_local_media()
+ def repair_recollection_queue(self):
+  # Older backups may have removed the leader's files before setting its recovery flag.
+  groups={t.get('copy_leader',t['sku']) for t in self.tasks if t.get('recollection_requested')}
+  for task in self.tasks:
+   if task.get('copy_leader',task['sku']) not in groups or task['state'] in ('saved','cancelled','queued'):continue
+   folder=self.folder/'products'/task['sku'];backups=sorted((folder/'recovery_backups').glob('*/listing_bundle.json'),reverse=True)
+   task.update(recollection_requested=True,resume_mode='inspect_only')
+   target=folder/'listing_bundle.json'
+   if not target.exists() and backups:
+    bundle=json.loads(backups[0].read_text(encoding='utf-8-sig'));bundle.update(images=[],recollection_pending=True,video={'local_file':'video/product_8s.mp4','exists':False,'https_url':None});target.write_text(json.dumps(bundle,ensure_ascii=False,indent=2),encoding='utf-8')
+ def next_recollection(self):
+  tasks=[t for t in self.tasks if t.get('recollection_requested') and t['state'] not in ('saved','cancelled')]
+  return min(tasks,key=lambda t:(bool(t.get('gallery_source')),t.get('variant_index') or 0)) if tasks else None
  def save(self):
   temp=self.path.with_suffix('.tmp');temp.write_text(json.dumps(self.tasks,ensure_ascii=False,indent=2),encoding='utf-8');temp.replace(self.path)
  def create(self,sku,facts,references=None):
@@ -176,7 +190,7 @@ class Store:
     task.update(state='queued',message='上传适配已更新，恢复尚未发送的任务');count+=1
   self.save();return {'resumed':count}
  def blockers(self):
-  return [{'id':t['id'],'sku':t['sku'],'state':t['state'],'copy_state':t.get('copy_state'),'message':t.get('message',''),'resume_mode':t.get('resume_mode')} for t in self.tasks if t['state'] in ('claimed','sending','waiting','needs_attention','review') or t.get('copy_state') in ('running','needs_attention')]
+  return [{'id':t['id'],'sku':t['sku'],'state':t['state'],'copy_state':t.get('copy_state'),'message':t.get('message',''),'resume_mode':t.get('resume_mode'),'recollection_requested':bool(t.get('recollection_requested')),'expected_images':t.get('expected_images',8)} for t in self.tasks if t['state'] in ('claimed','sending','waiting','needs_attention','review') or t.get('copy_state') in ('running','needs_attention')]
  def queue_reason(self):
   if self.control.get('paused'):return '制作已暂停；点击继续制作或在插件继续'
   blockers=self.blockers()
@@ -188,11 +202,11 @@ class Store:
  def task_status(self,tid):
   task=next((t for t in self.tasks if t['id']==tid),None)
   if not task:return {'found':False}
-  return {'found':True,'id':task['id'],'sku':task['sku'],'state':task['state'],'copy_state':task.get('copy_state'),'saved_count':len(task.get('received_images',[])),'expected_images':task.get('expected_images',8),'message':task.get('message',''),'resume_mode':task.get('resume_mode'),'pause_requested':task.get('pause_requested',False)}
- def recover(self,sku):
+  return {'found':True,'id':task['id'],'sku':task['sku'],'state':task['state'],'copy_state':task.get('copy_state'),'saved_count':len(task.get('received_images',[])),'expected_images':task.get('expected_images',8),'message':task.get('message',''),'resume_mode':task.get('resume_mode'),'pause_requested':task.get('pause_requested',False),'recollection_requested':bool(task.get('recollection_requested'))}
+ def recover(self,sku,automatic=False):
   group=[t for t in self.tasks if t['sku']==sku and t.get('set_mode') and t['state'] in ('waiting','needs_attention','claimed','sending','saved')]
   if len(group)!=1:raise ValueError('没有唯一可恢复的整套任务，请核对货号')
-  task=group[0];validate_complete=len(task.get('received_images',[]))==8;task.pop('resume_mode',None);task.update(state='waiting',message='用户请求核对最终编号文件，不重新生成');self.save();return {'id':task['id'],'sku':task['sku'],'set_mode':True,'saved_count':len(task.get('received_images',[])),'expected_images':task.get('expected_images',8),'orderRepairPending':validate_complete,'automaticRecovery':bool(task.get('recollection_requested'))}
+  task=group[0];validate_complete=len(task.get('received_images',[]))==8;task.pop('resume_mode',None);task.update(state='waiting',message='用户请求核对最终编号文件，不重新生成');self.save();return {'id':task['id'],'sku':task['sku'],'set_mode':True,'saved_count':len(task.get('received_images',[])),'expected_images':task.get('expected_images',8),'orderRepairPending':validate_complete,'automaticRecovery':bool(automatic or task.get('recollection_requested'))}
  def set_result(self,tid,index,encoded):
   task=self.find(tid)
   if not task.get('set_mode') or task['state'] not in ('claimed','sending','waiting','saved'):raise ValueError('整套任务状态无效')
@@ -305,6 +319,7 @@ class Store:
   self.save();return {'ok':True,'backup_created':True}
  def recollect(self,tid):
   import shutil
+  self.repair_recollection_queue()
   selected=self.find(tid);leader=selected.get('copy_leader',selected['sku'])
   group=[t for t in self.tasks if t.get('copy_leader',t['sku'])==leader and t['state']!='cancelled']
   if any(t['state'] in ('claimed','sending','waiting') or t.get('copy_state')=='running' for t in group):raise ValueError('请先停止扩展自动批次，再备份并重新采集')
@@ -315,7 +330,7 @@ class Store:
   planned=[];affected=[]
   for task in group:
    folder=self.folder/'products'/task['sku']
-   if not task.get('received_images') and not any((folder/name).exists() for name in names):continue
+   if task['state']=='queued' and not task.get('received_images') and not any((folder/name).exists() for name in names):continue
    affected.append(task);backup=folder/'recovery_backups'/stamp
    backup.mkdir(parents=True,exist_ok=False)
    (backup/'task.json').write_text(json.dumps(task,ensure_ascii=False,indent=2),encoding='utf-8')
@@ -534,7 +549,7 @@ def server(store,token,port=8765):
     body=json.loads(self.rfile.read(n))
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.5','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.6','paired':True}
      elif self.path=='/control':value=store.control
      elif self.path=='/automation-control':value=store.set_paused(bool(body.get('paused')))
      elif self.path=='/pause-ack':
@@ -567,7 +582,8 @@ def server(store,token,port=8765):
       store.client={'last_seen':time.time(),'auto_enabled':bool(body.get('auto_enabled',True))}
       active=bool(store.blockers()) or store.control.get('paused',False)
       copy_task=store.next_copy() if not active else None
-      value={'ready':not active and any(t['state']=='queued' and t.get('auto_batch') for t in store.tasks),'copy_sku':copy_task['sku'] if copy_task else None,'blocked_reason':store.queue_reason() if active else None,'blockers':store.blockers(),'summary':store.queue_summary()}
+      recovery=store.next_recollection()
+      value={'recovery_sku':recovery['sku'] if recovery else None,'ready':not active and any(t['state']=='queued' and t.get('auto_batch') for t in store.tasks),'copy_sku':copy_task['sku'] if copy_task else None,'blocked_reason':store.queue_reason() if active else None,'blockers':store.blockers(),'summary':store.queue_summary()}
      elif self.path=='/copy-task':
       sku=body['sku']
       if not valid_article(sku):raise ValueError('货号格式无效')
@@ -614,7 +630,7 @@ def server(store,token,port=8765):
       for task in store.tasks:
        if task['sku']==sku:task.update(copy_state='done',message='8图、视频、俄文文案及草稿已完成；待定价、类目和托管' if task.get('video') else '最终图片及共用俄语文案已保存；视频并行处理中')
       store.save()
-     elif self.path=='/recover':value=store.recover(body['sku'])
+     elif self.path=='/recover':value=store.recover(body['sku'],automatic=bool(body.get('automatic')))
      elif self.path=='/claim':value=store.claim()
      elif self.path=='/set-result':value=store.set_result(body['task_id'],body['index'],body['image_b64'])
      elif self.path=='/result':value=store.result(body['task_id'],body['image_b64'])
@@ -930,7 +946,7 @@ def main(test_mode=False,on_ready=None):
     with store.lock:store.recollect(task['id'])
    except Exception as e:messagebox.showerror('未重新采集',str(e))
   ready()
- task_more.add_command(label='备份并重采集已有图片（不重新作图）',command=recollect)
+ task_more.add_command(label='备份并自动采集已有图片（不重新作图）',command=recollect)
 
  def approve():
   task=selected()
