@@ -1,4 +1,5 @@
-import tempfile,threading,unittest
+import tempfile,threading,unittest,time
+from unittest.mock import patch
 from pricing_service import read,write
 from publication_service import PublicationService,Rejected
 import test_group_publication as fixtures
@@ -28,7 +29,9 @@ class CreationWaitTests(unittest.TestCase):
     if p==READ and pending[0]:self.assertEqual(b['offer_id'],[offers[0]])
     return r
    pub.caller=call;job=pub.begin(group,group.token());pub.step(job['id']);result=pub.step(job['id']);self.assertTrue(result['items'][offers[0]]['on_sale']);self.assertEqual(result['items'][offers[1]]['import_state'],'pending')
-   pending[0]=False;pub.step(job['id']);self.assertEqual(pub.step(job['id'])['state'],'on_sale');counts=[row['offer_id'] for p,b in api.calls if p=='/v2/products/stocks' for row in b['stocks']];self.assertEqual(counts.count(offers[0]),1);self.assertEqual(counts.count(offers[1]),1)
+   pending[0]=False
+   with patch('barcode_service.time.time',return_value=time.time()+4):pub.step(job['id']);self.assertEqual(pub.step(job['id'])['state'],'on_sale')
+   counts=[row['offer_id'] for p,b in api.calls if p=='/v2/products/stocks' for row in b['stocks']];self.assertEqual(counts.count(offers[0]),1);self.assertEqual(counts.count(offers[1]),1)
  def test_one_unready_stock_index_does_not_hide_ready_variants(self):
   with tempfile.TemporaryDirectory() as tmp:
    group,api,pub=fixtures.GroupTests().setup_group(tmp,True);offers=[b['sku'] for b in group.load()];original=pub.caller

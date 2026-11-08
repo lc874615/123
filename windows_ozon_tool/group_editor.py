@@ -17,7 +17,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  coordinator=GroupService(paths,service,pricing,store)
  coordinator.ensure_fixed_vat()
  if publication.initial_stock is not None and not publication.active([p.parent.name for p in paths]):coordinator.ensure_initial_stock(publication.initial_stock)
- dialog=tk.Toplevel(root);dialog.title('整组预览 · Ozon 商品自动化 1.0.10');dialog.geometry('1280x850');dialog.minsize(950,650)
+ dialog=tk.Toplevel(root);dialog.title('整组预览 · Ozon 商品自动化 1.0.11');dialog.geometry('1280x850');dialog.minsize(950,650)
  busy=False;selected=set(range(len(paths)));focus=['',''];bundles=[];token=None;rendered=None;warehouses={};photos=[];rows={};last_job=None;copy_dirty=False;displayed_copy=None;copy_timer=None;busy_since=0;operation_error='';operation_name=''
  ttk.Label(dialog,text='每列一个变体；双击单格修改，点击参数名选中整行后批量修改。仓库显示当前店铺全部类型和状态。',wraplength=900).pack(pady=6)
  status=ttk.Label(dialog,text='正在加载整组预览',wraplength=1200);status.pack(pady=3)
@@ -442,8 +442,8 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  from media_regeneration_ui import build as build_regeneration
  regen_ui=build_regeneration(media_body,lambda:bundles,store,queue_images,stop_images,accept_images)
  more_menu.add_command(label='刷新图片视频预览',command=media_refresh)
- progress=ttk.Treeview(progress_tab,columns=('offer','warehouse','quantity','state','errors'),show='headings',height=12)
- for key,label,width in [('offer','货号',180),('warehouse','目标仓库',200),('quantity','目标库存 / 当前可用',160),('state','上架阶段',250),('errors','平台结果 / 错误',350)]:progress.heading(key,text=label);progress.column(key,width=width,anchor='center')
+ progress=ttk.Treeview(progress_tab,columns=('offer','warehouse','quantity','state','barcodes','errors'),show='headings',height=12)
+ for key,label,width in [('offer','货号',180),('warehouse','目标仓库',200),('quantity','目标库存 / 当前可用',160),('state','上架阶段',250),('barcodes','条形码',200),('errors','平台结果 / 错误',350)]:progress.heading(key,text=label);progress.column(key,width=width,anchor='center')
  progress.pack(fill='both',expand=True,padx=8,pady=8);progress_info=ScrolledText(progress_tab,height=6);progress_info.pack(fill='x',padx=8,pady=5)
  def progress_refresh():
   progress.delete(*progress.get_children())
@@ -451,7 +451,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    if not operation_error:progress_info.delete('1.0','end');progress_info.insert('1.0','本组暂无本地上架记录。')
    return
   for offer,item in last_job.get('items',{}).items():
-   setting=last_job['stocks'][offer];progress.insert('','end',values=(offer,setting['warehouse_name'],str(setting['stock'])+' / '+str(item.get('current_free_stock','待查询')),item.get('status',''),item.get('error_summary') or json.dumps(item.get('price_errors') or item.get('stock_errors') or item.get('errors') or item.get('platform_errors') or item.get('platform_status') or {},ensure_ascii=False)))
+   setting=last_job['stocks'][offer];progress.insert('','end',values=(offer,setting['warehouse_name'],str(setting['stock'])+' / '+str(item.get('current_free_stock','待查询')),item.get('status',''),' / '.join(item.get('barcodes') or []) or item.get('barcode_status','等待商品创建'),item.get('error_summary') or json.dumps(item.get('barcode_errors') or item.get('price_errors') or item.get('stock_errors') or item.get('errors') or item.get('platform_errors') or item.get('platform_status') or {},ensure_ascii=False)))
   from pipeline_status import wait_details
   text=json.dumps({'等待':wait_details(last_job),'需处理':bool(last_job.get('needs_attention')),'任务':last_job['id'],'导入任务ID':last_job.get('task_id'),'状态':last_job['state'],'说明':last_job.get('message'),'最近处理错误':operation_error or None},ensure_ascii=False,indent=2)
   if progress_info.get('1.0','end-1c')!=text:progress_info.delete('1.0','end');progress_info.insert('1.0',text)

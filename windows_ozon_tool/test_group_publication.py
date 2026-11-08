@@ -29,6 +29,10 @@ class FakeApi:
    for i,item in enumerate(body['items']):self.items[item['offer_id']]={**copy.deepcopy(item),'id':100+i}
    if self.import_error:raise self.import_error
    return {'result':{'task_id':501}}
+  if path=='/v1/barcode/generate':
+   for item in self.items.values():
+    if item['id'] in body['product_ids']:item['barcodes']=['OZN'+str(item['id'])]
+   return {'errors':[]}
   if path=='/v1/product/import/prices':
    for row in body['prices']:self.items[row['offer_id']].update(copy.deepcopy(row))
    return {'result':[{'offer_id':r['offer_id'],'updated':True,'errors':[]} for r in body['prices']]}
