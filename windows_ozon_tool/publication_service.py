@@ -119,6 +119,7 @@ class PublicationService:
   progress=on_progress or (lambda message:None);progress('等待本地提交队列')
   with self.mutex:
    merchant=self.account_getter()
+   coordinator.reconcile_assets()
    initial=coordinator.load()
    if revision(initial)!=expected:
     changes=preview_changes(visible_bundles,initial,allow_automatic=True) if visible_bundles is not None else ['预览版本已更新']

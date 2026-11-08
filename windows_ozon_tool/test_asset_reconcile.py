@@ -28,4 +28,21 @@ class AssetReconcileTests(unittest.TestCase):
    for b in bundles:b['copy_basis']=fingerprint;write(store.folder/'products'/b['sku']/'listing_bundle.json',b)
    reconcile(store);self.assertTrue(all(not pending(read(store.folder/'products'/t['sku']/'listing_bundle.json')) for t in store.tasks));Path(store.tasks[0]['received_images'][0]['file']).write_bytes(b'corrupt')
    with self.assertRaises(ValueError):reconcile(store,accept_group='CHAIR(1)')
+ def test_multimaterial_translation_order_and_legacy_copy_hash_do_not_require_new_assets(self):
+  with tempfile.TemporaryDirectory() as tmp,patch('image_regeneration.threading.Thread'):
+   store=self.seed(tmp)
+   for t in store.tasks:
+    path=store.folder/'products'/t['sku']/'listing_bundle.json';b=read(path);b['asset_basis']['material']='金属；塑料';b['variant_parameters']['material']='Пластик；Металл；Металл';b['gallery_basis']=[{'sku':x['sku'],'variant_parameters':dict(x['variant_parameters'],material='金属；塑料')} for x in store.tasks];write(path,b)
+   bundles=[read(store.folder/'products'/t['sku']/'listing_bundle.json') for t in store.tasks];legacy=copy_basis([{'sku':b['sku'],'variant_parameters':b['asset_basis']} for b in bundles],legacy=True)
+   for b in bundles:b['copy_basis']=legacy;write(store.folder/'products'/b['sku']/'listing_bundle.json',b)
+   reconcile(store)
+   for t in store.tasks:
+    b=read(store.folder/'products'/t['sku']/'listing_bundle.json');self.assertFalse(b['asset_review']['main']);self.assertFalse(b['asset_review']['gallery']);self.assertEqual(b['copy_basis'],copy_basis(bundles))
+ def test_real_material_change_stays_pending_until_checked_group_acceptance(self):
+  from asset_state import blocking_reason
+  with tempfile.TemporaryDirectory() as tmp,patch('image_regeneration.threading.Thread'):
+   store=self.seed(tmp);path=store.folder/'products'/'CHAIR(1)'/'listing_bundle.json';b=read(path);b['variant_parameters']['material']='Сталь';write(path,b);reconcile(store);b=read(path);self.assertTrue(b['asset_review']['main']);self.assertIn('主体材质',blocking_reason(b));self.assertIn('沿用本组',blocking_reason(b));reconcile(store,accept_group='CHAIR(1)');b=read(path);self.assertFalse(b['asset_review']['main']);self.assertFalse(b['asset_review']['gallery'])
+ def test_copy_only_blocker_never_requires_regenerating_images(self):
+  from asset_state import blocking_reason
+  reason=blocking_reason({'asset_review':{'copy':True}});self.assertIn('文案',reason);self.assertIn('无需重新作图',reason);self.assertNotIn('手动重做',reason)
 if __name__=='__main__':unittest.main()

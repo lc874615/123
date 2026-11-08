@@ -55,6 +55,11 @@ class GroupService:
    for task in self.store.tasks:
     if task['sku'] in group_skus:task.update(group_facts=all_facts,group_variants=copy.deepcopy(variants))
    self.store.save()
+ def reconcile_assets(self):
+  if self.store and hasattr(self.store,'image_jobs'):
+   from asset_reconcile import reconcile
+   with self.lock:return reconcile(self.store)
+  return 0
  def after_edit(self,indices,refresh=True,force=False):
   errors=[]
   if refresh:
@@ -64,7 +69,7 @@ class GroupService:
      self.status=self.paths[n].parent.name+'：同步官方属性与已填内容'
      key=category_key(read(self.paths[n]));self.attributes.refresh(self.paths[n],force=force and key not in forced);forced.add(key)
     except ValueError as exc:errors.append(self.paths[n].parent.name+'：'+str(exc))
-  self.status='正在重新计算售价';self.pricing.calculate_all();self.attributes.wake.set();self.status='部分属性未同步：'+'；'.join(errors) if errors else '参数和自动售价已同步'
+  self.status='正在重新计算售价';self.pricing.calculate_all();self.attributes.wake.set();self.reconcile_assets();self.status='部分属性未同步：'+'；'.join(errors) if errors else '参数和自动售价已同步'
  def refresh_preview(self):
   with self.mutex:
    self.after_edit(list(range(len(self.paths))),refresh=True,force=False)

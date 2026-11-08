@@ -2,7 +2,7 @@
 import copy,hashlib,json
 from pathlib import Path
 from asset_audit import inspect
-from asset_state import VISUAL,COPY,canonical,differs
+from asset_state import VISUAL,COPY,canonical,legacy_canonical,differs
 from listing_bundle import copy_complete
 from pricing_service import read,write
 
@@ -13,8 +13,9 @@ def group_bundles(store,leader):
   if t.get('copy_leader',t['sku'])!=leader or t.get('state')=='cancelled' or not t.get('set_mode'):continue
   path=store.folder/'products'/t['sku']/'listing_bundle.json';result.append(read(path) if path.exists() else {'sku':t['sku'],'variant_parameters':t.get('variant_parameters') or {},'facts':t.get('facts','')})
  return result
-def copy_basis(bundles):
- return hashlib.sha256(json.dumps(sorted([(b['sku'],{k:canonical(k,(b.get('variant_parameters') or {}).get(k)) for k in sorted(COPY)}) for b in bundles]),ensure_ascii=False,sort_keys=True).encode()).hexdigest()
+def copy_basis(bundles,legacy=False):
+ normalize=legacy_canonical if legacy else canonical
+ return hashlib.sha256(json.dumps(sorted([(b['sku'],{k:normalize(k,(b.get('variant_parameters') or {}).get(k)) for k in sorted(COPY)}) for b in bundles]),ensure_ascii=False,sort_keys=True).encode()).hexdigest()
 def checked(store,task):
  folder=store.folder/'products'/task['sku']
  try:
@@ -28,6 +29,10 @@ def reconcile(store,accept_group=None):
  for leader in groups:
   bundles=group_bundles(store,leader);by_sku={b['sku']:b for b in bundles};fingerprint=copy_basis(bundles);members=[t for t in tasks if t.get('copy_leader',t['sku'])==leader];leader_task=next((t for t in members if t['sku']==leader),None);leader_bundle=by_sku.get(leader) or {};accept=accept_group==leader
   audits={t['sku']:checked(store,t) for t in members}
+  prior_context=[{'sku':b['sku'],'variant_parameters':b.get('asset_basis') or next((t.get('generation_parameters') for t in members if t['sku']==b['sku']),None) or {}} for b in bundles]
+  equivalent_prior=all(row['variant_parameters'] and not differs(row['variant_parameters'],(by_sku[row['sku']].get('variant_parameters') or {}),COPY) for row in prior_context)
+  matching_copy_bases={copy_basis(bundles,legacy=True)}
+  if equivalent_prior:matching_copy_bases.add(copy_basis(prior_context,legacy=True))
   if accept and (any(t.get('state')!='saved' or not audits[t['sku']].get('verified') for t in members) or store.image_jobs.active(list(by_sku))):raise ValueError('本组图片尚未全部采集校验完成，不能沿用未完成的素材')
   for t in members:
    path=store.folder/'products'/t['sku']/'listing_bundle.json'
@@ -53,6 +58,7 @@ def reconcile(store,accept_group=None):
      if key in review or value or accept:review[key]=value
     if not main_changes and not gallery_changes:b.pop('regeneration_pending',None)
     b['asset_validation']={**{k:v for k,v in validation.items() if k.startswith('accepted_')},'verified':True,'main_changes':[LABELS.get(k,k) for k in sorted(main_changes)],'gallery_changes':sorted(set(gallery_changes)),'accepted_by_user':bool(accepted)}
+   if b.get('copy_basis') and b['copy_basis'] in matching_copy_bases:b['copy_basis']=fingerprint
    if b.get('copy_basis')==fingerprint and copy_complete(b.get('copy')):
     if review.get('copy'):review['copy']=False
    elif b.get('copy_basis') and b.get('copy_basis')!=fingerprint:review['copy']=True

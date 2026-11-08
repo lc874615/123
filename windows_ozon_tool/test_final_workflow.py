@@ -24,6 +24,8 @@ class FinalWorkflowTests(unittest.TestCase):
    g,a,p=fixtures.GroupTests().setup_group(tmp);g.set_parameters([0],'cost',['30'],g.token());self.assertFalse(pending(g.load()[0]))
  def test_equivalent_dimension_and_color_do_not_mark_assets(self):
   b={'images':[{}],'variant_parameters':{'color':'金色','length':'44'}};after=copy.deepcopy(b);after['variant_parameters'].update(color='золотой',length='44.0');mark_changes([b],[after]);self.assertFalse(pending(after))
+ def test_equivalent_multiselect_materials_and_country_do_not_mark_assets(self):
+  b={'images':[{}],'variant_parameters':{'material':'金属、塑料','accessory_material':'绒面；实木','origin':'中国'}};after=copy.deepcopy(b);after['variant_parameters'].update(material='Пластик；Металл；Металл',accessory_material='Массив дерева；Велюр',origin='Китай');mark_changes([b],[after]);self.assertFalse(pending(after))
  def test_group_description_edit_is_single_source(self):
   with tempfile.TemporaryDirectory() as tmp:
    g,a,p=fixtures.GroupTests().setup_group(tmp,True);text='Общее описание для всех вариантов.';g.set_attributes([1],'0:4191',[[{'value':text}]],g.token())

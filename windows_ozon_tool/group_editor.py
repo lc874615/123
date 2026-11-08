@@ -17,12 +17,12 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  coordinator=GroupService(paths,service,pricing,store)
  coordinator.ensure_fixed_vat()
  if publication.initial_stock is not None and not publication.active([p.parent.name for p in paths]):coordinator.ensure_initial_stock(publication.initial_stock)
- dialog=tk.Toplevel(root);dialog.title('整组预览 · Ozon 商品自动化 1.0.14');dialog.geometry('1280x850');dialog.minsize(950,650)
+ dialog=tk.Toplevel(root);dialog.title('整组预览 · Ozon 商品自动化 1.0.15');dialog.geometry('1280x850');dialog.minsize(950,650)
  busy=False;selected=set(range(len(paths)));focus=['',''];bundles=[];token=None;rendered=None;warehouses={};photos=[];rows={};last_job=None;copy_dirty=False;displayed_copy=None;copy_timer=None;busy_since=0;operation_error='';operation_name=''
  ttk.Label(dialog,text='每列一个变体；双击单格修改，点击参数名选中整行后批量修改。仓库显示当前店铺全部类型和状态。',wraplength=900).pack(pady=6)
  status=ttk.Label(dialog,text='正在加载整组预览',wraplength=1200);status.pack(pady=3)
  bar=ttk.Frame(dialog);bar.pack(fill='x',padx=8,pady=3);more_menu=tk.Menu(dialog,tearoff=False);ttk.Menubutton(bar,text='更多',menu=more_menu).pack(side='right',padx=4)
- footer=ttk.Frame(dialog,padding=(8,5));footer.pack(side='bottom',fill='x');blocker=ttk.Label(footer,text='',wraplength=900,foreground='#b00020');blocker.pack(fill='x');bottom=ttk.Frame(footer);bottom.pack(fill='x',pady=4)
+ footer=ttk.Frame(dialog,padding=(8,5));footer.pack(side='bottom',fill='x');blocker=ttk.Label(footer,text='',wraplength=900,foreground='#b00020');blocker.pack(fill='x');asset_actions=ttk.Frame(footer);asset_actions.pack(fill='x');bottom=ttk.Frame(footer);bottom.pack(fill='x',pady=4)
  notebook=ttk.Notebook(dialog);notebook.pack(fill='both',expand=True,padx=8,pady=4)
  parameter_tab=ttk.Frame(notebook);copy_tab=ttk.Frame(notebook);media_tab=ttk.Frame(notebook);progress_tab=ttk.Frame(notebook)
  for widget,label in [(parameter_tab,'参数'),(copy_tab,'共用文案'),(media_tab,'图片视频'),(progress_tab,'上架进度')]:notebook.add(widget,text=label)
@@ -135,8 +135,12 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    from asset_state import pending
    changed=[b['sku'] for b in bundles if b.get('regeneration_pending') or any((b.get('asset_review') or {}).get(k) for k in ('main','gallery'))]
    if any(b.get('image_regeneration_jobs') for b in bundles):status.configure(text='图片重做已排队或正在采集；进度见图片视频页，无需重新提交上架。')
-   elif changed:status.configure(text='图片待核对：'+'、'.join(changed)+'；变化项见图片视频页。确认图片无误可整组沿用并继续。')
+   elif changed:status.configure(text='图片待核对：'+str(len(changed))+'个变体；变化项见图片视频页。图片无误请点击底部“图片无误，沿用本组”。')
    elif any((b.get('asset_review') or {}).get('copy') for b in bundles):status.configure(text='图片已校验，整组文案自动采集或补全后同步全部变体。')
+   if changed and not any(b.get('image_regeneration_jobs') for b in bundles):
+    if not accept_button.winfo_manager():accept_button.pack(side='right',padx=4,pady=3)
+    accept_button.configure(state='disabled' if busy or job else 'normal')
+   else:accept_button.pack_forget()
    if copy_dirty:status.configure(text=status.cget('text')+' | 共用文案尚未保存')
    submit_button.configure(state='disabled' if busy else 'normal',text='查看当前提交进度' if job else '提交上架');update_button.configure(state='disabled' if busy or job else 'normal');progress_refresh()
    blocker.configure(text=('当前按钮暂不可用：'+coordinator.status+'，已用'+str(int(time.monotonic()-busy_since))+'秒' if busy else '共用文案尚未保存' if copy_dirty else '已有上架任务：点击右侧按钮查看进度，系统不会重复提交' if job else operation_error or ''))
@@ -469,6 +473,9 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
     time.sleep(.5)
   run(action,lambda count:footer_note.configure(text='已停止 '+str(count)+' 个图片重做任务；原图与备份保留。'),label='停止本组图片重做')
  def accept_images():
+  if copy_dirty:
+   if not busy:save_copy(after=accept_images)
+   return
   if not editable():return
   def action():
    from asset_reconcile import reconcile
@@ -529,6 +536,17 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   if active_job():notebook.select(progress_tab);return
   if store.image_jobs.active(offers()):notebook.select(media_tab);footer_note.configure(text='图片重做尚未结束，请等待新图、视频及托管完成后再提交上架。');return
   if not editable():return
+  from asset_state import pending,blocking_reason
+  if any(pending(b) for b in coordinator.load()):
+   def check_assets():
+    coordinator.reconcile_assets();return coordinator.load()
+   def checked_assets(current):
+    unresolved=[b for b in current if pending(b)]
+    if not unresolved:submit();return
+    pictures=any(b.get('regeneration_pending') or any((b.get('asset_review') or {}).get(k) for k in ('main','gallery')) for b in unresolved)
+    notebook.select(media_tab if pictures else copy_tab)
+    footer_note.configure(text=blocking_reason(unresolved[0]))
+   run(check_assets,checked_assets,label='核对图片与文案状态');return
   from category_catalog import setup_errors
   errors=setup_errors(coordinator.load(),os.environ.get('OZON_CLIENT_ID',''))
   if errors:
@@ -553,6 +571,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  footer_note=ttk.Label(bottom,text='更新整组预览只保存本地；提交上架才同步Ozon。初始库存1000，销售后不重置。',wraplength=500)
  submit_button=ttk.Button(bottom,text='提交上架',style='Primary.TButton',command=submit);submit_button.pack(side='right',padx=6)
  update_button=ttk.Button(bottom,text='更新整组预览',command=update_preview);update_button.pack(side='right',padx=6);footer_note.pack(side='left',fill='x',expand=True)
+ accept_button=ttk.Button(asset_actions,text='图片无误，沿用本组',command=accept_images)
  def preview_only():
   from listing_preview import export_preview
   def action():
@@ -574,5 +593,5 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  try:
   publication.account_getter();dialog.after(100,load_warehouses)
  except ValueError:status.configure(text='请先连接Ozon API，再读取店铺全部仓库')
- dialog._ozon_ui={'notebook':notebook,'copy_widgets':copy_widgets,'tree':tree,'more':more_menu,'submit':submit_button,'update_preview':update_button,'footer_note':footer_note,'regeneration':regen_ui,'refresh':refresh}
+ dialog._ozon_ui={'notebook':notebook,'copy_widgets':copy_widgets,'tree':tree,'more':more_menu,'submit':submit_button,'update_preview':update_button,'accept_images':accept_button,'footer_note':footer_note,'regeneration':regen_ui,'refresh':refresh}
  return dialog

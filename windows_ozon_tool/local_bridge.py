@@ -587,7 +587,7 @@ def server(store,token,port=8765):
     body=json.loads(self.rfile.read(n))
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.14','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.15','paired':True}
      elif self.path=='/control':value=store.control
      elif self.path=='/automation-control':value=store.set_paused(bool(body.get('paused')))
      elif self.path=='/pause-ack':
