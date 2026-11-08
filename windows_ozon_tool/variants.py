@@ -1,7 +1,7 @@
 """Variant columns: stable natural-number suffixes, explicit units, TSV paste."""
 from decimal import Decimal,InvalidOperation
 import re
-FIELDS=[('name','商品名称/用途',''),('color','颜色',''),('size','规格/型号',''),('quantity','每套件数','1'),('material','主体材质',''),('accessory_material','配件/内衬材质',''),('length','商品长(cm)',''),('width','商品宽(cm)',''),('height','商品高(cm)',''),('net_weight','商品净重(g)',''),('pack_length','包装长(cm)',''),('pack_width','包装宽(cm)',''),('pack_height','包装高(cm)',''),('pack_weight','包装总重(g)',''),('cost','每套成本含国内运费(元)',''),('margin','目标净利润率(%)','25'),('stock','库存(套/件)','1000'),('origin','产地','中国'),('assembly','组装方式(未知留空)',''),('extra','其他真实参数/卖点','')]
+FIELDS=[('name','商品名称/用途',''),('color','颜色',''),('size','规格/型号',''),('quantity','每套件数','1'),('material','主体材质',''),('accessory_material','配件/内衬材质',''),('length','商品长(cm)',''),('width','商品宽(cm)',''),('height','商品高(cm)',''),('net_weight','商品净重(g)',''),('pack_length','包装长(cm)',''),('pack_width','包装宽(cm)',''),('pack_height','包装高(cm)',''),('pack_weight','包装总重(g)',''),('cost','每套成本含国内运费(元)',''),('margin','目标净利润率(%)','25'),('stock','初始库存（固定1000）','1000'),('origin','产地','中国'),('assembly','组装方式(未知留空)',''),('extra','其他真实参数/卖点','')]
 def valid_article(value):return bool(re.fullmatch(r'[\w-]+(?:\([1-9][0-9]*\))?',value)) and len(value)<=80
 
 def article(base,index):
@@ -58,6 +58,7 @@ class VariantGrid:
   selected=self.tree.selection()
   for item in self.tree.get_children():self.tree.delete(item)
   for row in self.rows:
+   row['values']['stock']='1000'
    try:code=article(self.base.get().strip(),row['index'])
    except ValueError:code='待填基础货号'
    self.tree.insert('', 'end',iid=str(row['index']),image=self.photos.get(row['index'],''),values=(row['index'],code,f"{len(row['refs'])} 张")+tuple(row['values'][k] for k,_,_ in FIELDS))
@@ -122,7 +123,9 @@ class VariantGrid:
  def edit(self,event):
   self.commit();self.track(event);item=self.tree.identify_row(event.y);column=self.tree.identify_column(event.x)
   if not item or not column.startswith('#') or int(column[1:])<4:return
-  key=FIELDS[int(column[1:])-4][0];row=next(r for r in self.rows if str(r['index'])==item);box=self.tree.bbox(item,column)
+  key=FIELDS[int(column[1:])-4][0]
+  if key=='stock':return
+  row=next(r for r in self.rows if str(r['index'])==item);box=self.tree.bbox(item,column)
   if not box:return
   entry=self.ttk.Entry(self.tree,justify='center');entry.insert(0,row['values'][key]);entry.place(x=box[0],y=box[1],width=box[2],height=box[3]);entry.focus_set();entry.selection_range(0,'end');self.editor=(entry,row,key)
   entry.bind('<Return>',lambda e:self.commit());entry.bind('<FocusOut>',lambda e:self.commit())
@@ -135,6 +138,7 @@ class VariantGrid:
   self.refresh()
  def bulk_column(self,key):
   self.commit()
+  if key=='stock':return
   from tkinter import messagebox
   label=next(title for k,title,_ in FIELDS if k==key)
   dialog=self.tk.Toplevel(self.frame);dialog.title('批量填写：'+label);dialog.geometry('460x440')
@@ -168,4 +172,5 @@ class VariantGrid:
  def records(self):
   self.commit()
   if not self.rows:raise ValueError('请至少增加一个变体')
+  for row in self.rows:row['values']['stock']='1000'
   return [{'article':article(self.base.get().strip(),r['index']),'index':r['index'],'base_article':self.base.get().strip(),'values':dict(r['values']),'facts':facts(r['values']),'references':list(r['refs'])} for r in self.rows]

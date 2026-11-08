@@ -39,7 +39,9 @@ def request(path,body):
 def digest(value):return hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
 TERMINAL={'on_sale','completed_zero_stock','partial_failed','rejected','failed','superseded','cancelled_followup'}
 class PublicationService:
- def __init__(self,data,store_lock,caller=request,account_getter=account):
+ def __init__(self,data,store_lock,caller=request,account_getter=account,initial_stock=None):
+  if initial_stock is not None and (type(initial_stock) is not int or not 0<=initial_stock<=2147483647):raise ValueError('初始库存配置无效')
+  self.initial_stock=initial_stock
   self.data=Path(data);self.root=self.data/'publications';self.root.mkdir(parents=True,exist_ok=True)
   self.lock=store_lock;self.mutex=threading.RLock();self.caller=caller;self.account_getter=account_getter;self.wake=threading.Event();self.status='尚未提交'
  def warehouses(self):
@@ -115,6 +117,7 @@ class PublicationService:
      setting=b.get('fulfillment') or {};wid=setting.get('warehouse_id')
      if wid not in warehouses or setting.get('account_id')!=merchant:raise ValueError(b['sku']+'：请重新选择本店铺当前可用的OGL/rFBS仓库')
      raw=str((b.get('variant_parameters') or {}).get('stock','')).strip()
+     if self.initial_stock is not None and raw!=str(self.initial_stock):raise ValueError('新商品初始库存固定为'+str(self.initial_stock)+'，请刷新整组预览')
      if not raw.isdigit() or int(raw)>2147483647:raise ValueError(b['sku']+'：库存必须是有效的非负整数')
      stocks[b['sku']]={'warehouse_id':wid,'warehouse_name':warehouses[wid]['name'],'stock':int(raw),'stock_revision':b.get('stock_revision','initial')}
     # Clicking Submit approves the exact visible, validated group, not hidden stale values.
@@ -163,7 +166,8 @@ class PublicationService:
      result=self.caller('/v3/product/import',{'items':pending});task_id=(result.get('result') or {}).get('task_id')
      if isinstance(task_id,str) and task_id.isdigit():task_id=int(task_id)
      if type(task_id) is not int or task_id<=0:raise ValueError('未返回明确任务ID')
-     job.update(task_id=task_id,state='importing',message='商品已受理，自动查询导入状态')
+     job.update(task_id=task_id,state='importing',message='商品已受理，等待平台创建；自动查询导入状态')
+     for row in pending:job['items'][row['offer_id']]['status']='已受理，等待平台创建'
     except Rejected as exc:job.update(state='rejected',message=str(exc))
     except Exception:job.update(state='import_uncertain',message='提交结果不确定，不自动重发；请在Ozon后台核对')
    else:job.update(state='stock_pending',message='已导入的内容保持不变，继续核对库存')
@@ -185,10 +189,19 @@ class PublicationService:
      target=job['items'][offer];errors=row.get('errors') or []
      if row.get('status') in ('failed','error') or any(e.get('level','ERROR').upper()=='ERROR' for e in errors):target.update(import_state='failed',errors=errors,status='导入失败')
      elif row.get('status')=='imported' and row.get('product_id'):target.update(import_state='imported',product_id=row['product_id'],errors=[],status='已导入')
+     elif target['import_state']!='imported':target.update(status='平台正在处理导入，等待创建完成',errors=errors)
+   self._save(job)
    current=[read(p) for p in job['source_paths']]
    if revision(current)!=job['source_revision']:
     job.update(state='superseded' if job.get('writes_complete') else 'local_changed',message='本地资料已有新版本；原写入结果保留，旧任务停止后续写入');self._save(job);return job
-   eligible={r['warehouse_id']:r for r in self.warehouses()};offers=list(job['items'])
+   offers=[o for o,item in job['items'].items() if item['import_state']=='imported']
+   if not offers:
+    failed=all(i['import_state']=='failed' for i in job['items'].values())
+    for item in job['items'].values():
+     if item['import_state']=='pending':item['status']='平台正在处理导入，等待创建完成'
+    job.update(state='failed' if failed else 'importing',message='整组导入失败，请查看逐变体错误' if failed else '导入任务已受理，平台尚未完成商品创建；自动等待，不重复提交')
+    self._save(job);return job
+   eligible={r['warehouse_id']:r for r in self.warehouses()}
    info=self.caller('/v3/product/info/list',{'offer_id':offers});products={r['offer_id']:r for r in info.get('items',[])}
    stock_rows=[]
    for offer,item in job['items'].items():
@@ -218,10 +231,8 @@ class PublicationService:
     except Exception:
      for row in stock_rows:job['items'][row['offer_id']].update(stock_state='uncertain',status='库存结果不确定，核对中，不自动重写')
     self._save(job)
-   response=self.caller('/v2/product/info/stocks-by-warehouse/fbs',{'offer_id':offers,'limit':1000});stock_data=list(response.get('products') or []);cursor=response.get('cursor');seen=set()
-   while response.get('has_next'):
-    if not cursor or cursor in seen:raise ValueError('库存分页响应异常')
-    seen.add(cursor);response=self.caller('/v2/product/info/stocks-by-warehouse/fbs',{'offer_id':offers,'limit':1000,'cursor':cursor});stock_data.extend(response.get('products') or []);cursor=response.get('cursor')
+   ready=[o for o in offers if ((products.get(o) or {}).get('statuses') or {}).get('is_created') and not (products.get(o) or {}).get('is_archived') and not (products.get(o) or {}).get('is_autoarchived')]
+   stock_data,not_ready=self.read_created_stocks(ready) if ready else ([],set())
    for offer,item in job['items'].items():
     setting=job['stocks'][offer];stock=next((r for r in stock_data if r.get('offer_id')==offer and r.get('warehouse_id')==setting['warehouse_id']),None)
     if item['stock_state'] in ('intent','uncertain') and stock and stock.get('free_stock')==setting['stock']:item.update(stock_state='done',status='库存写入已通过查询核对')
@@ -234,15 +245,44 @@ class PublicationService:
     approved=(product.get('statuses') or {}).get('moderate_status')=='approved'
     item['on_sale']=bool(item['import_state']=='imported' and item['stock_state']=='done' and stock and stock.get('free_stock',0)>0 and visible and approved and price_matches and not product.get('is_archived') and not product.get('is_autoarchived') and (product.get('visibility_details') or {}).get('has_price'))
     if item['on_sale']:item['status']='平台返回可售'
+    elif offer in not_ready:item['status']='库存已设置，等待平台库存查询服务就绪' if item['stock_state']=='done' else '商品库存服务尚未就绪，自动等待'
     elif item['stock_state']=='done':item['status']='库存已设置，等待平台审核/可售状态' if setting['stock'] else '库存为0，未可售'
+    elif item['import_state']=='pending':item['status']='平台正在处理导入，等待创建完成'
    values=list(job['items'].values())
    job['writes_complete']=all(i['import_state']=='failed' or (i['import_state']=='imported' and i['stock_state']=='done') for i in values)
    if all(i.get('on_sale') for i in values):job.update(state='on_sale',message='整组商品已导入，所选仓库有库存，平台返回可售')
    elif all(i.get('on_sale') or (i['stock_state']=='done' and job['stocks'][o]['stock']==0 and i.get('current_free_stock')==0) for o,i in job['items'].items()):job.update(state='completed_zero_stock',message='流程完成；库存为0的变体不会可售')
    elif all(i['import_state']=='failed' for i in values):job.update(state='failed',message='整组导入失败，请修改错误项后重新提交')
    elif all(i['import_state']=='failed' or i.get('on_sale') for i in values):job.update(state='partial_failed',message='部分变体失败，已成功变体保留，详见逐条状态')
-   else:job.update(state='waiting_platform',message='自动跟进导入、库存及平台可售状态')
+   elif any(i['import_state']=='pending' for i in values):job.update(state='importing',message='部分商品仍在创建中；已就绪变体继续库存流程，不重复提交')
+   elif not_ready:job.update(state='waiting_creation',message='商品已受理，平台库存查询尚未就绪；自动等待重试，不重复提交')
+   else:job.update(state='waiting_platform',message='自动跟进商品创建、库存及平台审核/可售状态')
    self._save(job);return job
+ def read_created_stocks(self,offers):
+  def fetch(batch):
+   rows=[];cursor='';seen=set()
+   for _ in range(100):
+    response=self.caller('/v2/product/info/stocks-by-warehouse/fbs',{'offer_id':batch,'limit':1000,**({'cursor':cursor} if cursor else {})});rows.extend(response.get('products') or [])
+    more=response.get('has_next',False)
+    if more is False or more is None or str(more).casefold() in ('false','0',''):return rows
+    cursor=response.get('cursor','')
+    if not cursor or cursor in seen:raise ValueError('库存分页响应异常')
+    seen.add(cursor)
+   raise ValueError('库存分页超过限制')
+  if not offers:return [],set()
+  try:return fetch(offers),set()
+  except Rejected as exc:
+   if 'product creation incomplete' not in str(exc).casefold():raise
+   if len(offers)==1:return [],set(offers)
+  # The product index and stock index are eventually consistent. One not-yet-ready
+  # item must not prevent the other variants from being queried.
+  rows=[];waiting=set()
+  for offer in offers:
+   try:rows.extend(fetch([offer]))
+   except Rejected as exc:
+    if 'product creation incomplete' not in str(exc).casefold():raise
+    waiting.add(offer)
+  return rows,waiting
  def resolve_no_import(self,job_id):
   with self.mutex:
    job=read(self.root/(job_id+'.json'))

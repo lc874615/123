@@ -113,6 +113,17 @@ class GroupService:
    if len(matches)!=1:raise ValueError(b['sku']+'：官方字典未唯一匹配“'+label+'”，请逐格选择官方选项')
    row=next(iter(matches.values()));values.append({'dictionary_value_id':row['id'],'value':row['value']})
   return values
+ def ensure_initial_stock(self,target):
+  changed=False
+  with self.mutex:
+   with self.lock:
+    bundles=[read(p) for p in self.paths]
+    for b in bundles:
+     p=b.setdefault('variant_parameters',{})
+     if str(p.get('stock',''))==str(target):continue
+     p['stock']=str(target);b['stock']=target;b['facts']=facts(p);b['stock_revision']=secrets.token_hex(8);changed=True
+    if changed:self._write(bundles)
+  return changed
  def set_prices(self,indices,values,expected=None):
   if not indices or len(indices)!=len(values):raise ValueError('请选择变体并填写对应售价')
   prices=[]

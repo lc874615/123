@@ -14,7 +14,9 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  from tkinter.scrolledtext import ScrolledText
  paths=[Path(p)/'listing_bundle.json' for p in group_folders]
  if not paths:messagebox.showinfo('没有变体','请选择尚未取消的商品组');return
- coordinator=GroupService(paths,service,pricing,store);dialog=tk.Toplevel(root);dialog.title('整组变体预览 · 可编辑与自动上架');dialog.geometry('1280x850');dialog.minsize(950,650)
+ coordinator=GroupService(paths,service,pricing,store)
+ if publication.initial_stock is not None and not publication.active([p.parent.name for p in paths]):coordinator.ensure_initial_stock(publication.initial_stock)
+ dialog=tk.Toplevel(root);dialog.title('整组变体预览 · 可编辑与自动上架');dialog.geometry('1280x850');dialog.minsize(950,650)
  busy=False;selected=set(range(len(paths)));focus=['',''];bundles=[];token=None;rendered=None;warehouses={};photos=[];rows={};last_job=None;copy_dirty=False;displayed_copy=None;busy_since=0;operation_error='';operation_name=''
  ttk.Label(dialog,text='每列一个变体；双击单格修改，点击参数名选中整行后批量修改。仓库必须从当前店铺可用OGL/rFBS仓库中选择。').pack(pady=6)
  status=ttk.Label(dialog,text='正在加载整组预览',wraplength=1200);status.pack(pady=3)
@@ -91,7 +93,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   nonlocal rows
   selected_row=tree.selection();expanded={iid:tree.item(iid,'open') for iid in ('basic','api','listing') if tree.exists(iid)};tree.delete(*tree.get_children());rows={}
   for key,label in [('basic','基础事实、成本与库存'),('api','官方类目参数（* 必填；按API动态调整）'),('listing','类目、自动售价、税率与仓库')]:tree.insert('','end',iid=key,text=label,open=expanded.get(key,True))
-  specs=[('basic','p:'+key,('p',key),label,False,None) for key,label,_ in FIELDS]
+  specs=[('basic','p:'+key,('p',key),('初始库存（固定1000）' if key=='stock' and publication.initial_stock==1000 else label),False,None) for key,label,_ in FIELDS]
   union={}
   for b in bundles:
    for field in (b.get('attribute_draft') or {}).get('fields',[]):
@@ -167,6 +169,8 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    reference=inline_references(bundles[indices[0]]).get(key)
    if reference:initial=reference['suggested']
   if str(initial).startswith('待匹配原值：'):initial=initial.split('：',1)[1]
+  if kind=='p' and key=='stock' and publication.initial_stock is not None:
+   messagebox.showinfo('统一初始库存','新商品初始库存固定为'+str(publication.initial_stock)+'，销售后正常扣减，不自动重置。',parent=dialog);return
   if kind=='p':text_editor('修改 '+iid,indices,str(initial),lambda values:coordinator.set_parameters(indices,key,values,expected));return
   if len(indices)==1 and field.get('dictionary_id'):dictionary_editor(indices[0],key,field,expected);return
   def save(values):

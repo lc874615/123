@@ -419,7 +419,7 @@ def main():
  import tkinter as tk
  from tkinter import ttk,messagebox,filedialog
  store=Store(DATA);token=secrets.token_urlsafe(32);http=server(store,token);threading.Thread(target=http.serve_forever,daemon=True).start()
- root=tk.Tk();root.title('Ozon Edge 本地服务 v0.37');root.geometry('1120x850')
+ root=tk.Tk();root.title('Ozon Edge 本地服务 v0.38');root.geometry('1120x850')
  shell=ttk.Frame(root);shell.pack(fill='both',expand=True);shell.rowconfigure(0,weight=1);shell.columnconfigure(0,weight=1)
  canvas=tk.Canvas(shell,highlightthickness=0);canvas.grid(row=0,column=0,sticky='nsew')
  outer_scroll=ttk.Scrollbar(shell,orient='vertical',command=canvas.yview);outer_scroll.grid(row=0,column=1,sticky='ns');canvas.configure(yscrollcommand=outer_scroll.set)
@@ -463,7 +463,7 @@ def main():
  attributes=AttributeService(DATA,store.lock,active_skus=hosting_skus)
  threading.Thread(target=attributes.worker,args=(pricing_stop,),daemon=True).start()
  from publication_service import PublicationService
- publication=PublicationService(DATA,store.lock)
+ publication=PublicationService(DATA,store.lock,initial_stock=1000)
  threading.Thread(target=publication.worker,args=(pricing_stop,),daemon=True).start()
  def hosting_settings():
   import os,webbrowser
@@ -528,6 +528,7 @@ def main():
  ttk.Button(win,text='自动定价设置 / 运费表 / 央行汇率',command=pricing_settings).pack(pady=3)
  def create():
   try:
+   for row in grid.rows:row['values']['stock']='1000'
    records=grid.records()
    if not shared_refs:raise ValueError('请选择共用详情图参考')
    if len(shared_refs)>8:raise ValueError('共用详情参考最多8张')
