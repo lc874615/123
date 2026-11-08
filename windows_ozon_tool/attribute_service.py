@@ -14,7 +14,7 @@ def category_key(bundle):
 def source_fingerprint(bundle):
  values={k:v for k,v in (bundle.get('variant_parameters') or {}).items() if k not in ('cost','margin','stock')}
  copy=bundle.get('copy') or {}
- return hashlib.sha256(json.dumps([values,{k:copy.get(k) for k in ('title_ru','description_ru','tags_ru')},bundle.get('model'),bundle.get('brand')],sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+ return hashlib.sha256(json.dumps([values,{k:copy.get(k) for k in ('title_ru','description_ru','tags_ru')},bundle.get('model'),bundle.get('brand'),[{k:r.get(k) for k in ('order','role','https_url','sha256')} for r in bundle.get('images') or []]],sort_keys=True,ensure_ascii=False).encode()).hexdigest()
 def review_hash(state):
  return hashlib.sha256(json.dumps([state.get('schema_hash'),state.get('source_fingerprint'),state.get('values')],sort_keys=True,ensure_ascii=False).encode()).hexdigest()
 def api(path,body):
@@ -27,7 +27,7 @@ def api(path,body):
  if not isinstance(value,dict) or not isinstance(value.get('result'),list):raise ValueError('Ozon属性响应格式异常')
  return value
 
-AUTOFILL_VERSION=2
+AUTOFILL_VERSION=3
 def normalized_name(field):
  return re.sub(r'\s+',' ',(field.get('name_ru') or field.get('name','')).casefold().replace('ё','е').replace('#','')).strip()
 def audience(bundle):
@@ -38,6 +38,12 @@ def audience(bundle):
 def suggested_value(field,bundle):
  """Only declared facts; dictionary values still require an exact official match."""
  name=normalized_name(field);identifier=int(field['id']);p=bundle.get('variant_parameters') or {};copy=bundle.get('copy') or {}
+ from rich_content import is_rich_field,generate
+ if is_rich_field(field):return generate(bundle)
+ if name.startswith('количество товара'):return p.get('quantity')
+ if name in ('комплектация','配套','套装内容'):
+  quantity=str(p.get('quantity') or '').strip();category=(bundle.get('category') or {}).get('name') or 'Товар'
+  return category+' — '+quantity+' шт.' if quantity.isdigit() and int(quantity)>0 else None
  if name in ('вес товара, г','商品重量，克','商品重量, 克'):return p.get('net_weight')
  if name in ('количество в упаковке, шт','количество товара в единице измерения','единиц в одном товаре','количество товара','每包数量,pcs','一个商品中的件数'):return p.get('quantity')
  if name in ('количество заводских упаковок','原厂包装数量'):return '1'
@@ -157,6 +163,8 @@ class AttributeService:
    suggestions={}
    for field in fields:
     key=field_key(field)
+    from rich_content import is_rich_field
+    if is_rich_field(field):values.pop(key,None);manual.discard(key)
     if key in values or field['id'] in (8229,21841,21837,21845):continue
     suggestion=suggested_value(field,bundle)
     if suggestion is None or suggestion=='':continue
@@ -184,8 +192,8 @@ class AttributeService:
     current=latest.get('attribute_draft') or {}
     if current.get('schema_hash')==digest:
      for k,v in (current.get('values') or {}).items():
-      if (current.get('source_fingerprint')==source and current.get('autofill_version')==AUTOFILL_VERSION) or k in (current.get('manual_keys') or []):state['values'][k]=v
-     state['manual_keys']=current.get('manual_keys') or []
+      if not any(field_key(f)==k and is_rich_field(f) for f in fields) and ((current.get('source_fingerprint')==source and current.get('autofill_version')==AUTOFILL_VERSION) or k in (current.get('manual_keys') or [])):state['values'][k]=v
+     state['manual_keys']=[k for k in (current.get('manual_keys') or []) if not any(field_key(f)==k and is_rich_field(f) for f in fields)]
      state['confirmed']=bool(current.get('source_fingerprint')==source and current.get('autofill_version')==AUTOFILL_VERSION and current.get('confirmed'))
      if state['confirmed']:state['confirmed_values_hash']=current.get('confirmed_values_hash')
     if old.get('category_key'):

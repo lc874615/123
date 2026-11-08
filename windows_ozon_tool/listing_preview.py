@@ -19,6 +19,10 @@ def attribute_errors(bundle):
  for field in state['fields']:
   if field['id'] in VIDEO_IDS or field['id']==8229:continue
   values=(state.get('values') or {}).get(field_key(field),[])
+  from rich_content import is_rich_field,generate
+  if is_rich_field(field):
+   expected=generate(bundle)
+   if not expected or values!=[{'value':expected}]:errors.append('富内容JSON须使用本变体最新的8张已托管图片，请刷新API参数')
   if not values:
    if field_key(field) in (state.get('migration_pending') or {}):errors.append('属性原值待按新类目匹配：'+field.get('name',str(field['id'])))
    if field.get('is_required'):errors.append('必填属性缺失：'+field.get('name',str(field['id'])))

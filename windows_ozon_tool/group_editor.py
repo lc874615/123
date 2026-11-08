@@ -136,6 +136,13 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   if not editable() or iid not in rows:return
   if not indices:messagebox.showinfo('未选择变体','请至少勾选一个变体列',parent=dialog);return
   row,field=rows[iid];kind,key=row;expected=token
+  from rich_content import is_rich_field
+  if kind=='a' and is_rich_field(field):
+   window=tk.Toplevel(dialog);window.title('自动富内容JSON · '+paths[indices[0]].parent.name);window.geometry('850x600');text=ScrolledText(window,wrap='word');text.pack(fill='both',expand=True,padx=8,pady=8)
+   value=value_for(bundles[indices[0]],row,indices[0])
+   try:value=json.dumps(json.loads(value),ensure_ascii=False,indent=2)
+   except (ValueError,TypeError):value='等待对应变体8张图片托管完成后生成'
+   text.insert('1.0',value);text.configure(state='disabled');ttk.Label(window,text='自动使用本变体01主图和02—08详情；图片更新后自动重建。').pack(pady=5);return
   if kind=='a' and int(key.rsplit(':',1)[1]) in (21841,21837):
    messagebox.showinfo('自动使用生成视频','视频链接自动使用本变体生成的8秒MP4；视频名称沿用共用标题。',parent=dialog);return
   if kind=='s':
