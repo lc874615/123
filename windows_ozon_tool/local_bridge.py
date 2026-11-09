@@ -225,7 +225,7 @@ class Store:
    if not jobs:self.image_jobs.recollect(products);jobs=self.image_jobs.active([t['sku'] for t in products])
    return self.image_jobs.recover(jobs[0]['id'])
   from recovery_targets import markers
-  task=group[0];validate_complete=len(task.get('received_images',[]))==8;task.pop('resume_mode',None);task.update(state='waiting',message='用户请求核对最终编号文件，不重新生成');self.save();return {'id':task['id'],'sku':task['sku'],'set_mode':True,'saved_count':len(task.get('received_images',[])),'expected_images':task.get('expected_images',8),'orderRepairPending':validate_complete,'automaticRecovery':bool(automatic or task.get('recollection_requested')),'recovery_markers':markers(self.folder/'products'/sku,task)}
+  task=group[0];validate_complete=len(task.get('received_images',[]))==8;task.pop('resume_mode',None);task.update(state='waiting',message='用户请求核对最终编号文件，不重新生成');self.save();return {'id':task['id'],'sku':task['sku'],'set_mode':True,'saved_count':len(task.get('received_images',[])),'expected_images':task.get('expected_images',8),'delivery_policy':task.get('delivery_policy'),'orderRepairPending':validate_complete,'automaticRecovery':bool(automatic or task.get('recollection_requested')),'recovery_markers':markers(self.folder/'products'/sku,task)}
  def set_result(self,tid,index,encoded):
   if hasattr(self,'image_jobs') and self.image_jobs.get(tid):return self.image_jobs.accept(tid,index,encoded)
   task=self.find(tid)
@@ -389,6 +389,7 @@ class Store:
   t['generation_parameters']=copy.deepcopy(t.get('variant_parameters') or {});t['generation_variants']=copy.deepcopy(t.get('group_variants') or []);t['state']='claimed'
   if t.get('set_mode'):
    from image_prompts import generation_prompt,reference_contract,main_detail_references
+   t['delivery_policy']='generated_originals'
    t['references']=main_detail_references(t,self.tasks)
    t['prompt']=generation_prompt(t['facts'],t.get('group_facts',''),t.get('expected_images',8))+'\n'+reference_contract(t)
   t['prompt']=t['prompt'].replace('。如以文件或ZIP交付，8张文件须按01_至08_编号，01_为主图，ZIP不得包含原始参考图。','。仅交付8张独立图片，按01_至08_编号。');t['prompt']+='\n交付要求：仅输出独立图片及逐张下载入口，不要打包，不提供ZIP或其他压缩包。';self.save();result=dict(t);result['references']=[{'name':r['name'],'mime':r['mime'],'purpose':r.get('purpose','variant_main'),'base64':base64.b64encode(Path(r['path']).read_bytes()).decode()} for r in t.get('references',[])];return result
@@ -609,7 +610,7 @@ def server(store,token,port=8765):
     body=json.loads(self.rfile.read(n))
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.24','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.25','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)

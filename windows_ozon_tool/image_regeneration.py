@@ -92,7 +92,7 @@ class ImageJobs:
     for old in self.active([target['sku']]):
      if any(t['sku']==target['sku'] and set(t['orders'])&set(target['orders']) for t in old['targets']):raise ValueError(target['sku']+'：对应图片已有重做任务，请等候完成或停止本组重做')
    refs=self.refs(group if kind=='shared_details' else [self.product(owner)],kind);identity='image-'+secrets.token_hex(12)
-   job={'id':identity,'sku':owner,'image_job':True,'set_mode':True,'auto_batch':True,'kind':kind,'state':'queued','targets':targets,'expected_images':7 if kind=='shared_details' else 1,'received_images':[],'references':refs,'prompt':self.prompt(owner,kind,addition),'addition':addition,'parameters':{t['sku']:copy.deepcopy(read(self.folder(t['sku'])/'listing_bundle.json').get('variant_parameters') or {}) for t in targets},'variants':[{'sku':t['sku'],'variant_parameters':copy.deepcopy(read(self.folder(t['sku'])/'listing_bundle.json').get('variant_parameters') or {})} for t in group],'basis':self.basis(targets),'created_at':time.time(),'message':'已备份，等待自动生成7张共用详情图' if kind=='shared_details' else '已备份，等待自动生成本变体主图'}
+   job={'id':identity,'sku':owner,'image_job':True,'set_mode':True,'auto_batch':True,'delivery_policy':'generated_originals','kind':kind,'state':'queued','targets':targets,'expected_images':7 if kind=='shared_details' else 1,'received_images':[],'references':refs,'prompt':self.prompt(owner,kind,addition),'addition':addition,'parameters':{t['sku']:copy.deepcopy(read(self.folder(t['sku'])/'listing_bundle.json').get('variant_parameters') or {}) for t in targets},'variants':[{'sku':t['sku'],'variant_parameters':copy.deepcopy(read(self.folder(t['sku'])/'listing_bundle.json').get('variant_parameters') or {})} for t in group],'basis':self.basis(targets),'created_at':time.time(),'message':'已备份，等待自动生成7张共用详情图' if kind=='shared_details' else '已备份，等待自动生成本变体主图'}
    planned.append(job)
   # Every backup succeeds before the queue or live drafts change.
   for job in planned:
@@ -122,7 +122,7 @@ class ImageJobs:
   job=self.get(identifier)
   if not job or job['state'] in DONE:raise ValueError('图片重做任务不存在或已结束')
   job.update(state='waiting',message='自动读取已发送的图片重做结果，不重新发送');job.pop('resume_mode',None);self.save()
-  return {'id':job['id'],'sku':job['sku'],'set_mode':True,'image_job':True,'automaticRecovery':True,'expected_images':job['expected_images'],'saved_count':len(job['received_images']),'source_marker':'【OZON_TASK:'+job.get('source_request_id',job['id'])+'】'}
+  return {'id':job['id'],'sku':job['sku'],'set_mode':True,'image_job':True,'automaticRecovery':True,'delivery_policy':job.get('delivery_policy'),'expected_images':job['expected_images'],'saved_count':len(job['received_images']),'source_marker':'【OZON_TASK:'+job.get('source_request_id',job['id'])+'】'}
  def reset(self,identifier):
   job=self.get(identifier);folder=self.store.folder/'image_job_staging'/identifier
   if folder.exists():shutil.copytree(folder,folder.parent/(identifier+'-order-backup-'+str(time.time_ns())))

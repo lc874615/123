@@ -19,3 +19,21 @@ test('same original at different URLs is collected once',async()=>{
 test('partial reply cannot borrow images from previous reply',async()=>{
  assert.equal(await collect(documentWith([image('only',320)]),{expected:8}),null);
 });
+
+function deliveryFixture(count,policy){
+ const vm=require('node:vm'),fs=require('node:fs');let fileReads=0,galleryReads=0,saved=0;
+ const ctx={OzonConversation:{region:()=>({anchor:{}}),generating:()=>false,main:()=>({textContent:'settled'})},
+ OzonImages:{inspect:()=>({count,overflow:count>2,signature:'native'}),collect:async(_d,o)=>{galleryReads++;await o.onImage(0,'original');return ['original'];}},
+ OzonFiles:{expandFiles:async()=>{},candidates:()=>{fileReads++;return {present:true,complete:true,count:2,signature:'files'};},collect:async(_d,o)=>{await o.onImage(0,'rebuilt');return ['rebuilt'];}}};
+ vm.runInNewContext(fs.readFileSync(__dirname+'/delivery.js','utf8'),ctx);
+ return {collect:()=>ctx.OzonDelivery.collect({}, {task:{delivery_policy:policy},expected:2,quietMs:0,onImage:async()=>{saved++;}}),counts:()=>({fileReads,galleryReads,saved})};
+}
+test('new delivery saves generated originals even when different numbered files exist',async()=>{
+ const f=deliveryFixture(2,'generated_originals');assert.deepEqual(Array.from(await f.collect()),['original']);assert.deepEqual(f.counts(),{fileReads:0,galleryReads:1,saved:1});
+});
+test('incomplete native gallery cannot be replaced by complete rebuilt download files',async()=>{
+ const f=deliveryFixture(1,'generated_originals');assert.equal(await f.collect(),null);assert.deepEqual(f.counts(),{fileReads:0,galleryReads:0,saved:0});
+});
+test('legacy delivery retains numbered file recovery behavior',async()=>{
+ const f=deliveryFixture(1);assert.deepEqual(Array.from(await f.collect()),['rebuilt']);assert.equal(f.counts().galleryReads,0);
+});
