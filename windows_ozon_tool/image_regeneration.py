@@ -14,7 +14,7 @@ class ImageJobs:
    for ref in j.get('references') or []:
     name=Path(ref.get('path','').replace('\\','/')).name
     folders=[self.store.folder/'products'/str(ref.get('sku') or j['sku'])/'references',self.store.folder/'products'/j['sku']/'shared_references']
-    if ref.get('purpose') in ('shared_detail','shared_gallery'):folders.reverse()
+    if ref.get('purpose') in ('shared_detail','shared_gallery','shared_information'):folders.reverse()
     for folder in folders:
      if (folder/name).is_file():ref['path']=str(folder/name);break
    for plan in j.get('plans') or []:
@@ -46,8 +46,14 @@ class ImageJobs:
  def refs(self,tasks,kind):
   candidates=[]
   for t in tasks:
-   own=t.get('main_references') or [r for r in t.get('references') or [] if r.get('purpose') not in ('shared_gallery','shared_detail')]
+   own=t.get('main_references') or [r for r in t.get('references') or [] if r.get('purpose') not in ('shared_gallery','shared_detail','shared_information')]
    for r in (own[:1] if kind=='shared_details' else own):candidates.append((t['sku'],r,'variant_main'))
+  if kind=='variant_main':
+   from image_prompts import main_detail_references
+   for t in tasks:
+    candidates.extend((r.get('sku') or t.get('copy_leader') or t['sku'],r,'shared_information') for r in main_detail_references(t,self.store.tasks) if r.get('purpose') in ('shared_information','shared_gallery','shared_detail'))
+   if any(purpose=='shared_information' for sku,r,purpose in candidates):
+    candidates=[row for row in candidates if row[2]!='shared_information'][:7]+[row for row in candidates if row[2]=='shared_information']
   if kind=='shared_details':
    details=[(t['sku'],r,'shared_detail') for t in tasks for r in t.get('detail_references') or []]
    candidates=details+candidates

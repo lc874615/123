@@ -1,11 +1,11 @@
 import unittest
-from image_prompts import ROLES,generation_prompt,shared_prompt,VISUAL_STYLE,MAIN_STYLE,EVIDENCE_STYLE,POSTER_RULE,DETAIL_STYLE
+from image_prompts import ROLES,generation_prompt,shared_prompt,VISUAL_STYLE,MAIN_STYLE,EVIDENCE_STYLE,POSTER_RULE,DETAIL_STYLE,MAIN_DETAIL_INFO
 class PromptStyleTests(unittest.TestCase):
  def test_original_eight_roles_keep_shared_seven_positions(self):
   self.assertEqual([name for name,brief in ROLES],['01_main','02_dimensions','03_scene','04_scene','05_material','06_structure','07_details','08_contents'])
   for (name,brief),prefix in zip(ROLES[1:],['商品尺寸图','真实使用场景一','真实使用场景二','材质细节','结构展示','重要细节和变体选择','套装实际内容']):self.assertTrue(brief.startswith(prefix),(name,brief))
  def test_full_set_keeps_eight_ordered_final_filenames_and_styles(self):
-  text=generation_prompt('本变体真实参数','全部变体参数');positions=[text.index(name+'.jpg') for name,brief in ROLES];self.assertEqual(positions,sorted(positions));self.assertIn('不要多出第9张',text);self.assertIn(MAIN_STYLE,text);self.assertIn(VISUAL_STYLE,text);self.assertIn('允许真实坐姿等必要局部遮挡',text)
+  text=generation_prompt('本变体真实参数','全部变体参数');positions=[text.index(name+'.jpg') for name,brief in ROLES];self.assertEqual(positions,sorted(positions));self.assertIn('不要多出第9张',text);self.assertIn(MAIN_STYLE,text);self.assertIn(DETAIL_STYLE,text);self.assertIn('允许真实坐姿等必要局部遮挡',text)
  def test_single_main_keeps_own_reference_and_does_not_include_other_variants(self):
   text=generation_prompt('本变体灰色绒面椅，1件','OTHER_GREEN_CORDUROY_STYLE_ONLY',1);self.assertNotIn('OTHER_GREEN_CORDUROY_STYLE_ONLY',text);self.assertIn('文件名固定01_main.jpg',text);self.assertIn('2—4',text);self.assertIn('约三分之二',text);self.assertIn('原商品是平绒就不能变成条绒',text)
  def test_seven_regeneration_uses_same_role_mapping_and_no_main_file(self):
@@ -27,10 +27,25 @@ class PromptStyleTests(unittest.TestCase):
   self.assertNotIn(DETAIL_STYLE,generation_prompt('参数',expected=1))
  def test_single_main_prompt_unchanged_by_detail_update(self):
   import hashlib
-  self.assertEqual(hashlib.sha256(generation_prompt('固定本品参数',expected=1).encode()).hexdigest(),'7722f9534fcb0581620ff4a128e3353a988b3591ced4c79cae37434b3fe0e567')
+  self.assertEqual(hashlib.sha256(generation_prompt('固定本品参数',expected=1).replace(MAIN_DETAIL_INFO,'').encode()).hexdigest(),'7722f9534fcb0581620ff4a128e3353a988b3591ced4c79cae37434b3fe0e567')
  def test_detail_template_original_scenes_facts_and_variant_limits(self):
   text=shared_prompt('全组参数')
-  for rule in ('每张只讲一个既定主题','不复刻示例','1—3厘米误差','没有清晰细节照片就不臆造','不能据此虚构内部层数','共同事实才写成全组选项通用','不能只换上一张背景色','数量加具体商品单位'):
+  for rule in ('每张只讲一个既定主题','不复刻示例','1—3厘米误差','没有清晰细节照片就不臆造','不能据此虚构内部层数','共同事实才写成全组选项通用','不能只换上一张背景色','具体商品单位'):
    self.assertIn(rule,text)
   self.assertEqual(text.count('表现优化：'),7)
+ def test_main_uses_shared_information_without_adopting_variant_appearance(self):
+  from image_prompts import main_detail_references,reference_contract
+  tasks=[{'sku':'A','detail_references':[{'path':'shared.png','purpose':'shared_gallery'}]}, {'sku':'B','copy_leader':'A','references':[{'path':'own.png','purpose':'variant_main'}]}]
+  refs=main_detail_references(tasks[1],tasks)
+  self.assertEqual([r['path'] for r in refs],['own.png','shared.png']);self.assertEqual(refs[1]['purpose'],'shared_information');self.assertEqual(refs[1]['sku'],'A')
+  task=dict(tasks[1],references=refs)
+  self.assertEqual(main_detail_references(task,tasks),refs)
+  self.assertIn('不作为本变体外观依据',reference_contract(task))
+  self.assertIn(MAIN_DETAIL_INFO,generation_prompt('参数',expected=1));self.assertNotIn(MAIN_DETAIL_INFO,shared_prompt('参数'))
+ def test_photo_direction_precedes_contract_and_does_not_use_card_style(self):
+  for text in (generation_prompt('参数'),shared_prompt('参数')):
+   self.assertTrue(text.startswith(DETAIL_STYLE));self.assertEqual(text.count(DETAIL_STYLE),1)
+   self.assertNotIn(VISUAL_STYLE,text)
+   self.assertIn('不得用Python/PIL/SVG',text);self.assertIn('65%—85%',text);self.assertIn('两张场景图必须出现人物实际使用',text)
+  self.assertNotIn(DETAIL_STYLE,generation_prompt('参数',expected=1))
 if __name__=='__main__':unittest.main()

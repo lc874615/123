@@ -100,11 +100,11 @@ class Store:
    for row in task.get('received_images') or []:
     path=folder/'images'/Path(str(row.get('file','')).replace('\\','/')).name
     if path.exists():row['file']=str(path)
-   for key in ('references','main_references'):
+   for key in ('references','main_references','detail_references'):
     for ref in task.get(key) or []:
      name=Path(str(ref.get('path','')).replace('\\','/')).name
      candidates=[folder/'references'/name,leader/'shared_references'/name]
-     if ref.get('purpose')=='shared_detail':candidates.reverse()
+     if key=='detail_references' or ref.get('purpose') in ('shared_detail','shared_gallery','shared_information'):candidates.reverse()
      for candidate in candidates:
       if candidate.exists():ref['path']=str(candidate);break
    if task.get('video') and (folder/'video'/'product_8s.mp4').exists():task['video']=str(folder/'video'/'product_8s.mp4')
@@ -388,7 +388,8 @@ class Store:
   if not t:raise ValueError('没有排队任务，请在本地窗口创建商品')
   t['generation_parameters']=copy.deepcopy(t.get('variant_parameters') or {});t['generation_variants']=copy.deepcopy(t.get('group_variants') or []);t['state']='claimed'
   if t.get('set_mode'):
-   from image_prompts import generation_prompt,reference_contract
+   from image_prompts import generation_prompt,reference_contract,main_detail_references
+   t['references']=main_detail_references(t,self.tasks)
    t['prompt']=generation_prompt(t['facts'],t.get('group_facts',''),t.get('expected_images',8))+'\n'+reference_contract(t)
   t['prompt']=t['prompt'].replace('。如以文件或ZIP交付，8张文件须按01_至08_编号，01_为主图，ZIP不得包含原始参考图。','。仅交付8张独立图片，按01_至08_编号。');t['prompt']+='\n交付要求：仅输出独立图片及逐张下载入口，不要打包，不提供ZIP或其他压缩包。';self.save();result=dict(t);result['references']=[{'name':r['name'],'mime':r['mime'],'purpose':r.get('purpose','variant_main'),'base64':base64.b64encode(Path(r['path']).read_bytes()).decode()} for r in t.get('references',[])];return result
  def find(self,tid):
@@ -608,7 +609,7 @@ def server(store,token,port=8765):
     body=json.loads(self.rfile.read(n))
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.22','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.24','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)

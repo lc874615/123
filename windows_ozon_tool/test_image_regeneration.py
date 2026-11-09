@@ -13,6 +13,14 @@ class ImageRegenerationTests(unittest.TestCase):
   from image_prompts import generation_prompt,shared_prompt
   prompt=generation_prompt('灰色椅子，数量1','OTHER_RED_VARIANT',1)
   self.assertNotIn('OTHER_RED_VARIANT',prompt);self.assertIn('灰色椅子',prompt);self.assertIn('抠图合成',prompt);self.assertIn('扶手有无',prompt);self.assertIn('2—4',prompt);self.assertIn('01—07',shared_prompt('真实全组参数'))
+ def test_main_regeneration_and_initial_claim_attach_original_shared_details(self):
+  with tempfile.TemporaryDirectory() as tmp,patch('image_regeneration.threading.Thread'):
+   store=self.setup(tmp);leader=store.tasks[0];shared=store.folder/'products'/leader['sku']/'shared_references';shared.mkdir();path=shared/'detail.png';path.write_bytes(picture(121));leader['detail_references']=[{'path':str(path),'name':'detail.png','mime':'image/png','purpose':'shared_gallery'}]
+   refs=store.image_jobs.refs([store.tasks[1]],'variant_main')
+   self.assertTrue(any(r['purpose']=='shared_information' and r['sku']==leader['sku'] for r in refs));self.assertTrue(any(r['purpose']=='variant_main' and r['sku']==store.tasks[1]['sku'] for r in refs))
+   for task in store.tasks:task['state']='saved'
+   store.tasks[1]['state']='queued';store.set_paused(False);claimed=store.claim()
+   self.assertTrue(any(r['purpose']=='shared_information' for r in claimed['references']));self.assertIn('共用详情成图只作信息索引',claimed['prompt'])
  def setup(self,tmp):
   store=Store(tmp)
   for i in range(1,4):
@@ -35,7 +43,7 @@ class ImageRegenerationTests(unittest.TestCase):
    self.assertTrue(self.send(store,job)['complete'])
    for n,t in enumerate(store.tasks):
     self.assertEqual(t['received_images'][0],before[n][0] if before[n][0].get('generation_task_id') else {**before[n][0],'generation_task_id':t['id'],'source_index':0,'source_expected':8 if n==0 else 1})
-    self.assertFalse((store.folder/'products'/t['sku']/'images'/'02_old.png').exists());b=read(store.folder/'products'/t['sku']/'listing_bundle.json');self.assertEqual(b['copy']['title_ru'],'Стул');self.assertEqual(b['price_cny'],'123');self.assertFalse(b['image_regeneration_jobs']);self.assertEqual(b['hosting']['state'],'pending')
+    self.assertFalse((store.folder/'products'/t['sku']/'images'/'02_old.png').exists());b=read(store.folder/'products'/t['sku']/'listing_bundle.json');self.assertEqual(b['copy']['title_ru'],'Стул');self.assertEqual(b['price_cny'],'123');self.assertFalse(b['image_regeneration_jobs']);self.assertEqual(b['hosting']['state'],'waiting')
    self.assertEqual(len({tuple(r['sha256'] for r in t['received_images'][1:]) for t in store.tasks}),1)
  def test_selected_mains_only_use_own_references_and_other_assets_remain(self):
   with tempfile.TemporaryDirectory() as tmp,patch('image_regeneration.threading.Thread'):
