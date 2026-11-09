@@ -616,9 +616,14 @@ def server(store,token,port=8765):
     n=int(self.headers.get('Content-Length','0'))
     if not 0<n<29*1024*1024:raise ValueError('请求大小无效')
     body=json.loads(self.rfile.read(n))
+    if self.path=='/queue-diagnostic':
+     if not store.lock.acquire(blocking=False):return self.reply(200,{'busy':True,'message':'本地正在处理素材，已跳过队列快照；页面诊断仍可导出'})
+     try:value={'busy':False,'paused':store.control.get('paused',False),'tasks':[{'id':t['id'],'sku':t['sku'],'state':t['state'],'received':len(t.get('received_images') or [])} for t in store.tasks],'image_jobs':[{'id':j['id'],'sku':j['sku'],'state':j['state'],'received':len(j.get('received_images') or []),'expected':j.get('expected_images')} for j in store.image_jobs.jobs if j['state'] not in ('saved','cancelled')]}
+     finally:store.lock.release()
+     return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.31','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.32','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
@@ -706,7 +711,7 @@ def main(test_mode=False,on_ready=None):
  from tkinter import ttk,messagebox,filedialog
  from pairing import token as pairing_token,InstanceLock
  instance=InstanceLock(DATA);instance.acquire()
- store=Store(DATA);token=pairing_token(DATA);http=server(store,token) if not test_mode else None
+ store=Store(DATA);store.image_jobs.defer_commits=not test_mode;token=pairing_token(DATA);http=server(store,token) if not test_mode else None
  if http:threading.Thread(target=http.serve_forever,daemon=True).start()
  root=tk.Tk()
  def show_task_error(title,error,**options):
@@ -892,7 +897,10 @@ def main(test_mode=False,on_ready=None):
   return next((t for t in visible if ids and (t['id']==ids[0] or ('group:'+str(t.get('base_article') or t.get('copy_leader') or t['sku']))==ids[0])),None)
  def refresh():
   nonlocal visible,last_view
-  with store.lock:visible=[dict(t) for t in store.tasks];reason=store.queue_reason();plugin_online=time.time()-store.client.get('last_seen',0)<75
+  if not store.lock.acquire(blocking=False):
+   connection.configure(text='后台正在保存/校验素材，界面稍后自动刷新');root.after(300,refresh);return
+  try:visible=[dict(t) for t in store.tasks];reason=store.queue_reason();plugin_online=time.time()-store.client.get('last_seen',0)<75
+  finally:store.lock.release()
   from pipeline_status import stage,group_summary
   import os
   merchant=os.environ.get('OZON_CLIENT_ID','');connection.configure(text=('店铺 '+merchant if merchant else 'Ozon未连接')+' · 插件'+('在线' if plugin_online else '待连接')+' · COS'+('已配置' if (DATA/'hosting'/'config.json').exists() else '待配置')+' · 定价来源'+('已配置' if all((DATA/'pricing'/(name+'.json')).exists() for name in ('ogl','commissions','fx')) else '待配置')+' | '+reason)
@@ -914,7 +922,9 @@ def main(test_mode=False,on_ready=None):
    if selection and view.exists(selection[0]):view.selection_set(selection[0])
    view.yview_moveto(position);last_view=snapshot
   if not test_mode:
-   with store.lock:alert_jobs=[dict(j) for j in store.image_jobs.jobs];plugin=dict(store.plugin_status);paused=bool(store.control.get('paused'));client=dict(store.client)
+   if not store.lock.acquire(blocking=False):root.after(300,refresh);return
+   try:alert_jobs=[dict(j) for j in store.image_jobs.jobs];plugin=dict(store.plugin_status);paused=bool(store.control.get('paused'));client=dict(store.client)
+   finally:store.lock.release()
    live={t['sku'] for t in visible if t['state']!='cancelled'};current_jobs=[]
    for j in jobs:
     items=j.get('items')
@@ -1089,10 +1099,13 @@ def main(test_mode=False,on_ready=None):
   return open_editor(root,folder,attributes,folders,lambda:category_editor(task),show_price,connect_category,pricing=pricing,store=store,publication=publication,hosting=hosting)
  ttk.Button(task_actions,text='打开整组预览',style='Primary.TButton',command=listing_editor).pack(side='left',padx=4)
  view.bind('<Double-1>',lambda e:listing_editor())
- def pause_making():
-  with store.lock:store.set_paused(True)
- def resume_making():
-  with store.lock:store.set_paused(False)
+ def change_pause(paused):
+  if not store.lock.acquire(blocking=False):
+   connection.configure(text='后台正在保存素材，完成后自动应用'+('暂停' if paused else '继续')+'操作');root.after(150,lambda:change_pause(paused));return
+  try:store.set_paused(paused)
+  finally:store.lock.release()
+ def pause_making():change_pause(True)
+ def resume_making():change_pause(False)
  ttk.Button(task_actions,text='暂停制作',command=pause_making).pack(side='left',padx=4)
  ttk.Button(task_actions,text='继续制作',command=resume_making).pack(side='left',padx=4)
  restart_pending=False

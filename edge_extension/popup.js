@@ -40,9 +40,13 @@ document.querySelector('#copy-choice-save').onclick=async()=>{
 };
 
 document.querySelector('#diagnose').onclick=async()=>{
- try{const [tab]=await chrome.tabs.query({active:true,currentWindow:true});const result=await chrome.runtime.sendMessage({kind:'diagnose',tabId:tab.id});if(result.error)throw Error(result.error);
-  const url=URL.createObjectURL(new Blob([JSON.stringify(result.diagnostic,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='ozon-page-diagnostic.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),5000);status.textContent='诊断文件已导出，不包含配对码、完整图片网址或文案内容';
- }catch(e){status.textContent=e.message;}
+ const button=document.querySelector('#diagnose');button.disabled=true;status.textContent='正在导出页面诊断，可在任务运行中操作…';let timer;
+ try{
+  const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
+  const result=await Promise.race([chrome.runtime.sendMessage({kind:'diagnose',tabId:tab?.id}),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('诊断读取超时，请刷新原对话后重试；已有任务未被重启')),25000);})]);
+  if(result?.error)throw Error(result.error);if(!result?.diagnostic)throw Error('未获取到诊断数据，请刷新原页面后重试');
+  const url=URL.createObjectURL(new Blob([JSON.stringify(result.diagnostic,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='ozon-page-diagnostic.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),5000);status.textContent='诊断已导出'+(result.diagnostic.queue?.busy?'（本地忙，已跳过队列快照）':'');
+ }catch(e){status.textContent=e.message;}finally{clearTimeout(timer);button.disabled=false;}
 };
 
 document.querySelector('#sku').addEventListener('change',()=>chrome.storage.local.set({lastSku:document.querySelector('#sku').value.trim()}));

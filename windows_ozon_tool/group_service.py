@@ -32,6 +32,10 @@ class GroupService:
   self.paths=[Path(p) for p in paths];self.attributes=attributes;self.pricing=pricing;self.store=store;self.lock=attributes.lock;self.mutex=getattr(attributes,'business_lock',None) or threading.RLock();attributes.business_lock=self.mutex;self.status="整组草稿已加载"
  def load(self):
   with self.lock:return [read(p) for p in self.paths]
+ def try_load(self):
+  if not self.lock.acquire(blocking=False):return None
+  try:return [read(p) for p in self.paths]
+  finally:self.lock.release()
  def token(self):return revision(self.load())
  def _check(self,bundles,expected):
   if expected is not None and revision(bundles)!=expected:raise ValueError('预览内容已更新，请先核对最新表格再操作')

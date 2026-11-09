@@ -9,6 +9,7 @@ from image_prompts import generation_prompt,shared_prompt,reference_contract
 DONE={'saved','cancelled'}
 class ImageJobs:
  def __init__(self,store):
+  self.defer_commits=False;self._commit_worker=None
   self.store=store;self.path=store.folder/'image_jobs.json';self.jobs=read(self.path) if self.path.exists() else []
   for j in self.jobs:
    for ref in j.get('references') or []:
@@ -158,7 +159,8 @@ class ImageJobs:
     attempt=job['image_retry_attempts'][-1];rows[-1].update(source_request_id=attempt['request_id'],source_index=index-attempt['offset'],source_expected=attempt['count'])
   if len(rows)==job['expected_images']:job['state']='processing';job['message']='新图已收齐，正在校验并替换对应图片'
   self.save()
-  if job['state']=='processing':
+  if job['state']=='processing' and self.defer_commits:self.tick()
+  elif job['state']=='processing':
    try:self.commit(job)
    except Exception as error:job.update(state='committing' if job.get('plans') else 'needs_attention',message='图片替换待恢复，原始备份保留：'+str(error)[:180]);self.save()
   return {'complete':job['state']=='saved','saved_count':len(rows),'message':job['message'],'expected_images':job['expected_images']}
@@ -245,6 +247,16 @@ class ImageJobs:
     path=self.folder(target['sku'])/'listing_bundle.json';b=read(path);b['image_regeneration_jobs']=list(dict.fromkeys((b.get('image_regeneration_jobs') or [])+[identity]));write(path,b)
   self.save();self.store.set_paused(False);return operation
  def tick(self):
+  if self.defer_commits:
+   if self._commit_worker is not None and self._commit_worker.is_alive():return
+   if not any(j['state'] in ('processing','committing') and not any(t['sku'] in self.store.video_running for t in j['targets']) for j in self.jobs):return
+   def work():
+    with self.store.lock:
+     for job in list(self.jobs):
+      if job['state'] not in ('processing','committing') or any(t['sku'] in self.store.video_running for t in job['targets']):continue
+      try:self.commit(job)
+      except Exception as error:job.update(state='committing' if job.get('plans') else 'needs_attention',message='图片替换待恢复：'+str(error)[:180]);self.save()
+   self._commit_worker=threading.Thread(target=work,daemon=True);self._commit_worker.start();return
   for j in self.jobs:
    if j['state'] in ('processing','committing'):
     try:self.commit(j)
