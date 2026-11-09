@@ -207,6 +207,13 @@ class ImageJobs:
    elif job['kind']=='shared_details':
     from asset_state import differs
     b['gallery_basis']=copy.deepcopy(job.get('variants') or []);review['gallery']=any(differs(r.get('variant_parameters') or {},read(self.folder(r['sku'])/'listing_bundle.json').get('variant_parameters') or {},VISUAL) for r in b['gallery_basis'])
+   if job['kind']=='full_set':
+    from asset_state import differs
+    basis=(job.get('parameters') or {}).get(sku) or b.get('variant_parameters') or {}
+    if 1 in target['orders']:
+     b['asset_basis']=copy.deepcopy(basis);review['main']=differs(basis,b.get('variant_parameters') or {},VISUAL)
+    if any(order>1 for order in target['orders']):
+     b['gallery_basis']=copy.deepcopy(job.get('variants') or []);review['gallery']=any(differs(r.get('variant_parameters') or {},read(self.folder(r['sku'])/'listing_bundle.json').get('variant_parameters') or {},VISUAL) for r in b['gallery_basis'])
    b['asset_review']=review;write(folder/'listing_bundle.json',b);completed.append((sku,not b['image_regeneration_jobs']))
   job.update(state='saved',message='共用7张详情图已替换并同步全组；视频与托管自动更新' if job['kind']=='shared_details' else '本变体主图已替换，7张详情保留；视频与托管自动更新' if job['kind']=='variant_main' else '已有图片已按来源更新到对应变体；视频与托管自动更新');self.store.save()
   for sku,ready in completed:

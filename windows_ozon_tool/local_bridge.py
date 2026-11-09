@@ -616,7 +616,7 @@ def server(store,token,port=8765):
     body=json.loads(self.rfile.read(n))
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.28','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.29','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
@@ -1088,6 +1088,41 @@ def main(test_mode=False,on_ready=None):
   with store.lock:store.set_paused(False)
  ttk.Button(task_actions,text='暂停制作',command=pause_making).pack(side='left',padx=4)
  ttk.Button(task_actions,text='继续制作',command=resume_making).pack(side='left',padx=4)
+ restart_pending=False
+ def restart_current_queue():
+  nonlocal restart_pending
+  if restart_pending:return
+  task=selected();ids=view.selection()
+  if not task:return
+  if not ids or ids[0].startswith('group:'):
+   messagebox.showinfo('请选择具体变体','请展开商品组，选择需要重启的具体变体行。',parent=root);return
+  from queue_restart import choose,ready,restart
+  try:
+   with store.lock:
+    target=choose(store,task['id']);skus=[t['sku'] for t in target['targets']] if target.get('image_job') else [target['sku']]
+    if publication.active(skus):raise ValueError('该条仍有上架任务跟进中，请先在上架进度停止跟进；本操作不会重置平台商品或库存')
+    store.set_paused(True);restart_pending=True
+  except Exception as error:restart_pending=False;show_task_error('未重启队列',str(error));return
+  connection.configure(text='正在等待插件停止确认，随后重启 '+task['sku']+'；旧素材将备份，完成后继续后续队列')
+  deadline=time.time()+90
+  def stopped():
+   nonlocal restart_pending
+   try:
+    with store.lock:
+     target=choose(store,task['id']);waiting=not ready(store,target)
+    if waiting:
+     if time.time()<deadline:root.after(500,stopped);return
+     raise ValueError('插件尚未确认暂停或旧视频仍在处理。请保持插件连接；原队列和文件尚未重置')
+    with store.lock:result=restart(store,task['id'])
+    restart_pending=False
+    connection.configure(text='已重启 '+result['sku']+'，旧记录已备份；完成后继续后续自动化队列')
+    def select_new():
+     if view.exists(result['id']):view.selection_set(result['id']);view.see(result['id'])
+    root.after(1800,select_new)
+   except Exception as error:restart_pending=False;show_task_error('未重启队列',str(error))
+  stopped()
+ ttk.Button(task_actions,text='重启本条队列',command=restart_current_queue).pack(side='left',padx=4)
+ task_more.add_command(label='重启本条队列（备份后重新制作并自动继续）',command=restart_current_queue)
  def rebuild_assets():
   task=selected()
   if not task:return
