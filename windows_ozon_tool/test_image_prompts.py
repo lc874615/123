@@ -1,5 +1,5 @@
 import unittest
-from image_prompts import ROLES,generation_prompt,shared_prompt,VISUAL_STYLE,MAIN_STYLE,EVIDENCE_STYLE,POSTER_RULE
+from image_prompts import ROLES,generation_prompt,shared_prompt,VISUAL_STYLE,MAIN_STYLE,EVIDENCE_STYLE,POSTER_RULE,DETAIL_STYLE
 class PromptStyleTests(unittest.TestCase):
  def test_original_eight_roles_keep_shared_seven_positions(self):
   self.assertEqual([name for name,brief in ROLES],['01_main','02_dimensions','03_scene','04_scene','05_material','06_structure','07_details','08_contents'])
@@ -21,4 +21,16 @@ class PromptStyleTests(unittest.TestCase):
    for rule in ('仅作用于01主图','只选择一种合适的构图','核心商品名称最大','不复刻样例','数字带准确单位','无品牌不加品牌/官方店标','主体结构仍可辨认'):
     self.assertIn(rule,text)
   self.assertNotIn('只选择一种合适的构图',shared_prompt('真实商品参数'))
+ def test_detail_template_applies_to_full_set_and_shared_regeneration_only(self):
+  self.assertIn(DETAIL_STYLE,generation_prompt('参数',expected=8))
+  self.assertIn(DETAIL_STYLE,shared_prompt('参数'))
+  self.assertNotIn(DETAIL_STYLE,generation_prompt('参数',expected=1))
+ def test_single_main_prompt_unchanged_by_detail_update(self):
+  import hashlib
+  self.assertEqual(hashlib.sha256(generation_prompt('固定本品参数',expected=1).encode()).hexdigest(),'7722f9534fcb0581620ff4a128e3353a988b3591ced4c79cae37434b3fe0e567')
+ def test_detail_template_original_scenes_facts_and_variant_limits(self):
+  text=shared_prompt('全组参数')
+  for rule in ('每张只讲一个既定主题','不复刻示例','1—3厘米误差','没有清晰细节照片就不臆造','不能据此虚构内部层数','共同事实才写成全组选项通用','不能只换上一张背景色','数量加具体商品单位'):
+   self.assertIn(rule,text)
+  self.assertEqual(text.count('表现优化：'),7)
 if __name__=='__main__':unittest.main()

@@ -108,7 +108,7 @@ class HostingTests(unittest.TestCase):
    service,host=self.setup_service(tmp);path=self.seed(tmp,'ITEM');service.scan_once()
    raw=io.BytesIO();Image.new('RGB',(600,800),'red').save(raw,format='PNG');(path.parent/'images'/'01.png').write_bytes(raw.getvalue())
    rows=read(path.parent/'image_manifest.json');rows[0]['sha256']=hashlib.sha256(raw.getvalue()).hexdigest();write(path.parent/'image_manifest.json',rows)
-   refresh_assets(path.parent);data=read(path);self.assertIsNone(data['images'][0]['https_url']);self.assertTrue(all(r['https_url'] for r in data['images'][1:]));self.assertEqual(data['hosting']['state'],'pending')
+   refresh_assets(path.parent);data=read(path);self.assertIsNone(data['images'][0]['https_url']);self.assertTrue(all(r['https_url'] for r in data['images'][1:]));self.assertEqual(data['hosting']['state'],'waiting')
 
 class TransportTests(unittest.TestCase):
  def host(self):return CosHost({'region':'ap-hongkong','bucket':'test-1250000000','prefix':'ozon-images'},{'secret_id':'test-id','secret_key':'test-secret'})

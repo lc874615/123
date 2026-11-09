@@ -113,7 +113,7 @@ def refresh_assets(folder):
  data['images']=images;data['video']=video
  if changed and data.get('hosting'):
   count=sum(bool(r.get('https_url')) and r.get('hosting_sha256')==r['sha256'] for r in images)
-  data['hosting']={**data['hosting'],'state':'pending','verified_images':count,'message':'生成图已更新，等待自动补齐新图片链接'}
+  data['hosting']={**data['hosting'],'state':'waiting','verified_images':count,'message':'生成图已更新，等待自动补齐新图片链接'}
   if '图片HTTPS链接待校验' not in data.get('blockers',[]):data.setdefault('blockers',[]).append('图片HTTPS链接待校验')
  data.pop('recollection_pending',None);data['blockers']=[b for b in data.get('blockers',[]) if b!='图片重新采集中']
  tmp=target.with_suffix('.tmp');tmp.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding='utf-8');tmp.replace(target)

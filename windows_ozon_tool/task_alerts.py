@@ -58,6 +58,14 @@ def render(items):
  for i,row in enumerate(items,1):blocks.append(f"{i}. 任务：{row['owner']}\n阶段：{row['stage']}\n中文说明：{row['cause']}\n处理办法：\n"+'\n'.join(str(n)+'. '+s for n,s in enumerate(row['steps'],1))+'\n原始信息（供排查）：'+row['detail'])
  return '\n\n'+'\n\n'.join(blocks)
 
+def hosting_failed(state):
+ # Older drafts used pending for both safe automatic work and retryable failures.
+ status=state.get('state');message=state.get('message','')
+ if status in ('failed','error','needs_attention'):return True
+ if status!='pending' or not message:return False
+ if message=='生成图已更新，等待自动补齐新图片链接':return False
+ return not message.startswith(('等待','图片已','视频已'))
+
 def collect(tasks,bundles,jobs,image_jobs=(),plugin=None):
  found=[]
  for task in list(tasks)+list(image_jobs):
@@ -71,7 +79,7 @@ def collect(tasks,bundles,jobs,image_jobs=(),plugin=None):
   if b.get('manual_price') and manual.get('valid') is False:found.append(issue(b['sku'],'售价计算','手动售价无适用费用/物流方案：'+str(manual.get('message') or '需要核对成本、尺寸、重量及定价来源')))
   for name,title in (('hosting','图片托管'),('video_hosting','视频托管')):
    state=b.get(name) or {};m=state.get('message','')
-   if state.get('state') in ('failed','error','needs_attention') or state.get('state')=='pending' and m and not m.startswith(('等待','图片已','视频已')):found.append(issue(b['sku'],title,m or '托管失败'))
+   if hosting_failed(state):found.append(issue(b['sku'],title,m or '托管失败'))
  seen_offers=set()
  for job in sorted(jobs,key=lambda j:j.get('created_at',0),reverse=True):
   items=job.get('items') or {}
@@ -114,8 +122,11 @@ class AlertState:
 class AlertPopup:
  def __init__(self,root,path,open_tasks):self.root=root;self.state=AlertState(path);self.open_tasks=open_tasks;self.window=None;self.shown={};self.previous_grab=None;self.latest=[]
  def update(self,items):
-  self.latest=list(items);pending=self.state.update(self.latest);new=[r for r in pending if r['key'] not in self.shown]
-  if not new:return
+  self.latest=list(items);pending=self.state.update(self.latest);active={r['key'] for r in self.latest};previous=set(self.shown);self.shown={k:v for k,v in self.shown.items() if k in active};new=[r for r in pending if r['key'] not in self.shown]
+  if not self.shown and not new:
+   if self.window is not None:self.close()
+   return
+  if not new and previous==set(self.shown):return
   self.shown.update({r['key']:r for r in new})
   import tkinter as tk
   from tkinter import ttk

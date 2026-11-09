@@ -47,4 +47,19 @@ class AlertTests(unittest.TestCase):
   old={'id':'OLD','created_at':1,'state':'failed','message':'old failure','items':{'A':{'import_state':'failed'}}};new={'id':'NEW','created_at':2,'state':'on_sale','items':{'A':{'import_state':'imported','on_sale':True}}};self.assertEqual(collect([],[],[old,new]),[]);new['state']='cancelled_followup';self.assertEqual(collect([],[],[old,new]),[])
  def test_certificate_and_creation_messages_are_explained_in_chinese(self):
   self.assertIn('证书',solution('SSL CERTIFICATE_VERIFY_FAILED')[0]);self.assertIn('平台商品创建尚未完成',solution('product creation incomplete')[0])
+ def test_legacy_asset_refresh_wait_does_not_alert_but_real_failures_do(self):
+  message='生成图已更新，等待自动补齐新图片链接'
+  for name in ('hosting','video_hosting'):
+   for state in ('pending','waiting','uploading','done'):
+    self.assertEqual(collect([],[{'sku':'A',name:{'state':state,'message':message}}],[]),[])
+   for state in ('failed','error','needs_attention'):
+    self.assertEqual(len(collect([],[{'sku':'A',name:{'state':state,'message':message}}],[])),1)
+   self.assertEqual(len(collect([],[{'sku':'A',name:{'state':'pending','message':'生成图上传失败：COS timeout'}}],[])),1)
+ def test_resolved_popup_closes_without_stopping_work(self):
+  from task_alerts import AlertPopup
+  from unittest.mock import Mock
+  with tempfile.TemporaryDirectory() as tmp:
+   popup=AlertPopup(Mock(),Path(tmp)/'alerts.json',Mock());row=issue('A','托管','COS timeout');popup.state.update([row]);popup.shown={row['key']:row};popup.window=Mock();window=popup.window
+   popup.update([])
+   window.destroy.assert_called_once();self.assertIsNone(popup.window);self.assertEqual(popup.latest,[]);self.assertEqual(popup.shown,{})
 if __name__=='__main__':unittest.main()
