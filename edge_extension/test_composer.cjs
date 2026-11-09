@@ -8,3 +8,13 @@ const submit=button({type:'submit'});assert.equal(find(editor(form([submit])),do
 assert.equal(find(editor(form([submit,button({type:'submit'})])),doc([])),null);
 assert.equal(find(editor(null),doc([])),null);
 console.log('5 composer selector cases passed');
+const test=require('node:test');
+test('copy waits for a delayed enabled send button',async()=>{
+ let clock=0,ticks=0;const send=button({disabled:true});const result=await global.OzonComposer.waitSend(editor(null),{doc:doc([send]),now:()=>clock,sleep:async ms=>{clock+=ms;if(++ticks===3)send.disabled=false;},timeout:2000});assert.equal(result,send);assert.equal(ticks,3);
+});
+test('copy send wait respects pause and expires without clicking',async()=>{
+ let clock=0;assert.equal(await global.OzonComposer.waitSend(editor(null),{doc:doc([]),now:()=>clock,sleep:async ms=>clock+=ms,timeout:500}),null);await assert.rejects(global.OzonComposer.waitSend(editor(null),{doc:doc([]),stopped:()=>true}),/暂停/);
+});
+test('only the exact previous unsent prompt may be replaced',()=>{
+ assert.equal(global.OzonComposer.sameDraft('【OWN】\r\ntext','【OWN】\ntext'),true);assert.equal(global.OzonComposer.sameDraft('【OWN】\ntext edited','【OWN】\ntext'),false);assert.equal(global.OzonComposer.sameDraft('unrelated',''),false);
+});

@@ -24,6 +24,9 @@ def prepare(store,body):
   marker=owner.get('copy_request_marker')
   return {'id':'copy:'+sku,'sku':sku,'fingerprint':owner.get('copy_context_basis') or fingerprint,'needsRefresh':refresh,'group_skus':[row['sku'] for row in bundles],'attributesOnly':owner.get('copy_mode')=='attributes','dispatched':bool(dispatched),'copy_phase':owner.get('copy_phase'),'marker':marker,'resume_marker':bool(marker),'previous_marker':marker if owner.get('copy_context_basis')==fingerprint else None}
  read_only=bool(body.get('inspect_only'))
+ previous_prompt=None;prompt_file=folder/'copy_prompt.txt'
+ if not read_only and owner.get('copy_phase')=='inspecting' and owner.get('copy_request_marker') and prompt_file.exists():
+  previous=prompt_file.read_text(encoding='utf-8');previous_prompt=previous if previous.startswith(owner['copy_request_marker']) else None
  if dispatched and not read_only:raise ValueError('已有文案请求等待结果，先自动采集，不重新发送')
  context={'group_facts':'\n'.join(row['sku']+'：'+str(row.get('facts') or '') for row in bundles),'group_variants':[{'sku':row['sku'],'facts':row.get('facts',''),'variant_parameters':row.get('variant_parameters') or {}} for row in bundles]};b.update(context);write(path,b)
  from reference_prefill import build,prompt as attribute_prompt
@@ -34,7 +37,7 @@ def prepare(store,body):
  prompt=(marker or '')+'\n本次商品组文案保存货号：'+sku+'。输出JSON额外包含sku字段，值为'+sku+'，以及facts_fingerprint字段，值为'+fingerprint+'。'+copy_prompt_for(context)
  if owner.get('copy_mode')=='attributes':prompt=(marker or '')+'\n只读取属性，不改写已有文案。仅输出JSON，包含sku字段（值为'+sku+'）和variant_attributes。'
  prompt+='\n'+attribute_prompt(photo_context);(folder/'copy_prompt.txt').write_text(prompt,encoding='utf-8')
- return {'id':'copy:'+sku,'sku':sku,'marker':marker,'prompt':prompt,'references':references,'fingerprint':fingerprint,'copy_phase':owner.get('copy_phase')}
+ return {'id':'copy:'+sku,'sku':sku,'marker':marker,'prompt':prompt,'references':references,'fingerprint':fingerprint,'copy_phase':owner.get('copy_phase'),'replace_unsent_prompt':previous_prompt}
 def save(store,body):
  sku=body['sku']
  if not valid_article(sku):raise ValueError('货号格式无效')

@@ -1,4 +1,4 @@
-(()=>{if(window.__ozonLocalInstalled)return;window.__ozonLocalInstalled=true;globalThis.__ozonContentVersion='1.0.16';let stop=false,running=false,activeImageTaskId=null;
+(()=>{if(window.__ozonLocalInstalled)return;window.__ozonLocalInstalled=true;globalThis.__ozonContentVersion='1.0.17';let stop=false,running=false,activeImageTaskId=null;
 async function collectSource(task,options){
  if(!globalThis.OzonDelivery)throw Error('最终交付采集模块未加载，请更新插件并刷新作图页');
  return globalThis.OzonDelivery.collect(document,{...options,task});
@@ -10,7 +10,7 @@ function findEditor(){
  for(const sel of selectors){const found=[...document.querySelectorAll(sel)].filter(e=>e.getClientRects().length&&!e.disabled&&e.getAttribute('aria-hidden')!=='true');if(found.length===1)return found[0];}
  return null;
 }
-function preflight(){const e=findEditor(),generating=globalThis.OzonConversation.generating(document);return {version:'1.0.16',imageTaskId:running?activeImageTaskId:null,ready:!!e&&!generating&&!running,generating,url:location.origin+location.pathname,message:running?'上一图片采集仍在完成，稍后自动继续':generating?'上一条回复仍在生成，等待完成后自动继续':e?'输入框已识别':'未找到可见输入框。请在普通ChatGPT文字对话中刷新页面，点击输入区后重试；不能在图片查看器或其他应用中执行。'};}
+function preflight(){const e=findEditor(),generating=globalThis.OzonConversation.generating(document);return {version:'1.0.17',imageTaskId:running?activeImageTaskId:null,ready:!!e&&!generating&&!running,generating,url:location.origin+location.pathname,message:running?'上一图片采集仍在完成，稍后自动继续':generating?'上一条回复仍在生成，等待完成后自动继续':e?'输入框已识别':'未找到可见输入框。请在普通ChatGPT文字对话中刷新页面，点击输入区后重试；不能在图片查看器或其他应用中执行。'};}
 async function run(task){
  if(running)throw Error('本页正在执行任务');running=true;activeImageTaskId=task.id;stop=false;
  try{
@@ -56,7 +56,7 @@ async function run(task){
    await sleep(1500);
   }
   throw Error(task.set_mode?'未收齐8张独立图片（可能只返回单图或拼图）；已暂停，不自动重发':'等待超时，请检查验证、限额或网页变化；不会重发');
- }catch(e){await tell(task,'needs_attention',e.message).catch(()=>{});}finally{running=false;activeImageTaskId=null;}
+ }catch(e){await tell(task,'needs_attention',e.message).catch(()=>{});}finally{running=false;activeImageTaskId=null;chrome.runtime.sendMessage({kind:'image-idle',task_id:task.id}).catch(()=>{});}
 }
 async function collectImages(task,options){
  const marker=task.recovery_marker||'【OZON_TASK:'+task.id+'】';
@@ -95,7 +95,7 @@ async function recover(task){
   const until=Date.now()+20*60*1000;while(!images&&Date.now()<until&&!stop){await sleep(1500);images=await collectImages(task,{manual:!task.automaticRecovery,continuations:!!task.automaticRecovery,expected:task.expected_images||8,marker:task.recovery_marker||'【OZON_TASK:'+task.id+'】',sleep,stopped:()=>stop,report:message=>tell(task,'waiting',message),onImage:(index,b64)=>saveImage(task,index,b64)});}
   if(!images)throw Error('等待最终编号图片文件超时，未重新生成；已有图片保留');
 
- }catch(e){await tell(task,'needs_attention',e.message).catch(()=>{});}finally{running=false;activeImageTaskId=null;}
+ }catch(e){await tell(task,'needs_attention',e.message).catch(()=>{});}finally{running=false;activeImageTaskId=null;chrome.runtime.sendMessage({kind:'image-idle',task_id:task.id}).catch(()=>{});}
 }
 
 async function copy(task){
@@ -103,14 +103,17 @@ async function copy(task){
  try{
   if(running||globalThis.OzonConversation.generating(document))throw Error('图片回复尚未结束，文案等待下一次自动继续');
   let editor=findEditor();if(!editor)throw Error('未找到输入框');
-  if(editor.textContent.trim()||editor.value?.trim())throw Error('输入框已有内容，未覆盖');
+  const draft=editor.value??editor.innerText??editor.textContent??'';const ownedDraft=globalThis.OzonComposer.sameDraft(draft,task.replace_unsent_prompt);
+  if(draft.trim()&&!ownedDraft)throw Error('输入框已有内容，未覆盖');
   if(task.references?.length){await globalThis.OzonUploads.upload(task.references,{editor,sleep,stopped:()=>stop,report:()=>{}});editor=findEditor();if(!editor)throw Error('原始参考图上传后未找到输入框');}
+  const latestDraft=editor.value??editor.innerText??editor.textContent??'';if(latestDraft.trim()&&!globalThis.OzonComposer.sameDraft(latestDraft,ownedDraft?task.replace_unsent_prompt:null))throw Error('输入框已有内容，未覆盖');
   const excluded=globalThis.OzonCopy.snapshot();
   const copyNodes=globalThis.OzonConversation.assistantNodes(document);
   const beforeCopy=new Set(copyNodes),beforeText=new Map(copyNodes.map(n=>[n,n.innerText||n.textContent||'']));
   const main=globalThis.OzonConversation.main(document);const oldText=main?.innerText||'';
-  editor.focus();if(editor instanceof HTMLTextAreaElement){Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(editor,task.prompt);editor.dispatchEvent(new Event('input',{bubbles:true}));}else{document.execCommand('insertText',false,task.prompt);editor.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:task.prompt}));}
-  await sleep(1000);const button=globalThis.OzonComposer.findSend(editor);if(!button)throw Error('未找到可用发送按钮');button.click();
+  editor.focus();if(ownedDraft&&!(editor instanceof HTMLTextAreaElement)){if(!globalThis.OzonComposer.sameDraft(editor.innerText||editor.textContent,task.replace_unsent_prompt))throw Error('原文案草稿已被修改，未覆盖');const range=document.createRange();range.selectNodeContents(editor);const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);}
+  if(editor instanceof HTMLTextAreaElement){Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(editor,task.prompt);editor.dispatchEvent(new Event('input',{bubbles:true}));}else{document.execCommand('insertText',false,task.prompt);editor.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:task.prompt}));}
+  const button=await globalThis.OzonComposer.waitSend(editor,{doc:document,sleep,stopped:()=>stop});if(!button)throw Error('未找到可用发送按钮');if(stop)throw Error('文案任务已暂停，未点击发送');button.click();
   const until=Date.now()+300000;let stable='',repeats=0,changed=false;
   while(Date.now()<until){
    await sleep(1000);if(stop)throw Error('文案任务已暂停；生成可能仍在继续，请保存现有结果');

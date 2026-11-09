@@ -8,5 +8,11 @@
   const local=[...form.querySelectorAll('button')].filter(b=>enabled(b)&&(/^(send|send prompt|send message|发送|发送消息|发送提示|提交)$/i.test((b.getAttribute('aria-label')||b.getAttribute('title')||b.textContent||'').trim())||b.type==='submit'));
   return local.length===1?local[0]:null;
  }
- globalThis.OzonComposer={findSend,visible,enabled};
+ async function waitSend(editor,{doc=document,sleep=ms=>new Promise(r=>setTimeout(r,ms)),stopped=()=>false,now=Date.now,timeout=20000}={}){
+  const deadline=now()+timeout;
+  while(now()<deadline){if(stopped())throw Error('文案任务已暂停，未点击发送');const found=findSend(editor,doc);if(found)return found;await sleep(250);}
+  return null;
+ }
+ function sameDraft(a,b){const text=v=>String(v||'').replace(/\r\n/g,'\n').trim();return !!text(b)&&text(a)===text(b);}
+ globalThis.OzonComposer={findSend,visible,enabled,waitSend,sameDraft};
 })();

@@ -31,4 +31,7 @@ class CopyPipelineTests(unittest.TestCase):
    store=fixtures.ImageRegenerationTests().setup(tmp);path=store.folder/'products'/'CHAIR(1)'/'listing_bundle.json';b=read(path);b['copy_user_revision']='new-local-revision';write(path,b);before=read(path);owner=store.tasks[0];owner.update(copy_mode='copy_refresh',copy_phase='generating',copy_source_revision=None)
    with self.assertRaisesRegex(ValueError,'未覆盖'):save(store,{'sku':'CHAIR(1)','copy':dict(b['copy'],title_ru='Old generated title')})
    self.assertEqual(read(path),before)
+ def test_unsent_draft_is_returned_only_when_owned_by_the_previous_marker(self):
+  with tempfile.TemporaryDirectory() as tmp,patch('image_regeneration.threading.Thread'):
+   store=fixtures.ImageRegenerationTests().setup(tmp);owner=store.tasks[0];folder=store.folder/'products'/owner['sku'];b=read(folder/'listing_bundle.json');b['copy']={};write(folder/'listing_bundle.json',b);owner.update(copy_phase='inspecting',copy_request_marker='【OZON_COPY:old】');old='【OZON_COPY:old】\nprevious request';(folder/'copy_prompt.txt').write_text(old,encoding='utf-8');result=prepare(store,{'sku':owner['sku']});self.assertEqual(result['replace_unsent_prompt'],old)
 if __name__=='__main__':unittest.main()

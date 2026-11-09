@@ -518,30 +518,48 @@ class Store:
    if task['state']=='saved' and images_present and (folder/'video'/'product_8s.mp4').exists() and copy:complete+=1
   if complete==len(group):return f'{complete}个变体素材已完成：8图、视频、共用俄语文案；待上架审核'
   return f'素材处理中：已完成{complete}/{len(group)}个变体，等待图片、视频或文案完成'
+ def repair_unsent_copy(self):
+  known={'未找到可用发送按钮','图片回复尚未结束，文案等待下一次自动继续','上一条回复仍在生成','未找到输入框','文案任务已暂停，未点击发送'};changed=False
+  for task in self.tasks:
+   if task.get('copy_state')=='needs_attention' and task.get('message') in known and task.get('copy_phase') in (None,'inspecting'):
+    task.pop('copy_state',None);task.pop('resume_mode',None);task['message']='前次文案未发送，待页面就绪后自动继续';changed=True
+  if changed:self.save()
+ def poll_state(self):
+  from asset_reconcile import reconcile
+  reconcile(self);self.sync_shared_copies();self.repair_unsent_copy()
+  active=bool(self.blockers()) or self.control.get('paused',False)
+  # Missing shared copy has priority over queued image work; active requests still block.
+  copy_task=self.next_copy() if not active else None
+  image_pending=bool(self.image_jobs.next())
+  recovery=self.next_recollection()
+  return {'recovery_sku':recovery['sku'] if recovery else None,'ready':not active and not copy_task and (image_pending or any(t['state']=='queued' and t.get('auto_batch') for t in self.tasks)),'copy_sku':copy_task['sku'] if copy_task else None,'blocked_reason':self.queue_reason() if active else None,'blockers':self.blockers(),'summary':self.queue_summary()}
  def next_copy(self):
   from asset_reconcile import reconcile
-  reconcile(self)
-  self.sync_shared_copies()
-  for task in self.tasks:
-   copy_path=self.folder/'products'/task['sku']/'listing_bundle.json'
-   if task.get('set_mode') and task['state']=='saved' and task.get('copy_state')=='done' and not copy_path.exists():task.pop('copy_state',None)
-   from reference_prefill import needed
-   if task.get('set_mode') and task['state']=='saved' and task.get('copy_state')=='done' and needed(self,task) and not (json.loads((self.folder/'products'/task['sku']/'listing_bundle.json').read_text(encoding='utf-8-sig')).get('asset_review') or {}).get('copy'):
-    task['copy_mode']='attributes';return task
-   if task.get('copy_state')=='needs_attention' and task.get('message') in ('未找到可用发送按钮','图片回复尚未结束，文案等待下一次自动继续','上一条回复仍在生成'):
-    task.pop('copy_state',None);task['message']='前次文案未发送，等待图片回复结束后自动继续';self.save()
-   if task.get('set_mode') and task['state']=='saved' and not task.get('copy_state'):
-    from listing_bundle import prepare,copy_complete
-    folder=self.folder/'products'/task['sku']
-    if not (folder/'listing_bundle.json').exists():
-     if not (folder/'image_manifest.json').exists():continue
-     prepare(folder,task)
-    if task.get('copy_leader') and task['copy_leader']!=task['sku']:continue
-    bundle=json.loads((folder/'listing_bundle.json').read_text(encoding='utf-8-sig'))
-    if copy_complete(bundle.get('copy')) and not (bundle.get('asset_review') or {}).get('copy'):task['copy_state']='done';self.save();continue
-    task['copy_mode']='copy_refresh' if copy_complete(bundle.get('copy')) else 'copy'
-    return task
-  return None
+  from listing_bundle import prepare,copy_complete
+  from pricing_service import read
+  from reference_prefill import needed
+  reconcile(self);self.sync_shared_copies();self.repair_unsent_copy()
+  leaders=[t for t in self.tasks if t.get('set_mode') and t['state']=='saved' and t.get('copy_leader',t['sku'])==t['sku']]
+  for task in leaders:
+   group=[t['sku'] for t in self.tasks if t.get('copy_leader',t['sku'])==task['sku'] and t['state']!='cancelled']
+   if self.image_jobs.active(group):continue
+   folder=self.folder/'products'/task['sku'];path=folder/'listing_bundle.json'
+   if not path.exists():
+    if not (folder/'image_manifest.json').exists():continue
+    prepare(folder,task)
+   bundle=read(path);complete=copy_complete(bundle.get('copy'));fresh=complete and not (bundle.get('asset_review') or {}).get('copy')
+   if fresh:
+    if task.get('copy_state') not in ('running','needs_attention'):task['copy_state']='done'
+    continue
+   if task.get('copy_state')=='done':task.pop('copy_state',None)
+   if task.get('copy_state') in ('running','needs_attention'):continue
+   task['copy_mode']='copy_refresh' if complete else 'copy';self.save();return task
+  # Reading optional reference attributes must not precede a group's missing text.
+  for task in leaders:
+   if task.get('copy_state')=='done' and needed(self,task):
+    group=[t['sku'] for t in self.tasks if t.get('copy_leader',t['sku'])==task['sku']]
+    if not self.image_jobs.active(group):task['copy_mode']='attributes';return task
+  self.save();return None
  def render_video(self,sku):
   from video import make_video
   with self.lock:
@@ -552,7 +570,7 @@ class Store:
    output=make_video(files,self.folder/'products'/sku/'video'/'product_8s.mp4')
    with self.lock:
     for x in self.tasks:
-     if x['sku']==sku:x.update(video=output,message='8张图片及8秒视频已完成，待上架前审核')
+     if x['sku']==sku:x.update(video=output,message='8张图片及8秒视频已完成；'+('共用文案已保存' if x.get('copy_state')=='done' else '整组文案自动处理中' if x.get('copy_state')=='running' else '等待自动接续整组文案'))
     from listing_bundle import refresh_assets
     refresh_assets(self.folder/'products'/sku)
     self.sync_shared_copies()
@@ -587,7 +605,7 @@ def server(store,token,port=8765):
     body=json.loads(self.rfile.read(n))
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.16','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.17','paired':True}
      elif self.path=='/control':value=store.control
      elif self.path=='/automation-control':value=store.set_paused(bool(body.get('paused')))
      elif self.path=='/pause-ack':
@@ -622,13 +640,7 @@ def server(store,token,port=8765):
      elif self.path=='/task-status':value=store.task_status(body['task_id'])
      elif self.path=='/poll':
       store.client={'last_seen':time.time(),'auto_enabled':bool(body.get('auto_enabled',True))}
-      from asset_reconcile import reconcile
-      reconcile(store)
-      active=bool(store.blockers()) or store.control.get('paused',False)
-      image_pending=bool(store.image_jobs.next())
-      copy_task=store.next_copy() if not active and not image_pending else None
-      recovery=store.next_recollection()
-      value={'recovery_sku':recovery['sku'] if recovery else None,'ready':not active and (image_pending or any(t['state']=='queued' and t.get('auto_batch') for t in store.tasks)),'copy_sku':copy_task['sku'] if copy_task else None,'blocked_reason':store.queue_reason() if active else None,'blockers':store.blockers(),'summary':store.queue_summary()}
+      value=store.poll_state()
      elif self.path=='/copy-task':
       from copy_pipeline import prepare as prepare_copy
       value=prepare_copy(store,body)
@@ -637,7 +649,7 @@ def server(store,token,port=8765):
       for task in store.tasks:
        if task['sku']==sku:
         message=str(body.get('message','文案保存待处理'))[:300];task.update(copy_state='needs_attention',resume_mode='copy_inspect_only',message=message)
-        if message in ('未找到可用发送按钮','图片回复尚未结束，文案等待下一次自动继续','上一条回复仍在生成','未找到输入框'):task['copy_phase']='inspecting'
+        if message in ('未找到可用发送按钮','图片回复尚未结束，文案等待下一次自动继续','上一条回复仍在生成','未找到输入框','文案任务已暂停，未点击发送'):task['copy_phase']='inspecting'
       store.save();value={'ok':True}
      elif self.path=='/copy-result':
       from copy_pipeline import save as save_pipeline_copy
