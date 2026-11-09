@@ -17,8 +17,7 @@
    task._deliveryStable=null;
    return waiting('已发现'+foundImages.count+'张候选图；回复仍在生成，等待最终01—'+String(expected).padStart(2,'0')+'交付，不截取前'+expected+'张');
   }
-  const native=task.delivery_policy==='generated_originals';
-  if(native&&expected>1&&foundImages.count===1){if(!task._singleSheetSince)task._singleSheetSince=Date.now();if(Date.now()-task._singleSheetSince>=60000)throw Error('当前任务仍配置为'+expected+'张独立图，但回复结束后只有1张原图。若这是一张3×3整套拼图，请先暂停，再用高级恢复中的“采集现有整套拼图”读取；不重新作图。');}else task._singleSheetSince=null;
+  const native=task.delivery_policy==='generated_originals'||task.delivery_policy==='independent_images'&&foundImages.count===expected;
   if(native&&foundImages.count!==expected){task._deliveryStable=null;return waiting('独立生成原图 '+foundImages.count+'/'+expected+'；等待逐张完成，不采集整套预览图或后续重制下载文件');}
   if(!native)await globalThis.OzonFiles.expandFiles(doc,scoped);
   const files=native?null:globalThis.OzonFiles.candidates(doc,{...scoped,inventory:true});

@@ -30,33 +30,6 @@ class SheetTests(unittest.TestCase):
    store=Store(tmp);store.create_set('A','椅子');task=store.tasks[0];task.update(state='waiting',sheet_layout=LAYOUT);store.set_paused(False)
    with patch.object(store,'set_result') as save,self.assertRaises(ValueError):accept(store,task['id'],base64.b64encode(sheet(900,1200)[0]).decode())
    save.assert_not_called();self.assertEqual(task['received_images'],[])
- def test_shared_sheet_integration_crops_and_keeps_all_main_images(self):
-  from test_image_regeneration import ImageRegenerationTests
-  from pricing_service import read
-  with tempfile.TemporaryDirectory() as tmp,patch('image_regeneration.threading.Thread'):
-   store=ImageRegenerationTests().setup(tmp);old=[t['received_images'][0]['sha256'] for t in store.tasks]
-   store.image_jobs.create('CHAIR(1)','shared_details',[],'');job=store.claim();self.assertEqual(job['sheet_layout'],LAYOUT)
-   raw,_=sheet();result=accept(store,job['id'],base64.b64encode(raw).decode());self.assertTrue(result['complete']);self.assertEqual(result['cropped_count'],7)
-   for i,t in enumerate(store.tasks):
-    self.assertEqual(t['received_images'][0]['sha256'],old[i]);self.assertEqual(len(t['received_images']),8)
-    self.assertEqual(t['received_images'][1]['contact_sheet_layout'],LAYOUT)
-   store.image_jobs.recollect(store.tasks);jobs=store.image_jobs.active([t['sku'] for t in store.tasks]);self.assertTrue(any(j.get('sheet_layout')==LAYOUT for j in jobs))
- def test_initial_full_set_claims_one_sheet_and_saves_eight_images(self):
-  from local_bridge import Store
-  from pricing_service import read
-  with tempfile.TemporaryDirectory() as tmp,patch('local_bridge.threading.Thread'):
-   store=Store(tmp);store.create_set('A','椅子，1件');store.set_paused(False);claimed=store.claim()
-   self.assertEqual(claimed['sheet_layout'],LAYOUT);self.assertIn('只生成一张高分辨率3×3整套拼图',claimed['prompt']);self.assertNotIn('交付要求：仅输出独立图片',claimed['prompt'])
-   result=accept(store,claimed['id'],base64.b64encode(sheet()[0]).decode());self.assertTrue(result['complete'])
-   rows=read(store.folder/'products'/'A'/'image_manifest.json');self.assertEqual(len(rows),8);self.assertTrue(all(r['contact_sheet_layout']==LAYOUT for r in rows))
- def test_old_queued_job_upgrades_but_dispatched_job_is_not_rewritten(self):
-  from test_image_regeneration import ImageRegenerationTests
-  with tempfile.TemporaryDirectory() as tmp,patch('image_regeneration.threading.Thread'):
-   store=ImageRegenerationTests().setup(tmp);ids=store.image_jobs.create('CHAIR(1)','shared_details',[],'保留补充');job=store.image_jobs.get(ids[0]);job.pop('sheet_layout');job['prompt']='旧7张独立图';store.image_jobs.save()
-   result=store.claim();self.assertEqual(result['sheet_layout'],LAYOUT);self.assertIn('保留补充',result['prompt'])
-   job.pop('sheet_layout');job['prompt']='已发送的旧提示词';store.image_jobs.save()
-   from contact_sheet import adopt,plan
-   self.assertIsNone(plan(job)['sheet_layout']);before=job['prompt'];adopt(store,job['id']);self.assertEqual(job['prompt'],before);self.assertEqual(plan(job)['source_images'],1)
  def test_adopt_rejects_mixing_partially_saved_legacy_images(self):
   from local_bridge import Store
   from contact_sheet import adopt

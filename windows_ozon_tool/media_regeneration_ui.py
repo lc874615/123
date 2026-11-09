@@ -31,7 +31,7 @@ def build(parent,bundles,store,start,stop,accept=None):
    initialized[0]=True
    if not shared_add.get('1.0','end-1c'):shared_add.insert('1.0',(rows[0].get('image_regeneration_options') or {}).get('shared_details',''))
   facts='\n'.join(b['sku']+'：'+str(b.get('facts') or '') for b in rows);chosen=next((b for b in rows if selected.get(b['sku']) and selected[b['sku']].get()),rows[0])
-  for widget,text in ((shared_base,sheet_prompt('',facts,7,shared=True)),(main_base,generation_prompt(chosen.get('facts') or '',facts,1))):
+  for widget,text in ((shared_base,shared_prompt(facts)),(main_base,generation_prompt(chosen.get('facts') or '',facts,1))):
    if widget.get('1.0','end-1c')==text:continue
    widget.configure(state='normal');widget.delete('1.0','end');widget.insert('1.0',text);widget.configure(state='disabled')
  for var in selected.values():var.trace_add('write',update_prompts)

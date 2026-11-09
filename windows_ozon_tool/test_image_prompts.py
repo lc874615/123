@@ -25,9 +25,9 @@ class PromptStyleTests(unittest.TestCase):
   self.assertIn(DETAIL_STYLE,generation_prompt('参数',expected=8))
   self.assertIn(DETAIL_STYLE,shared_prompt('参数'))
   self.assertNotIn(DETAIL_STYLE,generation_prompt('参数',expected=1))
- def test_single_main_prompt_unchanged_by_detail_update(self):
-  import hashlib
-  self.assertEqual(hashlib.sha256(generation_prompt('固定本品参数',expected=1).replace(MAIN_DETAIL_INFO,'').replace(SEQUENTIAL_DELIVERY,'').encode()).hexdigest(),'7722f9534fcb0581620ff4a128e3353a988b3591ced4c79cae37434b3fe0e567')
+ def test_main_contract_stays_one_image_and_preserves_fidelity(self):
+  text=generation_prompt('固定本品参数',expected=1)
+  self.assertIn('文件名固定01_main.jpg',text);self.assertIn('抠图合成',text);self.assertNotIn(DETAIL_STYLE,text)
  def test_detail_template_original_scenes_facts_and_variant_limits(self):
   text=shared_prompt('全组参数')
   for rule in ('每张只讲一个既定主题','不复刻示例','1—3厘米误差','没有清晰细节照片就不臆造','不能据此虚构内部层数','共同事实才写成全组选项通用','不能只换上一张背景色','具体商品单位'):
@@ -50,7 +50,7 @@ class PromptStyleTests(unittest.TestCase):
   self.assertNotIn(DETAIL_STYLE,generation_prompt('参数',expected=1))
  def test_clear_background_and_one_original_per_generation(self):
   for text in (shared_prompt('参数'),generation_prompt('参数')):
-   self.assertIn('每次图像生成调用只生成当前编号的一张',text)
+   self.assertIn('按本任务编号输出独立3:4高清图片',text)
    self.assertIn('不要浅景深',text);self.assertIn('中后景家具陈设均清晰可辨',text)
-   self.assertIn('不在最后用Python/PIL/SVG重新排版',text)
+   self.assertIn('不编造链接',text)
 if __name__=='__main__':unittest.main()

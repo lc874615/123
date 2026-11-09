@@ -79,8 +79,7 @@ class ImageJobs:
   task=self.product(sku);leader=task.get('copy_leader',sku);group=[t for t in self.store.tasks if t.get('copy_leader',t['sku'])==leader and t['state']!='cancelled']
   facts='\n'.join(t['sku']+'：'+str(read(self.folder(t['sku'])/'listing_bundle.json').get('facts') or t['facts']) for t in group)
   own=read(self.folder(sku)/'listing_bundle.json').get('facts') or task['facts']
-  from image_prompts import sheet_prompt
-  return (sheet_prompt(own,facts,7,shared=True) if kind=='shared_details' else generation_prompt(own,facts,1))+'\n用户补充要求（不得改变参考商品款式、颜色、结构、参数与件数）：\n'+(addition.strip() or '无额外要求')
+  return (shared_prompt(facts) if kind=='shared_details' else generation_prompt(own,facts,1))+'\n用户补充要求（不得改变参考商品款式、颜色、结构、参数与件数）：\n'+(addition.strip() or '无额外要求')
  def create(self,sku,kind,selected,addition):
   if kind not in ('shared_details','variant_main') or len(addition)>10000:raise ValueError('图片重做设置无效或补充要求过长')
   task=self.product(sku);leader=task.get('copy_leader',sku);group=[t for t in self.store.tasks if t.get('copy_leader',t['sku'])==leader and t['state']!='cancelled'];allowed={t['sku'] for t in group}
@@ -94,9 +93,8 @@ class ImageJobs:
      if any(t['sku']==target['sku'] and set(t['orders'])&set(target['orders']) for t in old['targets']):raise ValueError(target['sku']+'：对应图片已有重做任务，请等候完成或停止本组重做')
    refs=self.refs(group if kind=='shared_details' else [self.product(owner)],kind);identity='image-'+secrets.token_hex(12)
    job={'id':identity,'sku':owner,'image_job':True,'set_mode':True,'auto_batch':True,'delivery_policy':'generated_originals','kind':kind,'state':'queued','targets':targets,'expected_images':7 if kind=='shared_details' else 1,'received_images':[],'references':refs,'prompt':self.prompt(owner,kind,addition),'addition':addition,'parameters':{t['sku']:copy.deepcopy(read(self.folder(t['sku'])/'listing_bundle.json').get('variant_parameters') or {}) for t in targets},'variants':[{'sku':t['sku'],'variant_parameters':copy.deepcopy(read(self.folder(t['sku'])/'listing_bundle.json').get('variant_parameters') or {})} for t in group],'basis':self.basis(targets),'created_at':time.time(),'message':'已备份，等待自动生成7张共用详情图' if kind=='shared_details' else '已备份，等待自动生成本变体主图'}
-   if kind=='shared_details':
-    from contact_sheet import LAYOUT
-    job['sheet_layout']=dict(LAYOUT)
+   from image_retry import configure
+   configure(job)
    planned.append(job)
   # Every backup succeeds before the queue or live drafts change.
   for job in planned:
@@ -115,10 +113,9 @@ class ImageJobs:
  def claim(self):
   job=self.next()
   if not job:raise ValueError('没有图片重做任务')
-  if job.get('kind')=='shared_details' and not job.get('sheet_layout'):
-   from contact_sheet import LAYOUT
-   job.update(sheet_layout=dict(LAYOUT),delivery_policy='generated_originals',prompt=self.prompt(job['sku'],'shared_details',job.get('addition','')))
-   self.save()
+  if job.get('kind') in ('shared_details','variant_main'):
+   from image_retry import configure
+   configure(job);job['prompt']=self.prompt(job['sku'],job['kind'],job.get('addition',''));self.save()
   for ref in job['references']:
    if ref.get('reference_sha256') and (not Path(ref['path']).is_file() or hashlib.sha256(Path(ref['path']).read_bytes()).hexdigest()!=ref['reference_sha256']):job.update(state='needs_attention',message='排队期间原始参考图已变化，未发送；请停止任务后重新启动');self.save();raise ValueError(job['message'])
   try:references=[{'name':r['name'],'mime':r['mime'],'purpose':r.get('purpose'),'base64':base64.b64encode(Path(r['path']).read_bytes()).decode()} for r in job['references']]
@@ -129,8 +126,10 @@ class ImageJobs:
  def recover(self,identifier):
   job=self.get(identifier)
   if not job or job['state'] in DONE:raise ValueError('图片重做任务不存在或已结束')
+  from image_retry import configure
+  configure(job)
   job.update(state='waiting',message='自动读取已发送的图片重做结果，不重新发送');job.pop('resume_mode',None);self.save()
-  return {'id':job['id'],'sku':job['sku'],'set_mode':True,'image_job':True,'automaticRecovery':True,'sheet_layout':job.get('sheet_layout'),'delivery_policy':job.get('delivery_policy'),'expected_images':job['expected_images'],'saved_count':len(job['received_images']),'source_marker':'【OZON_TASK:'+job.get('source_request_id',job['id'])+'】'}
+  return {'id':job['id'],'sku':job['sku'],'set_mode':True,'image_job':True,'automaticRecovery':True,**__import__('image_retry').plan(job),'delivery_policy':'independent_images','expected_images':job['expected_images'],'saved_count':len(job['received_images']),'source_marker':'【OZON_TASK:'+job.get('source_request_id',job['id'])+'】'}
  def reset(self,identifier):
   job=self.get(identifier);folder=self.store.folder/'image_job_staging'/identifier
   if folder.exists():shutil.copytree(folder,folder.parent/(identifier+'-order-backup-'+str(time.time_ns())))
@@ -155,6 +154,8 @@ class ImageJobs:
   else:
    if any(r['sha256']==digest for r in rows):raise ValueError('不同图片位置内容重复，未替换原图')
    folder=self.store.folder/'image_job_staging'/identifier;folder.mkdir(parents=True,exist_ok=True);path=folder/(str(index+1)+'.'+ext);path.write_bytes(raw);rows.append({'name':path.name,'sha256':digest})
+   if job.get('image_retry_attempts'):
+    attempt=job['image_retry_attempts'][-1];rows[-1].update(source_request_id=attempt['request_id'],source_index=index-attempt['offset'],source_expected=attempt['count'])
   if len(rows)==job['expected_images']:job['state']='processing';job['message']='新图已收齐，正在校验并替换对应图片'
   self.save()
   if job['state']=='processing':
@@ -180,7 +181,7 @@ class ImageJobs:
       row.update(generation_task_id=owner['id'],source_index=0 if row['order']==1 else row['order']-1,source_expected=(owner.get('expected_images',8) if row['order']==1 else 8))
     for order,index in zip(target['orders'],target['indices']):
      staged=job['received_images'][index];ext=Path(staged['name']).suffix;name=('01_main' if order==1 else ('%02d_detail'%order))+ext
-     rows[order-1]={'file':str(self.folder(target['sku'])/'images'/name),'sha256':staged['sha256'],'order':order,'role':'primary' if order==1 else 'gallery','source':'assistant_generated','generation_task_id':job.get('source_request_id',job['id']),'source_index':index,'source_expected':job['expected_images']}
+     rows[order-1]={'file':str(self.folder(target['sku'])/'images'/name),'sha256':staged['sha256'],'order':order,'role':'primary' if order==1 else 'gallery','source':'assistant_generated','generation_task_id':staged.get('source_request_id') or job.get('source_request_id',job['id']),'source_index':staged.get('source_index',index),'source_expected':staged.get('source_expected',job['expected_images'])}
      if job.get('sheet_layout'):rows[order-1]['contact_sheet_layout']=job['sheet_layout']
      if order>1:rows[order-1]['shared_from']=job['sku']
     plans.append({'sku':target['sku'],'rows':rows,'old_files':[Path(r['file'].replace('\\','/')).name for r in self.rows(target['sku'])]})

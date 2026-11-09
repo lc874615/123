@@ -79,4 +79,3 @@ async function health(){
 async function updateButtons(){const x=await chrome.storage.local.get(['activeTask','autoEnabled','lastSku']);document.querySelector('#run').disabled=!!x.activeTask&&!!x.autoEnabled;document.querySelector('#stop').disabled=!x.autoEnabled&&!x.activeTask;document.querySelector('#current-sku').textContent=x.activeTask?.sku||x.lastSku||'暂无任务';document.querySelector('#copy').disabled=!!x.activeTask;}
 health();
 
-document.querySelector('#recover-sheet').onclick=async()=>{const [tab]=await chrome.tabs.query({active:true,currentWindow:true});const r=await chrome.runtime.sendMessage({kind:'recover',tabId:tab.id,sku:document.querySelector('#sku').value.trim(),as_sheet:true});status.textContent=r.error||r.status;};

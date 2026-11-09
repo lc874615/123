@@ -225,7 +225,9 @@ class Store:
    if not jobs:self.image_jobs.recollect(products);jobs=self.image_jobs.active([t['sku'] for t in products])
    return self.image_jobs.recover(jobs[0]['id'])
   from recovery_targets import markers
-  task=group[0];validate_complete=len(task.get('received_images',[]))==8;task.pop('resume_mode',None);task.update(state='waiting',message='用户请求核对最终编号文件，不重新生成');self.save();return {'id':task['id'],'sku':task['sku'],'set_mode':True,'saved_count':len(task.get('received_images',[])),'expected_images':task.get('expected_images',8),'sheet_layout':task.get('sheet_layout'),'delivery_policy':task.get('delivery_policy'),'orderRepairPending':validate_complete,'automaticRecovery':bool(automatic or task.get('recollection_requested')),'recovery_markers':markers(self.folder/'products'/sku,task)}
+  from image_retry import configure
+  configure(group[0])
+  task=group[0];validate_complete=len(task.get('received_images',[]))==8;task.pop('resume_mode',None);task.update(state='waiting',message='用户请求核对最终编号文件，不重新生成');self.save();return {'id':task['id'],'sku':task['sku'],'set_mode':True,'saved_count':len(task.get('received_images',[])),'expected_images':task.get('expected_images',8),**__import__('image_retry').plan(task),'delivery_policy':'independent_images','orderRepairPending':validate_complete,'automaticRecovery':bool(automatic or task.get('recollection_requested')),'recovery_markers':markers(self.folder/'products'/sku,task)}
  def set_result(self,tid,index,encoded):
   if hasattr(self,'image_jobs') and self.image_jobs.get(tid):return self.image_jobs.accept(tid,index,encoded)
   task=self.find(tid)
@@ -257,7 +259,8 @@ class Store:
   folder=self.folder/'products'/task['sku']/'images';folder.mkdir(parents=True,exist_ok=True)
   path=folder/f'{TASKS[index][0]}.{ext}';path.write_bytes(data)
   received.append({'file':str(path),'sha256':digest,'role':'primary' if index==0 else 'gallery','order':index+1,'source':'assistant_generated'})
-  if task.get('sheet_layout'):received[-1]['contact_sheet_layout']=task['sheet_layout']
+  if task.get('image_retry_attempts'):
+   attempt=task['image_retry_attempts'][-1];received[-1].update(generation_task_id=attempt['request_id'],source_index=index-attempt['offset'],source_expected=attempt['count'])
   if task.get('gallery_source') and len(received)==1:
    from product_group import reuse_gallery
    reuse_gallery(folder.parent,task)
@@ -392,11 +395,9 @@ class Store:
    from image_prompts import generation_prompt,reference_contract,main_detail_references
    t['delivery_policy']='generated_originals'
    t['references']=main_detail_references(t,self.tasks)
-   from image_prompts import sheet_prompt
-   if t.get('expected_images',8)==8:
-    from contact_sheet import LAYOUT
-    t['sheet_layout']=dict(LAYOUT);t['prompt']=sheet_prompt(t['facts'],t.get('group_facts',''),8)+'\n'+reference_contract(t)
-   else:t['prompt']=generation_prompt(t['facts'],t.get('group_facts',''),1)+'\n'+reference_contract(t)
+   from image_retry import configure
+   configure(t)
+   t['prompt']=generation_prompt(t['facts'],t.get('group_facts',''),t.get('expected_images',8))+'\n'+reference_contract(t)
   t['prompt']=t['prompt'].replace('。如以文件或ZIP交付，8张文件须按01_至08_编号，01_为主图，ZIP不得包含原始参考图。','。仅交付8张独立图片，按01_至08_编号。');t['prompt']+=('\n只交付一张原始拼图，不提供ZIP。' if t.get('sheet_layout') else '\n交付要求：仅输出独立图片及逐张下载入口，不要打包，不提供ZIP或其他压缩包。');self.save();result=dict(t);result['references']=[{'name':r['name'],'mime':r['mime'],'purpose':r.get('purpose','variant_main'),'base64':base64.b64encode(Path(r['path']).read_bytes()).decode()} for r in t.get('references',[])];return result
  def find(self,tid):
   t=next((t for t in self.tasks if t['id']==tid),None)
@@ -615,7 +616,7 @@ def server(store,token,port=8765):
     body=json.loads(self.rfile.read(n))
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.27','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.28','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
@@ -671,20 +672,13 @@ def server(store,token,port=8765):
        from category_match import suggest
        threading.Thread(target=suggest,args=(store.folder/'products'/body['sku'],),kwargs={'lock':store.lock},daemon=True).start()
      elif self.path=='/delivery-plan':
-      from contact_sheet import plan
+      from image_retry import plan
       value=plan(store.find(body['task_id']))
+     elif self.path=='/image-retry':
+      from image_retry import reserve
+      value=reserve(store,body['task_id'],body)
      elif self.path=='/recover':
-      if body.get('as_sheet') and not body.get('task_id'):
-       candidates=[j for j in store.image_jobs.active([body['sku']]) if j.get('expected_images') in (7,8)]
-       if len(candidates)>1:raise ValueError('有多个可恢复的图片来源，请先核对任务；未猜选拼图')
-       if candidates:body['task_id']=candidates[0]['id']
-      delivery=None
-      if body.get('as_sheet'):
-       from contact_sheet import adopt
-       target=store.find(body['task_id']) if body.get('task_id') else next(t for t in store.tasks if t['sku']==body['sku'])
-       delivery=adopt(store,target['id'])
       value=store.image_jobs.recover(body['task_id']) if body.get('task_id') and store.image_jobs.get(body['task_id']) else store.recover(body['sku'],automatic=bool(body.get('automatic')))
-      if delivery:value.update(delivery)
      elif self.path=='/claim':value=store.claim()
      elif self.path=='/sheet-result':
       from contact_sheet import accept
