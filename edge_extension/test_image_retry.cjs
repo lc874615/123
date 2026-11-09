@@ -1,8 +1,9 @@
 const test=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs');
-function fixture(){let now=0,generating=false,paused=false,reply=true,clicks=0,calls=0;class Editor{constructor(){this._value='';}get value(){return this._value;}set value(x){this._value=x;}focus(){}dispatchEvent(){}}const editor=new Editor();
- const task={id:'T',auto_image_retry:true};const ctx={Date:{now:()=>now},HTMLTextAreaElement:Editor,Event:class{},OzonConversation:{generating:()=>generating,requestReplies:()=>reply?[{textContent:'only preview'}]:null},OzonComposer:{findSend:()=>({click:()=>clicks++})},chrome:{runtime:{sendMessage:async()=>{calls++;return {marker:'retry-marker',prompt:'independent images',count:7,offset:0,attempt:1};}}}};
- vm.runInNewContext(fs.readFileSync(__dirname+'/image_retry.js','utf8'),ctx);
- return {task,editor,run:()=>ctx.OzonImageRetry.maybe({}, {task,marker:'source',stopped:()=>paused,findEditor:()=>editor,sleep:async()=>{},report:async()=>{}}),time:t=>now=t,generating:v=>generating=v,pause:v=>paused=v,reply:v=>reply=v,counts:()=>({clicks,calls})};}
-test('stable completed reply triggers one batch followup and switches collection marker',async()=>{const f=fixture();assert.equal(await f.run(),false);f.time(61000);assert.equal(await f.run(),true);assert.deepEqual(f.counts(),{clicks:1,calls:1});assert.equal(f.task.recovery_marker,'retry-marker');assert.equal(f.task.collection_expected,7);});
-test('no followup while generating, paused, or unable to locate the request reply',async()=>{for(const mode of ['generating','pause','reply']){const f=fixture();await f.run();f.time(61000);f[mode](mode==='reply'?false:true);assert.equal(await f.run(),false);assert.deepEqual(f.counts(),{clicks:0,calls:0});}});
-test('user draft is never overwritten or reserved as a retry',async()=>{const f=fixture();await f.run();f.time(61000);f.editor.value='user draft';await assert.rejects(f.run(),/输入框已有内容/);assert.deepEqual(f.counts(),{clicks:0,calls:0});});
+test('retired retry shim never sends requests even when legacy task enables retry',async()=>{
+ let sent=0;const ctx={chrome:{runtime:{sendMessage:()=>sent++}}};vm.runInNewContext(fs.readFileSync(__dirname+'/image_retry.js','utf8'),ctx);
+ const result=await ctx.OzonImageRetry.maybe({}, {task:{auto_image_retry:true}});assert.equal(result,false);assert.equal(sent,0);
+});
+test('active image collection no longer invokes the retry dispatcher',()=>{
+ const content=fs.readFileSync(__dirname+'/content.js','utf8'),background=fs.readFileSync(__dirname+'/background.js','utf8');
+ assert.ok(!content.includes('OzonImageRetry.maybe'));assert.ok(!background.includes("m.kind==='image-retry'"));assert.ok(!background.includes("'image_retry.js'"));
+});

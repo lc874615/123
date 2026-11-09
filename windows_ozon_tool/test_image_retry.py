@@ -1,34 +1,20 @@
-import tempfile,unittest
+import copy,tempfile,unittest
 from unittest.mock import patch
 from local_bridge import Store
 from image_retry import reserve,plan,configure
 class RetryTests(unittest.TestCase):
- def setup(self,tmp):
-  store=Store(tmp);store.create_set('A','灰色椅子，金属');store.set_paused(False);task=store.tasks[0];task.update(state='waiting');return store,task
- def body(self,task):return {'source_marker':plan(task)['recovery_marker'] or '【OZON_TASK:'+task['id']+'】','reply_finished':True,'no_collectable_result':True}
- def test_retry_is_persisted_and_duplicate_reservation_is_rejected(self):
+ def test_configuration_disables_automatic_followup_even_for_legacy_tasks(self):
+  t={'auto_image_retry':True,'sheet_layout':{'columns':3},'expected_images':7};configure(t);self.assertFalse(t['auto_image_retry']);self.assertFalse(plan(t)['auto_image_retry']);self.assertNotIn('sheet_layout',t)
+ def test_retired_endpoint_cannot_create_requests_or_mutate_queue(self):
   with tempfile.TemporaryDirectory() as tmp:
-   store,t=self.setup(tmp);body=self.body(t);r=reserve(store,t['id'],body);self.assertEqual(r['count'],8);self.assertIn('对应图片内容',r['prompt'])
-   with self.assertRaises(ValueError):reserve(store,t['id'],body)
-   restored=Store(tmp);self.assertEqual(plan(restored.find(t['id']))['recovery_marker'],r['marker'])
- def test_only_missing_positions_and_at_most_two_followups(self):
-  with tempfile.TemporaryDirectory() as tmp:
-   store,t=self.setup(tmp);t['received_images']=[{},{}];first=reserve(store,t['id'],self.body(t));self.assertEqual((first['offset'],first['count']),(2,6));self.assertNotIn('主图：',first['prompt'])
-   second=reserve(store,t['id'],self.body(t));self.assertEqual(second['attempt'],2)
-   with self.assertRaises(ValueError):reserve(store,t['id'],self.body(t))
- def test_pause_unknown_result_and_unfinished_reply_do_not_regenerate(self):
-  with tempfile.TemporaryDirectory() as tmp:
-   store,t=self.setup(tmp);store.set_paused(True)
-   with self.assertRaises(ValueError):reserve(store,t['id'],self.body(t))
-   store.set_paused(False);t['state']='waiting'
-   for key,value in (('source_marker','wrong'),('reply_finished',False),('no_collectable_result',False)):
-    body=self.body(t);body[key]=value
-    with self.assertRaises(ValueError):reserve(store,t['id'],body)
-   self.assertEqual(t.get('image_retry_attempts',[]),[])
- def test_new_full_claim_and_shared_job_request_independent_outputs(self):
+   store=Store(tmp);store.create_set('A','椅子');task=store.tasks[0];task['state']='waiting';before=copy.deepcopy(task)
+   with self.assertRaisesRegex(ValueError,'自动补图功能已移除'):reserve(store,task['id'],{'reply_finished':True,'no_collectable_result':True,'source_marker':'【OZON_TASK:'+task['id']+'】'})
+   self.assertEqual(task,before)
+ def test_already_sent_legacy_reply_can_still_be_collected_without_new_generation(self):
+  task={'expected_images':7,'auto_image_retry':True,'image_retry_attempts':[{'request_id':'already-sent','count':5,'offset':2}]};value=plan(task)
+  self.assertFalse(value['auto_image_retry']);self.assertEqual(value['recovery_marker'],'【OZON_TASK:already-sent】');self.assertEqual((value['collection_expected'],value['collection_offset']),(5,2));self.assertEqual(len(task['image_retry_attempts']),1)
+ def test_independent_output_and_manual_restart_remain_available(self):
   from test_image_regeneration import ImageRegenerationTests
-  with tempfile.TemporaryDirectory() as tmp:
-   store=Store(tmp);store.create_set('A','椅子');store.set_paused(False);task=store.claim();self.assertNotIn('sheet_layout',task);self.assertIn('独立成品交付',task['prompt']);self.assertNotIn('高分辨率3×3',task['prompt'])
   with tempfile.TemporaryDirectory() as tmp,patch('image_regeneration.threading.Thread'):
-   store=ImageRegenerationTests().setup(tmp);store.image_jobs.create('CHAIR(1)','shared_details',[],'保留人物');task=store.claim();self.assertNotIn('sheet_layout',task);self.assertEqual(task['delivery_policy'],'independent_images');self.assertIn('保留人物',task['prompt'])
+   store=ImageRegenerationTests().setup(tmp);store.image_jobs.create('CHAIR(1)','shared_details',[],'保留人物');task=store.claim();self.assertFalse(task['auto_image_retry']);self.assertNotIn('sheet_layout',task);self.assertIn('独立成品交付',task['prompt'])
 if __name__=='__main__':unittest.main()
