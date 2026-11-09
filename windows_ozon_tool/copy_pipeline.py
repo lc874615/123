@@ -19,7 +19,7 @@ def prepare(store,body):
  if body.get('prepare_only') and not dispatched and owner.get('copy_mode')!='attributes' and copy_complete(b.get('copy')) and not refresh:
   store.sync_shared_copies();return {'id':'copy:'+sku,'sku':sku,'local_ready':True,'fingerprint':fingerprint}
  if body.get('prepare_only'):
-  if not dispatched:owner.update(copy_phase='inspecting',copy_context_basis=fingerprint)
+  if not dispatched:owner.update(copy_phase='inspecting',copy_context_basis=fingerprint,copy_source_revision=b.get('copy_user_revision'))
   owner['copy_state']='running';store.save()
   marker=owner.get('copy_request_marker')
   return {'id':'copy:'+sku,'sku':sku,'fingerprint':owner.get('copy_context_basis') or fingerprint,'needsRefresh':refresh,'group_skus':[row['sku'] for row in bundles],'attributesOnly':owner.get('copy_mode')=='attributes','dispatched':bool(dispatched),'copy_phase':owner.get('copy_phase'),'marker':marker,'resume_marker':bool(marker),'previous_marker':marker if owner.get('copy_context_basis')==fingerprint else None}
@@ -29,7 +29,7 @@ def prepare(store,body):
  from reference_prefill import build,prompt as attribute_prompt
  photo_context,references=build(store,sku,inspect_only=read_only)
  marker=owner.get('copy_request_marker') if read_only else '【OZON_COPY:'+secrets.token_hex(12)+'】'
- if not read_only:owner.update(copy_phase='generating',copy_context_basis=fingerprint,copy_request_marker=marker)
+ if not read_only:owner.update(copy_phase='generating',copy_context_basis=fingerprint,copy_request_marker=marker,copy_source_revision=b.get('copy_user_revision'))
  owner['copy_state']='running';store.save()
  prompt=(marker or '')+'\n本次商品组文案保存货号：'+sku+'。输出JSON额外包含sku字段，值为'+sku+'，以及facts_fingerprint字段，值为'+fingerprint+'。'+copy_prompt_for(context)
  if owner.get('copy_mode')=='attributes':prompt=(marker or '')+'\n只读取属性，不改写已有文案。仅输出JSON，包含sku字段（值为'+sku+'）和variant_attributes。'
@@ -44,6 +44,7 @@ def save(store,body):
   result={'ok':True}
  else:
   bundles=group_bundles(store,sku);fingerprint=copy_basis(bundles);current=read(path);refresh=owner.get('copy_mode')=='copy_refresh' or bool((current.get('asset_review') or {}).get('copy')) and copy_complete(current.get('copy'));manual=bool(body.get('manual'))
+  if not manual and current.get('copy_user_revision')!=owner.get('copy_source_revision'):raise ValueError('本地共用文案已保存更新，忽略此前自动生成结果，未覆盖已保存文案')
   if not manual and owner.get('copy_context_basis') and owner['copy_context_basis']!=fingerprint:raise ValueError('文案处理期间商品参数已变化，未保存旧文案，请重新读取当前资料')
   if not manual and value.get('facts_fingerprint') and value['facts_fingerprint']!=fingerprint:raise ValueError('已有文案对应的商品参数已变化，需按最新资料生成')
   if refresh and not manual and (body.get('existing') or owner.get('copy_phase')=='inspecting') and value.get('facts_fingerprint')!=fingerprint:raise ValueError('已有文案缺少当前整组参数依据，不沿用旧文案')

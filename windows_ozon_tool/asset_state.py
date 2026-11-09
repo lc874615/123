@@ -64,5 +64,5 @@ def blocking_reason(bundle):
    from asset_reconcile import LABELS
    changes=[LABELS.get(k,k) for k in review.get('fields',[]) if k in VISUAL]
   return '素材待更新：图片参数待核对'+('（'+'、'.join(changes)+'）' if changes else '')+'；图片无误可点击预览底部“图片无误，沿用本组”；确需改图时到图片视频页手动重做'
- if review.get('copy'):return '整组文案待同步/更新；可保存共用文案，或继续制作自动采集补全，无需重新作图'
+ if review.get('copy'):return '整组文案待同步/更新；可点击“保存并同步全组文案”；已有完整文案提交时自动沿用，缺失时再自动补全，无需重新作图'
  return ''

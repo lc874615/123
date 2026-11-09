@@ -17,7 +17,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  coordinator=GroupService(paths,service,pricing,store)
  coordinator.ensure_fixed_vat()
  if publication.initial_stock is not None and not publication.active([p.parent.name for p in paths]):coordinator.ensure_initial_stock(publication.initial_stock)
- dialog=tk.Toplevel(root);dialog.title('整组预览 · Ozon 商品自动化 1.0.15');dialog.geometry('1280x850');dialog.minsize(950,650)
+ dialog=tk.Toplevel(root);dialog.title('整组预览 · Ozon 商品自动化 1.0.16');dialog.geometry('1280x850');dialog.minsize(950,650)
  busy=False;selected=set(range(len(paths)));focus=['',''];bundles=[];token=None;rendered=None;warehouses={};photos=[];rows={};last_job=None;copy_dirty=False;displayed_copy=None;copy_timer=None;busy_since=0;operation_error='';operation_name=''
  ttk.Label(dialog,text='每列一个变体；双击单格修改，点击参数名选中整行后批量修改。仓库显示当前店铺全部类型和状态。',wraplength=900).pack(pady=6)
  status=ttk.Label(dialog,text='正在加载整组预览',wraplength=1200);status.pack(pady=3)
@@ -136,12 +136,15 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    changed=[b['sku'] for b in bundles if b.get('regeneration_pending') or any((b.get('asset_review') or {}).get(k) for k in ('main','gallery'))]
    if any(b.get('image_regeneration_jobs') for b in bundles):status.configure(text='图片重做已排队或正在采集；进度见图片视频页，无需重新提交上架。')
    elif changed:status.configure(text='图片待核对：'+str(len(changed))+'个变体；变化项见图片视频页。图片无误请点击底部“图片无误，沿用本组”。')
-   elif any((b.get('asset_review') or {}).get('copy') for b in bundles):status.configure(text='图片已校验，整组文案自动采集或补全后同步全部变体。')
+   elif any((b.get('asset_review') or {}).get('copy') for b in bundles):
+    from listing_bundle import copy_complete
+    status.configure(text='图片已校验，完整文案已载入；提交时自动保存并同步全组，也可点击“保存并同步全组文案”。' if copy_complete(bundles[0].get('copy')) else '图片已校验，文案缺失；可填写后保存，或继续制作自动采集补全。')
    if changed and not any(b.get('image_regeneration_jobs') for b in bundles):
     if not accept_button.winfo_manager():accept_button.pack(side='right',padx=4,pady=3)
     accept_button.configure(state='disabled' if busy or job else 'normal')
    else:accept_button.pack_forget()
    if copy_dirty:status.configure(text=status.cget('text')+' | 共用文案尚未保存')
+   copy_save_button.configure(state='disabled' if busy or job else 'normal')
    submit_button.configure(state='disabled' if busy else 'normal',text='查看当前提交进度' if job else '提交上架');update_button.configure(state='disabled' if busy or job else 'normal');progress_refresh()
    blocker.configure(text=('当前按钮暂不可用：'+coordinator.status+'，已用'+str(int(time.monotonic()-busy_since))+'秒' if busy else '共用文案尚未保存' if copy_dirty else '已有上架任务：点击右侧按钮查看进度，系统不会重复提交' if job else operation_error or ''))
   except (OSError,ValueError):status.configure(text='正在等待草稿保存完成')
@@ -407,10 +410,11 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   value={key:w.get('1.0','end-1c').strip() for key,w in copy_widgets.items()};value['tags_ru']=[t.strip() for t in value['tags_ru'].splitlines() if t.strip()];value['missing_facts']=(bundles[0].get('copy') or {}).get('missing_facts',[]);expected=token
   def saved(result):
    nonlocal copy_dirty
-   copy_dirty=False;refresh()
+   copy_dirty=False;refresh();footer_note.configure(text='整组文案已保存并同步全部变体，未提交Ozon。')
    if after:after()
   run(lambda:coordinator.set_copy(value,expected),saved,label='自动保存整组共用文案')
- ttk.Label(copy_tab,text='自动保存并同步全组。标题和简介不能为空；标签会自动规范格式。').pack(pady=6)
+ copy_save_button=ttk.Button(copy_tab,text='保存并同步全组文案',command=save_copy);copy_save_button.pack(pady=5)
+ ttk.Label(copy_tab,text='编辑后自动保存；未修改也可直接点击保存，或提交时自动沿用当前完整文案。标签自动规范。').pack(pady=4)
  media_canvas=tk.Canvas(media_tab,highlightthickness=0);media_canvas.pack(side='left',fill='both',expand=True);media_scroll=ttk.Scrollbar(media_tab,orient='vertical',command=media_canvas.yview);media_scroll.pack(side='right',fill='y');media_canvas.configure(yscrollcommand=media_scroll.set);media_body=ttk.Frame(media_canvas);media_id=media_canvas.create_window((0,0),window=media_body,anchor='nw');media_body.bind('<Configure>',lambda e:media_canvas.configure(scrollregion=media_canvas.bbox('all')));media_canvas.bind('<Configure>',lambda e:media_canvas.itemconfigure(media_id,width=e.width))
  media_cards=ttk.Frame(media_body);media_cards.pack(fill='x')
  def media_wheel(event):
@@ -544,6 +548,14 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
     unresolved=[b for b in current if pending(b)]
     if not unresolved:submit();return
     pictures=any(b.get('regeneration_pending') or any((b.get('asset_review') or {}).get(k) for k in ('main','gallery')) for b in unresolved)
+    if not pictures:
+     from listing_bundle import copy_complete
+     if copy_complete(current[0].get('copy')):
+      def copied():
+       if any((b.get('asset_review') or {}).get('copy') for b in coordinator.load()):
+        notebook.select(copy_tab);footer_note.configure(text='文案仍有参数冲突，请核对内容后点击“保存并同步全组文案”。');return
+       submit()
+      save_copy(after=copied);return
     notebook.select(media_tab if pictures else copy_tab)
     footer_note.configure(text=blocking_reason(unresolved[0]))
    run(check_assets,checked_assets,label='核对图片与文案状态');return
@@ -593,5 +605,5 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  try:
   publication.account_getter();dialog.after(100,load_warehouses)
  except ValueError:status.configure(text='请先连接Ozon API，再读取店铺全部仓库')
- dialog._ozon_ui={'notebook':notebook,'copy_widgets':copy_widgets,'tree':tree,'more':more_menu,'submit':submit_button,'update_preview':update_button,'accept_images':accept_button,'footer_note':footer_note,'regeneration':regen_ui,'refresh':refresh}
+ dialog._ozon_ui={'notebook':notebook,'copy_widgets':copy_widgets,'save_copy':copy_save_button,'tree':tree,'more':more_menu,'submit':submit_button,'update_preview':update_button,'accept_images':accept_button,'footer_note':footer_note,'regeneration':regen_ui,'refresh':refresh}
  return dialog

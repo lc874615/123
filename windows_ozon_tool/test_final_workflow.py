@@ -26,6 +26,20 @@ class FinalWorkflowTests(unittest.TestCase):
   b={'images':[{}],'variant_parameters':{'color':'金色','length':'44'}};after=copy.deepcopy(b);after['variant_parameters'].update(color='золотой',length='44.0');mark_changes([b],[after]);self.assertFalse(pending(after))
  def test_equivalent_multiselect_materials_and_country_do_not_mark_assets(self):
   b={'images':[{}],'variant_parameters':{'material':'金属、塑料','accessory_material':'绒面；实木','origin':'中国'}};after=copy.deepcopy(b);after['variant_parameters'].update(material='Пластик；Металл；Металл',accessory_material='Массив дерева；Велюр',origin='Китай');mark_changes([b],[after]);self.assertFalse(pending(after))
+ def test_unchanged_visible_copy_clears_pending_without_repricing_or_generation(self):
+  from asset_reconcile import copy_basis
+  with tempfile.TemporaryDirectory() as tmp:
+   g,a,p=fixtures.GroupTests().setup_group(tmp,True)
+   for path in g.paths:
+    b=read(path);b['asset_review']={'copy':True};b['copy_basis']='old';write(path,b)
+   value=copy.deepcopy(g.load()[0]['copy']);before=g.load();a.calls=[]
+   with patch.object(g.pricing,'calculate_all',side_effect=AssertionError('unchanged copy must not reprice')),patch.object(g.attributes,'refresh',side_effect=AssertionError('unchanged copy must not reload schema')):g.set_copy(value,g.token())
+   after=g.load();self.assertTrue(all(not (b.get('asset_review') or {}).get('copy') for b in after));self.assertTrue(all(b['copy_basis']==copy_basis(after) for b in after));self.assertEqual([b['price_cny'] for b in after],[b['price_cny'] for b in before]);self.assertFalse(a.calls)
+ def test_visible_copy_material_conflict_rejects_before_any_group_write(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   g,a,p=fixtures.GroupTests().setup_group(tmp,True);before=g.load();value=copy.deepcopy(before[0]['copy']);value['description_ru']='Основной материал — полипропилен.'
+   with self.assertRaisesRegex(ValueError,'材质冲突'):g.set_copy(value,g.token())
+   self.assertEqual(g.load(),before)
  def test_group_description_edit_is_single_source(self):
   with tempfile.TemporaryDirectory() as tmp:
    g,a,p=fixtures.GroupTests().setup_group(tmp,True);text='Общее описание для всех вариантов.';g.set_attributes([1],'0:4191',[[{'value':text}]],g.token())
@@ -109,6 +123,8 @@ class RebuildAndDeleteTests(unittest.TestCase):
     b=read(path);self.assertEqual(b['copy'],{**value,'sku':b['sku']});self.assertEqual(len(b['group_variants']),3)
    self.assertEqual(read(root/'products'/'THIRD'/'shared_copy.json')['copy'],{**value,'sku':'THIRD'})
    self.assertTrue(all(len(t['group_variants'])==3 for t in store.tasks))
+   from asset_reconcile import copy_basis,group_bundles
+   self.assertTrue(all(read(path)['copy_basis']==copy_basis(group_bundles(store,leader)) for path in g.paths))
  def test_restore_deleted_record_keeps_sent_work_read_only(self):
   with tempfile.TemporaryDirectory() as tmp:
    store=Store(tmp);store.create_set('A','资料');ids=[t['id'] for t in store.tasks];store.delete_tasks(ids)

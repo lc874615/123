@@ -252,26 +252,36 @@ class GroupService:
     self._write(bundles)
    self.after_edit(indices,refresh=False)
  def set_copy(self,value,expected=None):
-  from listing_bundle import copy_complete
+  from listing_bundle import copy_complete,copy_hash
   if not copy_complete(value):raise ValueError('标题、简介、标签和缺失信息列表不完整')
   with self.mutex:
    with self.lock:
     bundles=[read(p) for p in self.paths];self._check(bundles,expected)
     from tag_rules import normalize_tags,is_tag_field
-    from asset_reconcile import copy_basis
-    fingerprint=copy_basis(bundles)
+    from asset_reconcile import copy_basis,group_bundles
+    context=bundles
+    if self.store:
+     owner=next((t for t in self.store.tasks if t['sku']==bundles[0]['sku']),{})
+     context=group_bundles(self.store,owner.get('copy_leader',bundles[0]['sku'])) or bundles
+    fingerprint=copy_basis(context)
     value={**value,'tags_ru':normalize_tags(value.get('tags_ru'))}
+    from material_guard import validate as validate_copy
+    for b in bundles:validate_copy(b,value)
+    user_revision=secrets.token_hex(12)
+    content_changed=any(not copy_complete(b.get('copy')) or copy_hash(b['copy'])!=copy_hash(value) or b['copy'].get('missing_facts')!=value.get('missing_facts') for b in bundles)
     for b in bundles:
-     b['copy']={**copy.deepcopy(value),'sku':b['sku']};b['copy_basis']=fingerprint;self._invalidate(b)
+     b['copy']={**copy.deepcopy(value),'sku':b['sku']};b['copy_basis']=fingerprint;b['copy_user_revision']=user_revision
+     if content_changed:self._invalidate(b)
      if b.get('asset_review'):b['asset_review']['copy']=False
      state=b.get('attribute_draft') or {}
-     for field in state.get('fields',[]):
+     for field in state.get('fields',[]) if content_changed else []:
       name=(field.get('name_ru') or field.get('name','')).casefold().strip()
       if is_tag_field(field) or field['id'] in (4191,4180) or name in ('аннотация','название'):
        k=field_key(field);state.get('values',{}).pop(k,None);state['manual_keys']=[x for x in state.get('manual_keys',[]) if x!=k]
     self._write(bundles)
     if self.store:self.store.sync_shared_copies()
-   self.after_edit(list(range(len(bundles))))
+   if content_changed:self.after_edit(list(range(len(bundles))))
+   else:self.reconcile_assets();self.status='整组文案已保存并同步全部变体'
 
 def preview_changes(before,after,allow_automatic=False):
  """Compare merchant-visible content, not refreshed cache timestamps/fingerprints."""

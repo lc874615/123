@@ -26,4 +26,9 @@ class CopyPipelineTests(unittest.TestCase):
    with self.assertRaises(ValueError):prepare(store,{'sku':'CHAIR(1)'})
    path=store.folder/'products'/'CHAIR(1)'/'listing_bundle.json';b=read(path);b['variant_parameters']['length']='99';write(path,b)
    with self.assertRaises(ValueError):save(store,{'sku':'CHAIR(1)','copy':b['copy']})
+ def test_saved_local_copy_is_not_overwritten_by_an_older_automatic_result(self):
+  with tempfile.TemporaryDirectory() as tmp,patch('image_regeneration.threading.Thread'):
+   store=fixtures.ImageRegenerationTests().setup(tmp);path=store.folder/'products'/'CHAIR(1)'/'listing_bundle.json';b=read(path);b['copy_user_revision']='new-local-revision';write(path,b);before=read(path);owner=store.tasks[0];owner.update(copy_mode='copy_refresh',copy_phase='generating',copy_source_revision=None)
+   with self.assertRaisesRegex(ValueError,'未覆盖'):save(store,{'sku':'CHAIR(1)','copy':dict(b['copy'],title_ru='Old generated title')})
+   self.assertEqual(read(path),before)
 if __name__=='__main__':unittest.main()
