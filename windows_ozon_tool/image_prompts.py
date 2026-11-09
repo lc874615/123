@@ -52,3 +52,14 @@ def main_detail_references(task,tasks):
  shared=source.get('detail_references') or [r for r in source.get('references',[]) if r.get('purpose') in ('shared_gallery','shared_detail')]
  seen={r.get('path') for r in own}
  return own+[dict(r,purpose='shared_information',sku=source['sku']) for r in shared if r.get('path') not in seen]
+
+
+def sheet_prompt(facts,group_facts='',expected=8,shared=False):
+ from contact_sheet import contract
+ if shared:
+  roles=ROLES[1:];style=DETAIL_STYLE
+ else:
+  roles=ROLES if expected==8 else ROLES[:1];style=DETAIL_STYLE+MAIN_STYLE+MAIN_DETAIL_INFO
+ if expected==1:return generation_prompt(facts,group_facts,1)
+ # Assemble only the sheet contract; never append conflicting independent-file rules.
+ return contract(expected)+style+EVIDENCE_STYLE+FIDELITY+'各格用途顺序：'+'；'.join(str(i+1)+'：'+role_layout(n,b) for i,(n,b) in enumerate(roles))+'。当前变体事实：'+facts+'。全组选项事实：'+(group_facts or facts)

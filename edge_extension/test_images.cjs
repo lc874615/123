@@ -37,3 +37,12 @@ test('incomplete native gallery cannot be replaced by complete rebuilt download 
 test('legacy delivery retains numbered file recovery behavior',async()=>{
  const f=deliveryFixture(1);assert.deepEqual(Array.from(await f.collect()),['rebuilt']);assert.equal(f.counts().galleryReads,0);
 });
+test('sheet task collects exactly one source and sends it once for server pixel-preserving split',async()=>{
+ const vm=require('node:vm'),fs=require('node:fs'),source=fs.readFileSync(__dirname+'/content.js','utf8');
+ const fn=source.slice(source.indexOf('async function collectImages(task,options){'),source.indexOf('async function saveImage(task,index,image_b64){'));
+ let expected,normalSaves=0;const messages=[];
+ const ctx={stop:false,chrome:{runtime:{sendMessage:async m=>{messages.push(m);return {ok:true};}}},collectSource:async(_task,o)=>{expected=o.expected;await o.onImage(0,'same-original-sheet-bytes');return ['same-original-sheet-bytes'];}};
+ vm.runInNewContext(fn+';globalThis.collectSheet=collectImages;',ctx);
+ await ctx.collectSheet({id:'parent',sheet_layout:{columns:3,rows:3}},{expected:7,onImage:()=>normalSaves++});
+ assert.equal(expected,1);assert.equal(normalSaves,0);assert.equal(messages.length,1);assert.equal(messages[0].kind,'sheet-result');assert.equal(messages[0].image_b64,'same-original-sheet-bytes');
+});

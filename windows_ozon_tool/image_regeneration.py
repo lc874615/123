@@ -79,7 +79,8 @@ class ImageJobs:
   task=self.product(sku);leader=task.get('copy_leader',sku);group=[t for t in self.store.tasks if t.get('copy_leader',t['sku'])==leader and t['state']!='cancelled']
   facts='\n'.join(t['sku']+'：'+str(read(self.folder(t['sku'])/'listing_bundle.json').get('facts') or t['facts']) for t in group)
   own=read(self.folder(sku)/'listing_bundle.json').get('facts') or task['facts']
-  return (shared_prompt(facts) if kind=='shared_details' else generation_prompt(own,facts,1))+'\n用户补充要求（不得改变参考商品款式、颜色、结构、参数与件数）：\n'+(addition.strip() or '无额外要求')
+  from image_prompts import sheet_prompt
+  return (sheet_prompt(own,facts,7,shared=True) if kind=='shared_details' else generation_prompt(own,facts,1))+'\n用户补充要求（不得改变参考商品款式、颜色、结构、参数与件数）：\n'+(addition.strip() or '无额外要求')
  def create(self,sku,kind,selected,addition):
   if kind not in ('shared_details','variant_main') or len(addition)>10000:raise ValueError('图片重做设置无效或补充要求过长')
   task=self.product(sku);leader=task.get('copy_leader',sku);group=[t for t in self.store.tasks if t.get('copy_leader',t['sku'])==leader and t['state']!='cancelled'];allowed={t['sku'] for t in group}
@@ -93,6 +94,9 @@ class ImageJobs:
      if any(t['sku']==target['sku'] and set(t['orders'])&set(target['orders']) for t in old['targets']):raise ValueError(target['sku']+'：对应图片已有重做任务，请等候完成或停止本组重做')
    refs=self.refs(group if kind=='shared_details' else [self.product(owner)],kind);identity='image-'+secrets.token_hex(12)
    job={'id':identity,'sku':owner,'image_job':True,'set_mode':True,'auto_batch':True,'delivery_policy':'generated_originals','kind':kind,'state':'queued','targets':targets,'expected_images':7 if kind=='shared_details' else 1,'received_images':[],'references':refs,'prompt':self.prompt(owner,kind,addition),'addition':addition,'parameters':{t['sku']:copy.deepcopy(read(self.folder(t['sku'])/'listing_bundle.json').get('variant_parameters') or {}) for t in targets},'variants':[{'sku':t['sku'],'variant_parameters':copy.deepcopy(read(self.folder(t['sku'])/'listing_bundle.json').get('variant_parameters') or {})} for t in group],'basis':self.basis(targets),'created_at':time.time(),'message':'已备份，等待自动生成7张共用详情图' if kind=='shared_details' else '已备份，等待自动生成本变体主图'}
+   if kind=='shared_details':
+    from contact_sheet import LAYOUT
+    job['sheet_layout']=dict(LAYOUT)
    planned.append(job)
   # Every backup succeeds before the queue or live drafts change.
   for job in planned:
@@ -122,7 +126,7 @@ class ImageJobs:
   job=self.get(identifier)
   if not job or job['state'] in DONE:raise ValueError('图片重做任务不存在或已结束')
   job.update(state='waiting',message='自动读取已发送的图片重做结果，不重新发送');job.pop('resume_mode',None);self.save()
-  return {'id':job['id'],'sku':job['sku'],'set_mode':True,'image_job':True,'automaticRecovery':True,'delivery_policy':job.get('delivery_policy'),'expected_images':job['expected_images'],'saved_count':len(job['received_images']),'source_marker':'【OZON_TASK:'+job.get('source_request_id',job['id'])+'】'}
+  return {'id':job['id'],'sku':job['sku'],'set_mode':True,'image_job':True,'automaticRecovery':True,'sheet_layout':job.get('sheet_layout'),'delivery_policy':job.get('delivery_policy'),'expected_images':job['expected_images'],'saved_count':len(job['received_images']),'source_marker':'【OZON_TASK:'+job.get('source_request_id',job['id'])+'】'}
  def reset(self,identifier):
   job=self.get(identifier);folder=self.store.folder/'image_job_staging'/identifier
   if folder.exists():shutil.copytree(folder,folder.parent/(identifier+'-order-backup-'+str(time.time_ns())))
@@ -173,6 +177,7 @@ class ImageJobs:
     for order,index in zip(target['orders'],target['indices']):
      staged=job['received_images'][index];ext=Path(staged['name']).suffix;name=('01_main' if order==1 else ('%02d_detail'%order))+ext
      rows[order-1]={'file':str(self.folder(target['sku'])/'images'/name),'sha256':staged['sha256'],'order':order,'role':'primary' if order==1 else 'gallery','source':'assistant_generated','generation_task_id':job.get('source_request_id',job['id']),'source_index':index,'source_expected':job['expected_images']}
+     if job.get('sheet_layout'):rows[order-1]['contact_sheet_layout']=job['sheet_layout']
      if order>1:rows[order-1]['shared_from']=job['sku']
     plans.append({'sku':target['sku'],'rows':rows,'old_files':[Path(r['file'].replace('\\','/')).name for r in self.rows(target['sku'])]})
    job.update(plans=plans,state='committing');self.save()
@@ -202,13 +207,15 @@ class ImageJobs:
   for sku,ready in completed:
    if ready:threading.Thread(target=self.store.render_video,args=(sku,),daemon=True).start()
  def recollect(self,group):
-  clusters={};skus=[t['sku'] for t in group]
+  clusters={};sheet_layouts={};skus=[t['sku'] for t in group]
   for task in group:
    for row in self.rows(task['sku']):
     source=row.get('generation_task_id')
     if not source:
      owner=task if row['order']==1 else self.product(task.get('gallery_source') or task['sku']);source=owner['id'];row={**row,'source_expected':owner.get('expected_images',8) if row['order']==1 else 8,'source_index':0 if row['order']==1 else row['order']-1}
-    key=(source,int(row['source_expected']));cluster=clusters.setdefault(key,{})
+    key=(source,int(row['source_expected']));
+    if row.get('contact_sheet_layout'):sheet_layouts[key]=row['contact_sheet_layout']
+    cluster=clusters.setdefault(key,{})
     target=cluster.setdefault(task['sku'],{'sku':task['sku'],'orders':[],'indices':[]});target['orders'].append(row['order']);target['indices'].append(row['source_index'])
   operation='recollect-'+secrets.token_hex(8)
   for t in group:
@@ -220,6 +227,7 @@ class ImageJobs:
    write(backup/'task.json',t)
   for (source,expected),mapping in clusters.items():
    targets=list(mapping.values());identity='image-'+secrets.token_hex(12);job={'id':identity,'sku':targets[0]['sku'],'image_job':True,'set_mode':True,'kind':'asset_recollection','state':'needs_attention','resume_mode':'inspect_only','source_request_id':source,'targets':targets,'expected_images':expected,'received_images':[],'references':[],'basis':self.basis(targets),'created_at':time.time(),'message':'已备份，自动按各图片实际来源重新采集；不重新作图'}
+   if (source,expected) in sheet_layouts:job.update(sheet_layout=sheet_layouts[(source,expected)],delivery_policy='generated_originals')
    self.jobs.append(job)
    for target in targets:
     path=self.folder(target['sku'])/'listing_bundle.json';b=read(path);b['image_regeneration_jobs']=list(dict.fromkeys((b.get('image_regeneration_jobs') or [])+[identity]));write(path,b)

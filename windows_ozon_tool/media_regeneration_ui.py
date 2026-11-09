@@ -3,7 +3,7 @@ def build(parent,bundles,store,start,stop,accept=None):
  import tkinter as tk
  from tkinter import ttk
  from tkinter.scrolledtext import ScrolledText
- from image_prompts import generation_prompt,shared_prompt
+ from image_prompts import generation_prompt,shared_prompt,sheet_prompt
  panel=ttk.LabelFrame(parent,text='图片重做 · 原图先备份，新图采集完成后替换');panel.pack(fill='x',padx=8,pady=14)
  ttk.Label(panel,text='共用详情重做7张；变体主图每个单独生成1张。只使用原始参考图。新图替换后自动更新视频、托管链接及富内容；不会自动提交Ozon。',wraplength=850).pack(anchor='w',padx=8,pady=6)
  shared=ttk.LabelFrame(panel,text='1. 全组共用详情图（02—08）');shared.pack(fill='x',padx=8,pady=6)
@@ -31,7 +31,7 @@ def build(parent,bundles,store,start,stop,accept=None):
    initialized[0]=True
    if not shared_add.get('1.0','end-1c'):shared_add.insert('1.0',(rows[0].get('image_regeneration_options') or {}).get('shared_details',''))
   facts='\n'.join(b['sku']+'：'+str(b.get('facts') or '') for b in rows);chosen=next((b for b in rows if selected.get(b['sku']) and selected[b['sku']].get()),rows[0])
-  for widget,text in ((shared_base,shared_prompt(facts)),(main_base,generation_prompt(chosen.get('facts') or '',facts,1))):
+  for widget,text in ((shared_base,sheet_prompt('',facts,7,shared=True)),(main_base,generation_prompt(chosen.get('facts') or '',facts,1))):
    if widget.get('1.0','end-1c')==text:continue
    widget.configure(state='normal');widget.delete('1.0','end');widget.insert('1.0',text);widget.configure(state='disabled')
  for var in selected.values():var.trace_add('write',update_prompts)
