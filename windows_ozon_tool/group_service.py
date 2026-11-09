@@ -258,6 +258,9 @@ class GroupService:
    with self.lock:
     bundles=[read(p) for p in self.paths];self._check(bundles,expected)
     from tag_rules import normalize_tags,is_tag_field
+    from copy_privacy import clean
+    value=clean(value,dict(bundles[0],group_variants=[{'sku':b['sku']} for b in bundles]+list(bundles[0].get('group_variants') or [])))
+    if not copy_complete(value):raise ValueError('去除货号后标题或简介为空，请补充商品文案')
     from asset_reconcile import copy_basis,group_bundles
     context=bundles
     if self.store:

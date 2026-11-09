@@ -4,8 +4,9 @@ from tag_rules import normalize_tags
 from pathlib import Path
 
 def copy_prompt_for(task):
- copy_facts=task.get('group_facts') or task.get('facts','')
- return '以下为同一商品全部变体，标题、简介和标签统一一套。标题以全组共同商品名称、用途和共同卖点为主，不得只写某一个变体的颜色或尺寸。简介完整覆盖全部变体，颜色、尺寸、材质和套装数量差异按选项分别说明，明确购买时选择一个变体，不得写成所有颜色或规格一并发货。标签统一覆盖全组真实用途和变体相关长尾词，不得重复堆砌。每个标签必须以#开头，只能含字母、数字和下划线，多词用下划线连接；每个不超过30字符，总数不超过30。根据以下商品事实生成俄文Ozon标题、简介和标签。自然覆盖相关长尾词，禁止重复堆词和编造承重、认证、功能、品牌。品牌固定无品牌（Нет бренда），不要将品牌列为缺失项。严格区分主体材质和配件/内衬材质，例如主体为聚丙烯而内衬为纸板时，两者均可描述，但不得将纸板写成主体材质。未知部件材质不得推测。未知留空。只输出JSON：title_ru、description_ru、tags_ru数组、missing_facts数组。商品事实：'+copy_facts
+ variants=task.get('group_variants') or []
+ copy_facts='\n'.join('选项'+str(n+1)+'：'+str(v.get('facts') or '') for n,v in enumerate(variants)) if variants else task.get('group_facts') or task.get('facts','')
+ return '标题、简介、标签禁止出现内部货号、SKU、offer_id、卖家代码及任务编号；JSON的sku等元数据仅供程序关联，绝不能抄进面向买家的正文。用颜色/尺寸等真实差异区分选项。以下为同一商品全部变体，标题、简介和标签统一一套。标题以全组共同商品名称、用途和共同卖点为主，不得只写某一个变体的颜色或尺寸。简介完整覆盖全部变体，颜色、尺寸、材质和套装数量差异按选项分别说明，明确购买时选择一个变体，不得写成所有颜色或规格一并发货。标签统一覆盖全组真实用途和变体相关长尾词，不得重复堆砌。每个标签必须以#开头，只能含字母、数字和下划线，多词用下划线连接；每个不超过30字符，总数不超过30。根据以下商品事实生成俄文Ozon标题、简介和标签。自然覆盖相关长尾词，禁止重复堆词和编造承重、认证、功能、品牌。品牌固定无品牌（Нет бренда），不要将品牌列为缺失项。严格区分主体材质和配件/内衬材质，例如主体为聚丙烯而内衬为纸板时，两者均可描述，但不得将纸板写成主体材质。未知部件材质不得推测。未知留空。只输出JSON：title_ru、description_ru、tags_ru数组、missing_facts数组。商品事实：'+copy_facts
 
 def prepare(folder,task):
  folder=Path(folder);manifest=folder/'image_manifest.json'
@@ -46,6 +47,8 @@ def prepare(folder,task):
 def save_copy(folder,value,replace=False):
  folder=Path(folder);target=folder/'listing_bundle.json'
  data=json.loads(target.read_text(encoding='utf-8-sig'))
+ from copy_privacy import clean
+ value=clean(value,data)
  for key in ('title_ru','description_ru'):
   if not isinstance(value.get(key),str) or not value[key].strip():raise ValueError('文案字段无效 '+key)
  for key in ('tags_ru','missing_facts'):

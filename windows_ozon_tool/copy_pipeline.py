@@ -36,7 +36,7 @@ def prepare(store,body):
  owner['copy_state']='running';store.save()
  prompt=(marker or '')+'\n本次商品组文案保存货号：'+sku+'。输出JSON额外包含sku字段，值为'+sku+'，以及facts_fingerprint字段，值为'+fingerprint+'。'+copy_prompt_for(context)
  if owner.get('copy_mode')=='attributes':prompt=(marker or '')+'\n只读取属性，不改写已有文案。仅输出JSON，包含sku字段（值为'+sku+'）和variant_attributes。'
- prompt+='\n'+attribute_prompt(photo_context);(folder/'copy_prompt.txt').write_text(prompt,encoding='utf-8')
+ prompt+='\n'+attribute_prompt(photo_context)+'\n再次强调：sku、facts_fingerprint、variant_attributes的SKU键仅为内部关联元数据；title_ru、description_ru、tags_ru不得含任何货号、卖家代码或SKU。';(folder/'copy_prompt.txt').write_text(prompt,encoding='utf-8')
  return {'id':'copy:'+sku,'sku':sku,'marker':marker,'prompt':prompt,'references':references,'fingerprint':fingerprint,'copy_phase':owner.get('copy_phase'),'replace_unsent_prompt':previous_prompt}
 def save(store,body):
  sku=body['sku']
