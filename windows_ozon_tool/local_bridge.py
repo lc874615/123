@@ -615,7 +615,7 @@ def server(store,token,port=8765):
     body=json.loads(self.rfile.read(n))
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.26','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.27','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
@@ -670,7 +670,21 @@ def server(store,token,port=8765):
       if next(t for t in store.tasks if t['sku']==body['sku']).get('copy_mode')!='attributes':
        from category_match import suggest
        threading.Thread(target=suggest,args=(store.folder/'products'/body['sku'],),kwargs={'lock':store.lock},daemon=True).start()
-     elif self.path=='/recover':value=store.image_jobs.recover(body['task_id']) if body.get('task_id') and store.image_jobs.get(body['task_id']) else store.recover(body['sku'],automatic=bool(body.get('automatic')))
+     elif self.path=='/delivery-plan':
+      from contact_sheet import plan
+      value=plan(store.find(body['task_id']))
+     elif self.path=='/recover':
+      if body.get('as_sheet') and not body.get('task_id'):
+       candidates=[j for j in store.image_jobs.active([body['sku']]) if j.get('expected_images') in (7,8)]
+       if len(candidates)>1:raise ValueError('有多个可恢复的图片来源，请先核对任务；未猜选拼图')
+       if candidates:body['task_id']=candidates[0]['id']
+      delivery=None
+      if body.get('as_sheet'):
+       from contact_sheet import adopt
+       target=store.find(body['task_id']) if body.get('task_id') else next(t for t in store.tasks if t['sku']==body['sku'])
+       delivery=adopt(store,target['id'])
+      value=store.image_jobs.recover(body['task_id']) if body.get('task_id') and store.image_jobs.get(body['task_id']) else store.recover(body['sku'],automatic=bool(body.get('automatic')))
+      if delivery:value.update(delivery)
      elif self.path=='/claim':value=store.claim()
      elif self.path=='/sheet-result':
       from contact_sheet import accept

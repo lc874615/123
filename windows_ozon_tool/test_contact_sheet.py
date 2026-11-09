@@ -49,4 +49,19 @@ class SheetTests(unittest.TestCase):
    self.assertEqual(claimed['sheet_layout'],LAYOUT);self.assertIn('只生成一张高分辨率3×3整套拼图',claimed['prompt']);self.assertNotIn('交付要求：仅输出独立图片',claimed['prompt'])
    result=accept(store,claimed['id'],base64.b64encode(sheet()[0]).decode());self.assertTrue(result['complete'])
    rows=read(store.folder/'products'/'A'/'image_manifest.json');self.assertEqual(len(rows),8);self.assertTrue(all(r['contact_sheet_layout']==LAYOUT for r in rows))
+ def test_old_queued_job_upgrades_but_dispatched_job_is_not_rewritten(self):
+  from test_image_regeneration import ImageRegenerationTests
+  with tempfile.TemporaryDirectory() as tmp,patch('image_regeneration.threading.Thread'):
+   store=ImageRegenerationTests().setup(tmp);ids=store.image_jobs.create('CHAIR(1)','shared_details',[],'保留补充');job=store.image_jobs.get(ids[0]);job.pop('sheet_layout');job['prompt']='旧7张独立图';store.image_jobs.save()
+   result=store.claim();self.assertEqual(result['sheet_layout'],LAYOUT);self.assertIn('保留补充',result['prompt'])
+   job.pop('sheet_layout');job['prompt']='已发送的旧提示词';store.image_jobs.save()
+   from contact_sheet import adopt,plan
+   self.assertIsNone(plan(job)['sheet_layout']);before=job['prompt'];adopt(store,job['id']);self.assertEqual(job['prompt'],before);self.assertEqual(plan(job)['source_images'],1)
+ def test_adopt_rejects_mixing_partially_saved_legacy_images(self):
+  from local_bridge import Store
+  from contact_sheet import adopt
+  with tempfile.TemporaryDirectory() as tmp:
+   store=Store(tmp);store.create_set('A','椅子');task=store.tasks[0];task.update(state='waiting',received_images=[{'sha256':'old'}])
+   with self.assertRaises(ValueError):adopt(store,task['id'])
+   self.assertNotIn('sheet_layout',task)
 if __name__=='__main__':unittest.main()

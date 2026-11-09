@@ -44,5 +44,13 @@ test('sheet task collects exactly one source and sends it once for server pixel-
  const ctx={stop:false,chrome:{runtime:{sendMessage:async m=>{messages.push(m);return {ok:true};}}},collectSource:async(_task,o)=>{expected=o.expected;await o.onImage(0,'same-original-sheet-bytes');return ['same-original-sheet-bytes'];}};
  vm.runInNewContext(fn+';globalThis.collectSheet=collectImages;',ctx);
  await ctx.collectSheet({id:'parent',sheet_layout:{columns:3,rows:3}},{expected:7,onImage:()=>normalSaves++});
- assert.equal(expected,1);assert.equal(normalSaves,0);assert.equal(messages.length,1);assert.equal(messages[0].kind,'sheet-result');assert.equal(messages[0].image_b64,'same-original-sheet-bytes');
+ assert.equal(expected,1);assert.equal(normalSaves,0);const results=messages.filter(m=>m.kind==='sheet-result');assert.equal(results.length,1);assert.equal(results[0].image_b64,'same-original-sheet-bytes');
+});
+
+test('restored content reloads sheet configuration before deciding expected source count',async()=>{
+ const vm=require('node:vm'),fs=require('node:fs'),source=fs.readFileSync(__dirname+'/content.js','utf8');
+ const fn=source.slice(source.indexOf('async function collectImages(task,options){'),source.indexOf('async function saveImage(task,index,image_b64){'));
+ const seen=[];const ctx={stop:false,chrome:{runtime:{sendMessage:async m=>m.kind==='delivery-plan'?{expected_images:7,sheet_layout:{columns:3,rows:3},delivery_policy:'generated_originals'}:{ok:true}}},collectSource:async(t,o)=>{seen.push(o.expected);return null;}};
+ vm.runInNewContext(fn+';globalThis.collectSheet=collectImages;',ctx);
+ await ctx.collectSheet({id:'restored'},{expected:7});assert.deepEqual(seen,[1]);
 });

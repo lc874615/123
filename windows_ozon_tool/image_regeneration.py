@@ -115,6 +115,10 @@ class ImageJobs:
  def claim(self):
   job=self.next()
   if not job:raise ValueError('没有图片重做任务')
+  if job.get('kind')=='shared_details' and not job.get('sheet_layout'):
+   from contact_sheet import LAYOUT
+   job.update(sheet_layout=dict(LAYOUT),delivery_policy='generated_originals',prompt=self.prompt(job['sku'],'shared_details',job.get('addition','')))
+   self.save()
   for ref in job['references']:
    if ref.get('reference_sha256') and (not Path(ref['path']).is_file() or hashlib.sha256(Path(ref['path']).read_bytes()).hexdigest()!=ref['reference_sha256']):job.update(state='needs_attention',message='排队期间原始参考图已变化，未发送；请停止任务后重新启动');self.save();raise ValueError(job['message'])
   try:references=[{'name':r['name'],'mime':r['mime'],'purpose':r.get('purpose'),'base64':base64.b64encode(Path(r['path']).read_bytes()).decode()} for r in job['references']]

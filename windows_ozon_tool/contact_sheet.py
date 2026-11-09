@@ -50,3 +50,18 @@ def accept(store,identifier,encoded):
  for index,value in enumerate(values):result=store.set_result(identifier,index,base64.b64encode(value).decode())
  write(folder/'crop_manifest.json',{'source_sha256':digest,**info,'count':count,'outputs':[hashlib.sha256(v).hexdigest() for v in values]})
  return {**result,'cropped_count':count,'pixels':info}
+
+def plan(task):
+ layout=task.get('sheet_layout')
+ return {'sheet_layout':layout,'expected_images':task.get('expected_images',8),'delivery_policy':task.get('delivery_policy'),'source_images':1 if layout else task.get('expected_images',8)}
+
+def adopt(store,identifier):
+ """Explicit read-only request recovery choice; never create or resend a GPT request."""
+ task=store.find(identifier)
+ if task.get('expected_images') not in (7,8):raise ValueError('仅7张详情或完整8图可按整套拼图采集')
+ if not task.get('sheet_layout') and task.get('received_images'):raise ValueError('旧任务已有部分独立图，不能混入另一套拼图；请保留现有图片并先核对任务')
+ if task.get('state') in ('saved','cancelled'):raise ValueError('原任务已结束，请从预览页创建已有图片采集备份任务')
+ task.update(sheet_layout=dict(LAYOUT),delivery_policy='generated_originals',message='按用户选择读取现有3×3整套拼图；不重新作图')
+ if task.get('image_job'):store.image_jobs.save()
+ else:store.save()
+ return plan(task)
