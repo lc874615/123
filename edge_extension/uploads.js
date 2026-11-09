@@ -1,6 +1,6 @@
 (()=>{
  function score(input){
-  if(input.disabled)return -1;
+  if(input.disabled||input.isConnected===false)return -1;
   const a=(input.accept||'').toLowerCase();
   if(a.includes('image'))return 100+(input.multiple?10:0);
   if(/\.(png|jpe?g|webp)/.test(a))return 80+(input.multiple?10:0);
@@ -9,11 +9,32 @@
  }
  function pick(inputs){return [...inputs].filter(x=>score(x)>=0).sort((a,b)=>score(b)-score(a))[0]||null;}
  function batches(files,multiple){return multiple?[files]:files.map(f=>[f]);}
- function editorRoot(editor){return editor.closest('form')||editor.parentElement?.parentElement||editor.parentElement;}
+ function editorRoot(editor){return editor?.closest('form,[class*="ComposerLayoutRoot"],[data-testid="composer"],[data-composer-root]')||editor?.parentElement?.parentElement||editor?.parentElement;}
+ function liveEditor(doc,previous){
+  const found=[...new Set(doc.querySelectorAll('#prompt-textarea,[contenteditable="true"][data-lexical-editor="true"],[contenteditable="true"].ProseMirror,[role="textbox"][contenteditable="true"],textarea[placeholder]'))].filter(e=>e.isConnected!==false&&e.getClientRects().length&&!e.disabled&&e.getAttribute('aria-hidden')!=='true');
+  if(found.includes(previous))return previous;
+  if(found.length===1)return found[0];
+  throw Error(found.length?'发现多个输入框，未猜选上传位置、未发送任务':'当前输入框已变化或不可见，未发送任务');
+ }
+ const cards='[class*="composer-attachment-surface"],[data-testid="composer-attachment"],[data-testid="attachment-preview"],[data-testid="file-upload"]';
  function attachmentImages(doc,editor){
-  const root=editorRoot(editor),nodes=new Set(root?[...root.querySelectorAll('img')]:[]);
-  for(const image of doc.querySelectorAll('[class*="composer-attachment-surface"] img,[data-testid="composer-attachment"] img'))nodes.add(image);
-  return [...nodes].filter(i=>!i.closest('[class*="group/user-message"],[data-message-author-role]'));
+  const root=editorRoot(editor);
+  return [...(root?.querySelectorAll('img')||[])].filter(i=>!i.closest('[class*="group/user-message"],[data-message-author-role]'));
+ }
+ function attachmentState(doc,editor,references){
+  const root=editorRoot(editor),images=attachmentImages(doc,editor),nodes=new Set();
+  for(const image of images)if(image.complete&&image.naturalWidth>0)nodes.add(image.closest(cards)||image);
+  const attachments=[...(root?.querySelectorAll(cards)||[])].filter(n=>!n.closest('[class*="group/user-message"],[data-message-author-role]'));
+  for(const node of attachments){
+   if(node.querySelector('img'))continue;
+   const text=[node.textContent,node.getAttribute('aria-label'),node.getAttribute('title')].join(' ');
+   const named=references.some(r=>r.name&&text.includes(r.name));
+   const remove=node.querySelector('button[aria-label*="Remove"],button[aria-label*="remove"],button[aria-label*="移除"],button[aria-label*="删除"]');
+   if(named&&remove&&!node.querySelector('[role="progressbar"],[aria-busy="true"]'))nodes.add(node);
+  }
+  const alert=[...(root?.querySelectorAll('[role="alert"]')||[])].map(x=>x.textContent).join(' ');
+  const progress=root?.querySelector('[role="progressbar"],[aria-busy="true"],button[aria-label*="Cancel upload"],button[aria-label*="取消上传"]');
+  return {ready:nodes.size,present:images.length+attachments.filter(n=>!n.querySelector('img')).length,progress:!!progress,error:/fail|error|失败|错误/i.test(alert),root};
  }
  function filesFor(references){
   const transfer=new DataTransfer();
@@ -21,39 +42,39 @@
   return transfer;
  }
  async function upload(references,{doc=document,editor,sleep,stopped,report,timeout=90000}){
-  const root=editorRoot(editor);if(!root)throw Error('未找到附件区域，未发送任务');
-  if(attachmentImages(doc,editor).length)throw Error('输入框已有附件，请先处理后重试；未追加参考图、未发送任务');
-  let input=pick(doc.querySelectorAll('input[type="file"]'));
-  // Work may create file inputs only after using an attachment menu. Pasting files
-  // invokes its existing attachment handler without opening a native file picker.
+  editor=liveEditor(doc,editor);let root=editorRoot(editor);if(!root)throw Error('未找到当前输入框附件区域，未发送任务');
+  if(attachmentState(doc,editor,references).present)throw Error('输入框已有附件，请先处理后重试；未追加参考图、未发送任务');
+  // Never select another image-generation form's hidden input from the whole document.
+  let input=pick(root.querySelectorAll('input[type="file"]'));
   const mode=input?'input':'paste';
+  globalThis.__ozonUploadInfo={mode,expected:references.length,recognized:0,scope:'current_composer'};
   for(const group of batches(references,input?input.multiple:true)){
    if(stopped())throw Error('已暂停，未发送任务');
-   const before=new Map();for(const image of attachmentImages(doc,editor)){const src=image.currentSrc||image.src;before.set(src,(before.get(src)||0)+1);}
+   editor=liveEditor(doc,editor);root=editorRoot(editor);const before=attachmentState(doc,editor,references).ready;
    const transfer=filesFor(group);
    if(mode==='input'){
-    input=pick(doc.querySelectorAll('input[type="file"]'));if(!input)throw Error('上传控件变化，已暂停，未发送任务');
+    input=pick(root.querySelectorAll('input[type="file"]'));if(!input)throw Error('当前输入框上传控件变化，未发送任务');
+    if(group.length>1&&!input.multiple)throw Error('当前上传控件已切换为单文件，未发送任务');
     input.value='';input.files=transfer.files;input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));
    }else{
-    editor.focus();const paste=new ClipboardEvent('paste',{bubbles:true,cancelable:true,clipboardData:transfer});editor.dispatchEvent(paste);
+    editor.focus();editor.dispatchEvent(new ClipboardEvent('paste',{bubbles:true,cancelable:true,clipboardData:transfer}));
    }
-   await report((mode==='paste'?'正在通过粘贴自动上传 ':'正在自动上传 ')+group.map(x=>x.name).join('、'));
+   await report((mode==='paste'?'正在向当前输入框粘贴上传 ':'正在向当前输入框上传 ')+group.map(x=>x.name).join('、'));
    const end=Date.now()+timeout;let stable=0,lastReport=0;
    while(Date.now()<end){
     if(stopped())throw Error('已暂停，未发送任务');
-    const currentRoot=editorRoot(doc.querySelector('#prompt-textarea')||editor);
-    const alert=[...(currentRoot?.querySelectorAll('[role="alert"]')||[])].map(x=>x.textContent).join(' ');
-    if(/fail|error|失败|错误/i.test(alert))throw Error('原图上传失败，未发送任务');
-    const current=new Map();for(const image of attachmentImages(doc,editor).filter(i=>i.complete&&i.naturalWidth>0)){const src=image.currentSrc||image.src;current.set(src,(current.get(src)||0)+1);}
-    const complete=[...current].reduce((n,[src,count])=>n+Math.max(0,count-(before.get(src)||0)),0);
-    const progress=currentRoot?.querySelector('[role="progressbar"],button[aria-label*="Cancel upload"],button[aria-label*="取消上传"]');
-    if(Date.now()-lastReport>=2000){await report('原图附件已识别 '+Math.min(complete,group.length)+'/'+group.length+'；'+(mode==='paste'?'粘贴上传':'文件控件上传')+'，确认完成后才发送');lastReport=Date.now();}
-    if(complete>=group.length&&!progress){if(++stable>=3)break;}else stable=0;
+    editor=liveEditor(doc,editor);const state=attachmentState(doc,editor,references);
+    if(state.error)throw Error('原图上传失败，未发送任务');
+    const complete=Math.max(0,state.ready-before);
+    globalThis.__ozonUploadInfo={mode,expected:group.length,recognized:complete,progress:state.progress,scope:'current_composer'};
+    if(complete>group.length)throw Error('当前输入框附件数量超过本批参考图，未发送任务，请核对已有附件');
+    if(Date.now()-lastReport>=2000){await report('原图附件已识别 '+complete+'/'+group.length+'；'+(mode==='paste'?'当前输入框粘贴上传':'当前输入框文件上传')+'，确认完成后才发送');lastReport=Date.now();}
+    if(complete===group.length&&!state.progress){if(++stable>=3)break;}else stable=0;
     await sleep(600);
    }
-   if(stable<3)throw Error(mode==='paste'?'页面未确认粘贴图片上传完成，已暂停；请导出含上传入口的页面诊断，未发送作图任务':'未确认原图附件上传完成，已暂停，未发送任务');
+   if(stable<3)throw Error('当前输入框未确认'+group.length+'张原图上传完成，已暂停且未发送任务；请核对原页面附件或导出页面诊断，不会跳过原图直接作图');
    await report('原图附件上传已确认 '+group.length+'/'+group.length+'；准备发送作图任务');
   }
  }
- globalThis.OzonUploads={score,pick,batches,upload,attachmentImages};
+ globalThis.OzonUploads={score,pick,batches,upload,attachmentImages,attachmentState,editorRoot,liveEditor};
 })();

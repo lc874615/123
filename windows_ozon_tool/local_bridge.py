@@ -204,6 +204,8 @@ class Store:
   return [{'id':t['id'],'sku':t['sku'],'state':t['state'],'copy_state':t.get('copy_state'),'message':t.get('message',''),'resume_mode':t.get('resume_mode'),'recollection_requested':bool(t.get('recollection_requested')),'expected_images':t.get('expected_images',8)} for t in tasks if t['state'] in ('claimed','sending','waiting','needs_attention','review','processing','committing') or t.get('copy_state') in ('running','needs_attention')]
  def queue_reason(self):
   if self.control.get('paused'):return '制作已暂停；点击继续制作或在插件继续'
+  restart=self.control.get('queue_restart') or {};ack=self.control.get('queue_restart_ack') or {}
+  if restart and ack.get('token')!=restart.get('token'):return '等待插件接收重启请求：'+restart.get('sku','')+'；请保持插件与原作图页打开'
   blockers=self.blockers()
   if blockers:
    t=blockers[0];return '前序任务 '+t['sku']+' 尚未完成：'+t.get('message','')
@@ -616,7 +618,7 @@ def server(store,token,port=8765):
     body=json.loads(self.rfile.read(n))
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.30','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.31','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
@@ -630,6 +632,11 @@ def server(store,token,port=8765):
        if not body.get('allow_missing') or not store.control.get('paused'):raise ValueError('未找到需要暂停的任务')
        value={'ok':True,'found':False}
       else:task['pause_ack']=True;store.save();value={'ok':True,'found':True}
+     elif self.path=='/queue-restart-ack':
+      command=store.control.get('queue_restart') or {}
+      if not command.get('token') or body.get('token')!=command['token']:raise ValueError('重启回执已过期，未改变当前队列')
+      store.control['queue_restart_ack']={'token':command['token'],'received_at':time.time()}
+      store.control_path.write_text(json.dumps(store.control),encoding='utf-8');value={'ok':True}
      elif self.path=='/heartbeat':
       store.client={'last_seen':time.time(),'auto_enabled':bool(body.get('auto_enabled'))}
       value={'ok':True,'queue_reason':store.queue_reason(),'blockers':store.blockers()}

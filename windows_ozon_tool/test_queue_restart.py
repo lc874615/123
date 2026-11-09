@@ -44,4 +44,9 @@ class RestartTests(unittest.TestCase):
    # Copy has priority when it needs refresh; after that stage the image queue stays enabled.
    with patch.object(store,'next_copy',return_value=None):
     self.assertTrue(store.poll_state()['ready']);self.assertEqual(store.claim()['sku'],'NEXT')
+ def test_restart_command_persists_fresh_identity_and_waits_for_plugin_receipt(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   store=Store(tmp);store.create_set('A','椅子');task=store.tasks[0];task['state']='needs_attention';store.set_paused(True);old=task['id'];result=restart(store,old)
+   command=store.control['queue_restart'];self.assertEqual(command['task_id'],result['id']);self.assertEqual(command['old_id'],old);self.assertIn('等待插件接收重启请求',store.queue_reason());self.assertEqual(read(store.control_path)['queue_restart'],command)
+   store.control['queue_restart_ack']={'token':command['token']};self.assertNotIn('等待插件接收重启请求',store.queue_reason())
 if __name__=='__main__':unittest.main()

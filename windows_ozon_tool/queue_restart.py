@@ -96,4 +96,6 @@ def restart(store,identifier):
   # Keep group ordering so a follower never jumps ahead of a missing leader gallery.
   store.tasks[store.tasks.index(target)]=fresh
  store.save();store.set_paused(False)
+ store.control['queue_restart']={'token':secrets.token_hex(16),'task_id':fresh['id'],'old_id':old_id,'sku':fresh['sku'],'created_at':time.time()}
+ store.control.pop('queue_restart_ack',None);write(store.control_path,store.control)
  return {'old_id':old_id,'id':fresh['id'],'sku':fresh['sku'],'kind':fresh.get('kind','product'),'backup':str(backup),'target_skus':skus}
