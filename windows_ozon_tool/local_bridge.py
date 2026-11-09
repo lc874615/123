@@ -31,6 +31,9 @@ class Store:
     backups=sorted((folder/'recovery_backups').glob('*/listing_bundle.json'),reverse=True)
     if not target.exists() and backups:
      bundle=json.loads(backups[0].read_text(encoding='utf-8-sig'));bundle.update(images=[],recollection_pending=True,video={'local_file':'video/product_8s.mp4','exists':False,'https_url':None});target.write_text(json.dumps(bundle,ensure_ascii=False,indent=2),encoding='utf-8')
+  try:self.plugin_status=json.loads((self.folder/'plugin_status.json').read_text(encoding='utf-8'))
+  except (OSError,ValueError):self.plugin_status={}
+  if not isinstance(self.plugin_status,dict):self.plugin_status={}
   self.repair_recollection_queue()
   self.control_path=self.folder/'automation_control.json';self.control=json.loads(self.control_path.read_text()) if self.control_path.exists() else {'paused':False,'serial':0}
   self.rebase_paths()
@@ -605,7 +608,10 @@ def server(store,token,port=8765):
     body=json.loads(self.rfile.read(n))
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.18','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.21','paired':True}
+     elif self.path=='/plugin-status':
+      from task_alerts import save_plugin_status
+      value=save_plugin_status(store,body)
      elif self.path=='/control':value=store.control
      elif self.path=='/automation-control':value=store.set_paused(bool(body.get('paused')))
      elif self.path=='/pause-ack':
@@ -678,6 +684,9 @@ def main(test_mode=False,on_ready=None):
  store=Store(DATA);token=pairing_token(DATA);http=server(store,token) if not test_mode else None
  if http:threading.Thread(target=http.serve_forever,daemon=True).start()
  root=tk.Tk()
+ def show_task_error(title,error,**options):
+  from task_alerts import issue,render
+  return messagebox.showerror(title,render([issue('本地工具',title,error)]),**({'parent':root}|options))
  from ui_layout import build
  notebook,pages,connection=build(root);win=pages['product_body'];settings_page=pages['settings_body'];tasks_page=pages['tasks']
  ttk.Label(settings_page,text='连接与来源设置',font=('TkDefaultFont',13,'bold')).pack(anchor='w',pady=8)
@@ -691,7 +700,7 @@ def main(test_mode=False,on_ready=None):
   try:
    with store.lock:count=store.restore_deleted(selected_file)
    messagebox.showinfo('记录已恢复',str(count)+' 个变体记录已恢复；素材保留，不重复生成。')
-  except Exception as exc:messagebox.showerror('恢复未完成',str(exc))
+  except Exception as exc:show_task_error('恢复未完成',str(exc))
  ttk.Button(settings_page,text='恢复已删除的本地记录',command=restore_records).pack(anchor='w',pady=6)
 
  ttk.Label(win,text='基础货号（上架货号按变体自动加(1)、(2)…）').pack()
@@ -748,11 +757,11 @@ def main(test_mode=False,on_ready=None):
   def save_hosting():
    try:
     hosting.configure(region.get(),bucket.get(),key.get(),secret.get(),remember.get());video_hosting.wake.set();state.configure(text='配置已保存，正在后台上传并校验已有及后续生成图片…')
-   except Exception as e:messagebox.showerror('托管设置未保存',str(e),parent=dialog)
+   except Exception as e:show_task_error('托管设置未保存',str(e),parent=dialog)
   ttk.Button(dialog,text='保存并自动上传已有及后续生成图片',command=save_hosting).pack(pady=4)
   def switch(enabled):
    try:hosting.set_enabled(enabled);video_hosting.retry_at.clear();video_hosting.wake.set()
-   except ValueError as e:messagebox.showerror('托管状态',str(e),parent=dialog)
+   except ValueError as e:show_task_error('托管状态',str(e),parent=dialog)
   buttons=ttk.Frame(dialog);buttons.pack(pady=3)
   ttk.Button(buttons,text='暂停上传（保留已有链接）',command=lambda:switch(False)).pack(side='left',padx=5)
   ttk.Button(buttons,text='恢复 / 重试未完成图片',command=lambda:switch(True)).pack(side='left',padx=5)
@@ -777,11 +786,11 @@ def main(test_mode=False,on_ready=None):
    def work():
     try:action()
     except Exception as e:
-     root.after(0,lambda text=str(e):messagebox.showerror('定价来源更新失败',text,parent=dialog));return
+     root.after(0,lambda text=str(e):show_task_error('定价来源更新失败',text,parent=dialog));return
     # The source is already saved. Refresh it even if a product cannot be priced.
     root.after(0,show)
     try:pricing.calculate_all()
-    except Exception as e:root.after(0,lambda text=str(e):messagebox.showerror('来源已保存，商品定价未完成',text,parent=dialog))
+    except Exception as e:root.after(0,lambda text=str(e):show_task_error('来源已保存，商品定价未完成',text,parent=dialog))
    threading.Thread(target=work,daemon=True).start()
   def choose(kind):
    path=filedialog.askopenfilename(parent=dialog,title='导入'+kind,filetypes=[('Excel','*.xlsx')])
@@ -840,7 +849,7 @@ def main(test_mode=False,on_ready=None):
     except Exception:
      store.tasks=previous;store.save();raise
    notebook.select(pages['tasks'])
-  except Exception as e:messagebox.showerror('未创建',str(e))
+  except Exception as e:show_task_error('未创建',str(e))
  ttk.Label(win,text='每个变体：01固定为独立主图；02—08沿用首变体的7张详情图').pack(pady=3)
  ttk.Button(win,text='创建并自动处理',style='Primary.TButton',command=create).pack(pady=6)
  task_table=ttk.Frame(tasks_page);task_table.pack(fill='both',expand=True);task_table.rowconfigure(0,weight=1);task_table.columnconfigure(0,weight=1)
@@ -849,6 +858,9 @@ def main(test_mode=False,on_ready=None):
  for key,label,width in [('sku','变体货号',165),('progress','图片',90),('price','售价（元）',110),('hosting','托管链接',130),('status','当前阶段 / 原因',360)]:view.heading(key,text=label,anchor='center');view.column(key,width=width,stretch=key=='status',anchor='center')
  view.grid(row=0,column=0,sticky='nsew');scroll_y=ttk.Scrollbar(task_table,orient='vertical',command=view.yview);scroll_y.grid(row=0,column=1,sticky='ns');scroll_x=ttk.Scrollbar(task_table,orient='horizontal',command=view.xview);scroll_x.grid(row=1,column=0,sticky='ew');view.configure(yscrollcommand=scroll_y.set,xscrollcommand=scroll_x.set)
  task_actions=ttk.Frame(tasks_page);task_actions.pack(fill='x',pady=10);task_more=tk.Menu(root,tearoff=False);more_button=ttk.Menubutton(task_actions,text='更多操作',menu=task_more);more_button.pack(side='right')
+ from task_alerts import AlertPopup,ProgressWatch,collect as collect_alerts,issue as make_alert
+ alert_popup=AlertPopup(root,DATA/'task_alert_state.json',lambda:notebook.select(pages['tasks']));alert_watch=ProgressWatch()
+ task_more.add_command(label='查看当前异常及中文处理办法',command=alert_popup.reopen)
  visible=[];last_view=None
  def selected():
   ids=view.selection()
@@ -862,10 +874,11 @@ def main(test_mode=False,on_ready=None):
   try:fx=read_pricing(pricing.root/'fx.json');fx_note=' | '+fx['date']+'：1元='+fx['rub_per_cny']+'卢布'
   except (OSError,ValueError,KeyError):fx_note=''
   pricing_label.configure(text='自动定价：'+pricing.status+fx_note);hosting_label.configure(text='图片托管：'+hosting.status);video_label.configure(text='视频托管：'+video_hosting.status)
-  jobs=[j for j in publication.jobs() if j.get('account_id')==merchant];groups={};snapshot=[]
+  jobs=[j for j in publication.jobs() if j.get('account_id')==merchant];groups={};snapshot=[];alert_bundles=[]
   for task in visible:
    try:bundle=read_pricing(DATA/'products'/task['sku']/'listing_bundle.json')
    except (OSError,ValueError):bundle={}
+   if bundle and task['state']!='cancelled':alert_bundles.append(bundle)
    state=stage(task,bundle,jobs);row=(task['sku'],str(len(task.get('received_images') or []))+'/8',bundle.get('price_cny') or '—',str((bundle.get('hosting') or {}).get('verified_images',0))+'/8 · '+('视频✓' if (bundle.get('video_hosting') or {}).get('state')=='done' else '视频…'),state)
    group=str(task.get('base_article') or task.get('copy_leader') or task['sku']);groups.setdefault(group,[]).append((task,row));snapshot.append((task['id'],group,row))
   if snapshot!=last_view:
@@ -875,6 +888,19 @@ def main(test_mode=False,on_ready=None):
     for task,row in items:view.insert(key,'end',iid=task['id'],text='',values=row)
    if selection and view.exists(selection[0]):view.selection_set(selection[0])
    view.yview_moveto(position);last_view=snapshot
+  if not test_mode:
+   with store.lock:alert_jobs=[dict(j) for j in store.image_jobs.jobs];plugin=dict(store.plugin_status);paused=bool(store.control.get('paused'));client=dict(store.client)
+   live={t['sku'] for t in visible if t['state']!='cancelled'};current_jobs=[]
+   for j in jobs:
+    items=j.get('items')
+    if isinstance(items,dict):
+     subset={sku:row for sku,row in items.items() if sku in live}
+     if subset:current_jobs.append({**j,'items':subset})
+    elif live:current_jobs.append(j)
+   if plugin.get('sku') and plugin['sku'] not in live:plugin={}
+   alerts=collect_alerts(visible,alert_bundles,current_jobs,alert_jobs,plugin)+alert_watch.update(visible,client,paused)
+   if any(word in pricing.status for word in ('更新失败','补查失败')):alerts.append(make_alert('自动定价','定价来源',pricing.status))
+   alert_popup.update(alerts)
   root.after(1500,refresh)
  def delete():
   task=selected()
@@ -884,7 +910,7 @@ def main(test_mode=False,on_ready=None):
    job=publication.active([t['sku'] for t in targets])
    if job:publication.cancel_followup(job['id'])
    with store.lock:store.delete_tasks([t['id'] for t in targets])
-  except Exception as e:messagebox.showerror('未删除',str(e))
+  except Exception as e:show_task_error('未删除',str(e))
  def pricing_details(task=None):
   task=task or selected()
   if not task:return
@@ -936,13 +962,13 @@ def main(test_mode=False,on_ready=None):
     def apply():
      if not box.selection():messagebox.showinfo('请选择','先选择一项商品类型',parent=picker);return
      type_id=(read_pricing(path).get('category') or {}).get('type_id')
-     if not type_id:messagebox.showerror('尚未匹配上架类目','请先点击下方入口匹配并确认上架类目，再选择佣金类型。',parent=picker);return
+     if not type_id:show_task_error('尚未匹配上架类目','请先点击下方入口匹配并确认上架类目，再选择佣金类型。',parent=picker);return
      row=choices[box.selection()[0]]
      pricing.map_type(type_id,row['type_ru'],row['source_row'],cfg['sha256']);picker.destroy()
      threading.Thread(target=pricing.calculate_all,daemon=True).start()
     ttk.Button(picker,text='确认所选类型及该行佣金',command=apply).pack(pady=4)
     ttk.Button(picker,text='先匹配 / 确认上架类目',command=lambda:category_editor(task)).pack(pady=4)
-   except Exception as e:messagebox.showerror('无法选择',str(e))
+   except Exception as e:show_task_error('无法选择',str(e))
   ttk.Label(dialog,text='估算售价已自动采用，无需单独确认；请在整组预览核对数据。').pack(pady=4)
   ttk.Button(dialog,text='匹配 / 确认 / 修改本变体及同组类目',command=lambda:category_editor(task)).pack(pady=4)
   ttk.Button(dialog,text='连接Ozon API / 重新匹配类目',command=connect_category).pack(pady=4)
@@ -970,10 +996,10 @@ def main(test_mode=False,on_ready=None):
     waiting=any(t.get('pause_requested') and not t.get('pause_ack') or t['sku'] in store.video_running for t in group+store.image_jobs.active([t['sku'] for t in group]))
    if waiting:
     if time.time()<deadline:root.after(1000,ready);return
-    messagebox.showerror('采集等待中','插件尚未确认停止或旧视频仍在处理；原文件保留。请保持插件已连接后重试。');return
+    show_task_error('采集等待中','插件尚未确认停止或旧视频仍在处理；原文件保留。请保持插件已连接后重试。');return
    try:
     with store.lock:store.recollect(task['id'])
-   except Exception as e:messagebox.showerror('未重新采集',str(e))
+   except Exception as e:show_task_error('未重新采集',str(e))
   ready()
  task_more.add_command(label='备份并自动采集已有图片（不重新作图）',command=recollect)
 
@@ -991,7 +1017,7 @@ def main(test_mode=False,on_ready=None):
   if not messagebox.askyesno('检查网页后恢复','请先在扩展中暂停并刷新ChatGPT。确认此任务没有发送、没有生成结果，才重新排队。是否确认？'):return
   try:
    with store.lock:store.retry(task['id'])
-  except Exception as e:messagebox.showerror('未恢复',str(e))
+  except Exception as e:show_task_error('未恢复',str(e))
  task_more.add_command(label='所选异常任务未发送，重新排队',command=retry)
  def cancel_product():
   task=selected()
@@ -1000,7 +1026,7 @@ def main(test_mode=False,on_ready=None):
   if not messagebox.askyesno('取消商品任务',f'取消 {product} 的剩余任务？已有图片和视频不会删除。请先停止扩展自动批次。'):return
   try:
    with store.lock:store.cancel_product(product)
-  except Exception as e:messagebox.showerror('未取消',str(e))
+  except Exception as e:show_task_error('未取消',str(e))
  task_more.add_command(label='取消所选商品剩余任务（保留文件）',command=cancel_product)
  def listing():
   from listing_bundle import prepare
@@ -1013,7 +1039,7 @@ def main(test_mode=False,on_ready=None):
    if not target.exists():target=prepare(DATA/'products'/task['sku'],task)
    messagebox.showinfo('草稿已准备',str(target)+'\n已保留素材与主图顺序；尚未提交Ozon。')
    if os.name=='nt':os.startfile(str(target.parent))
-  except Exception as e:messagebox.showerror('未准备',str(e))
+  except Exception as e:show_task_error('未准备',str(e))
  task_more.add_command(label='打开本地商品文件夹',command=listing)
  def listing_editor():
   task=selected()
@@ -1024,7 +1050,7 @@ def main(test_mode=False,on_ready=None):
   from group_editor import open_editor
   with store.lock:
    current=read_pricing(path)
-   if not isinstance(current,dict):messagebox.showerror('草稿无效','当前草稿不是JSON对象，请检查本地文件；原文件保留。');return
+   if not isinstance(current,dict):show_task_error('草稿无效','当前草稿不是JSON对象，请检查本地文件；原文件保留。');return
    key=group_key(current);folders=[]
    for item in store.tasks:
     target=DATA/'products'/item['sku']/'listing_bundle.json'
@@ -1051,7 +1077,7 @@ def main(test_mode=False,on_ready=None):
   try:
    with store.lock:stamp=store.rebuild_group(task['sku'])
    messagebox.showinfo('已排队更新','整组旧素材已备份。请保持插件开始状态，将按最新参数重新制作本组图片及视频。')
-  except Exception as exc:messagebox.showerror('未启动更新',str(exc))
+  except Exception as exc:show_task_error('未启动更新',str(exc))
  task_more.add_command(label='手动更新本组素材（先备份）',command=rebuild_assets)
 
  def retry_video():
@@ -1072,12 +1098,12 @@ def main(test_mode=False,on_ready=None):
   ttk.Checkbutton(dialog,text='在当前Windows用户加密记住Ozon API，重启后自动连接',variable=remember_api,state='normal' if os.name=='nt' else 'disabled').pack(pady=5)
   status=ttk.Label(dialog,text='已有类目和已确认的手动修改将保留');status.pack(pady=6)
   def connect():
-   if not client.get().strip() or not key.get().strip():messagebox.showerror('未连接','请填写Client-Id和Api-Key',parent=dialog);return
+   if not client.get().strip() or not key.get().strip():show_task_error('未连接','请填写Client-Id和Api-Key',parent=dialog);return
    try:
     from ozon_connection import save as save_ozon
     save_ozon(DATA,client.get(),key.get(),remember_api.get(),store_lock=store.lock)
     publication.resume_account(client.get().strip())
-   except (OSError,ValueError) as exc:messagebox.showerror('API连接未保存',str(exc),parent=dialog);return
+   except (OSError,ValueError) as exc:show_task_error('API连接未保存',str(exc),parent=dialog);return
    button.configure(state='disabled');status.configure(text='正在补查所有未匹配商品组，请稍候…')
    def work():
     try:
@@ -1093,7 +1119,7 @@ def main(test_mode=False,on_ready=None):
   task=task or selected()
   if not task:return
   path=DATA/'products'/task['sku']/'listing_bundle.json'
-  if not path.exists():messagebox.showerror('提示','请等待生成上架草稿');return
+  if not path.exists():show_task_error('提示','请等待生成上架草稿');return
   data=json.loads(path.read_text(encoding='utf-8-sig'));dialog=tk.Toplevel(win);dialog.title('类目确认/修改')
   ttk.Label(dialog,text=data.get('category_match_status','尚未推荐；可手动填写官方类目与类型ID')).pack()
   candidates=data.get('category_candidates') or [];current=data.get('category') or {}
@@ -1116,7 +1142,7 @@ def main(test_mode=False,on_ready=None):
     confirm_group(path.parent,category,apply_group=apply_group.get(),lock=store.lock)
     threading.Thread(target=pricing.calculate_all,daemon=True).start()
     dialog.destroy()
-   except Exception as e:messagebox.showerror('未保存',str(e))
+   except Exception as e:show_task_error('未保存',str(e))
   apply_group=tk.BooleanVar(value=True)
   ttk.Checkbutton(dialog,text='同时应用于同组尚未确认的变体（保留已单独确认的类目）',variable=apply_group).pack(pady=6)
   ttk.Button(dialog,text='连接Ozon API / 重新匹配类目',command=connect_category).pack(pady=4)

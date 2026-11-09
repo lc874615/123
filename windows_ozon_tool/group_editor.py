@@ -17,7 +17,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  coordinator=GroupService(paths,service,pricing,store)
  coordinator.ensure_fixed_vat()
  if publication.initial_stock is not None and not publication.active([p.parent.name for p in paths]):coordinator.ensure_initial_stock(publication.initial_stock)
- dialog=tk.Toplevel(root);dialog.title('整组预览 · Ozon 商品自动化 1.0.18');dialog.geometry('1280x850');dialog.minsize(950,650)
+ dialog=tk.Toplevel(root);dialog.title('整组预览 · Ozon 商品自动化 1.0.21');dialog.geometry('1280x850');dialog.minsize(950,650)
  busy=False;selected=set(range(len(paths)));focus=['',''];bundles=[];token=None;rendered=None;warehouses={};photos=[];rows={};last_job=None;copy_dirty=False;displayed_copy=None;copy_timer=None;busy_since=0;operation_error='';operation_name=''
  ttk.Label(dialog,text='每列一个变体；双击单格修改，点击参数名选中整行后批量修改。仓库显示当前店铺全部类型和状态。',wraplength=900).pack(pady=6)
  status=ttk.Label(dialog,text='正在加载整组预览',wraplength=1200);status.pack(pady=3)
@@ -52,7 +52,8 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    if not dialog.winfo_exists():return
    busy=False;rendered=None;operation_error=error or '';refresh()
    if error:
-    notebook.select(progress_tab);progress_info.delete('1.0','end');progress_info.insert('1.0','提交/处理未完成：\n'+error+'\n\n若提示预览内容变化，核对所列字段后再提交。若有结果不确定的导入任务，请先核对平台回执。');messagebox.showerror('整组处理未完成',error,parent=dialog)
+    notebook.select(progress_tab);progress_info.delete('1.0','end');progress_info.insert('1.0','提交/处理未完成：\n'+error+'\n\n若提示预览内容变化，核对所列字段后再提交。若有结果不确定的导入任务，请先核对平台回执。');from task_alerts import issue as alert_issue,render as render_alert
+    messagebox.showerror('整组处理未完成',render_alert([alert_issue('、'.join(offers()),operation_name or '整组预览',error)]),parent=dialog)
    elif after:after(result)
   def work():
    try:result=action();root.after(0,lambda:finish(result=result))
