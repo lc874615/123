@@ -14,7 +14,7 @@ class ImageJobs:
   for j in self.jobs:
    for ref in j.get('references') or []:
     name=Path(ref.get('path','').replace('\\','/')).name
-    folders=[self.store.folder/'products'/str(ref.get('sku') or j['sku'])/'references',self.store.folder/'products'/j['sku']/'shared_references']
+    folders=[self.store.folder/'products'/str(ref.get('sku') or j['sku'])/'references',self.store.folder/'products'/j['sku']/'shared_references',self.store.folder/'products'/j['sku']/'group_reference_sheets']
     if ref.get('purpose') in ('shared_detail','shared_gallery','shared_information'):folders.reverse()
     for folder in folders:
      if (folder/name).is_file():ref['path']=str(folder/name);break
@@ -45,6 +45,9 @@ class ImageJobs:
    values.append([sku,{k:canonical(k,p.get(k)) for k in sorted(VISUAL)},[(r['order'],r['sha256']) for r in self.rows(sku) if r['order'] in target['orders']]])
   return hashlib.sha256(json.dumps(values,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
  def refs(self,tasks,kind):
+  if kind=='shared_details':
+   from group_references import collect
+   return collect(self.store,tasks[0])[0]
   candidates=[]
   for t in tasks:
    own=t.get('main_references') or [r for r in t.get('references') or [] if r.get('purpose') not in ('shared_gallery','shared_detail','shared_information')]
@@ -80,6 +83,9 @@ class ImageJobs:
   task=self.product(sku);leader=task.get('copy_leader',sku);group=[t for t in self.store.tasks if t.get('copy_leader',t['sku'])==leader and t['state']!='cancelled']
   facts='\n'.join(t['sku']+'：'+str(read(self.folder(t['sku'])/'listing_bundle.json').get('facts') or t['facts']) for t in group)
   own=read(self.folder(sku)/'listing_bundle.json').get('facts') or task['facts']
+  if kind=='shared_details':
+   from group_references import INFO
+   facts=INFO+'\n'+facts+'\n各变体最新参数：'+json.dumps([{'sku':t['sku'],'parameters':read(self.folder(t['sku'])/'listing_bundle.json').get('variant_parameters') or t.get('variant_parameters') or {}} for t in group],ensure_ascii=False)
   return (shared_prompt(facts) if kind=='shared_details' else generation_prompt(own,facts,1))+'\n用户补充要求（不得改变参考商品款式、颜色、结构、参数与件数）：\n'+(addition.strip() or '无额外要求')
  def create(self,sku,kind,selected,addition):
   if kind not in ('shared_details','variant_main') or len(addition)>10000:raise ValueError('图片重做设置无效或补充要求过长')

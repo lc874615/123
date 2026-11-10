@@ -103,7 +103,7 @@ class Store:
    for key in ('references','main_references','detail_references'):
     for ref in task.get(key) or []:
      name=Path(str(ref.get('path','')).replace('\\','/')).name
-     candidates=[folder/'references'/name,leader/'shared_references'/name]
+     candidates=[self.folder/'products'/str(ref.get('sku') or task['sku'])/'references'/name,leader/'shared_references'/name,leader/'group_reference_sheets'/name]
      if key=='detail_references' or ref.get('purpose') in ('shared_detail','shared_gallery','shared_information'):candidates.reverse()
      for candidate in candidates:
       if candidate.exists():ref['path']=str(candidate);break
@@ -399,7 +399,14 @@ class Store:
   if t.get('set_mode'):
    from image_prompts import generation_prompt,reference_contract,main_detail_references
    t['delivery_policy']='generated_originals'
-   t['references']=main_detail_references(t,self.tasks)
+   if t.get('expected_images',8)==8:
+    from group_references import collect,INFO
+    shared,variants=collect(self,t,limit=7);own=t.get('main_references') or [r for r in t.get('references',[]) if r.get('purpose','variant_main')=='variant_main']
+    # Preserve the leader hero's own appearance references, all variant information accompanies details.
+    t['references']=own[:1]+shared
+    t['group_variants']=variants;t['generation_variants']=copy.deepcopy(variants)
+    t['group_facts']=INFO+'\n'+'\n'.join(v['sku']+'：'+str(v['facts'])+'；参数：'+json.dumps(v['variant_parameters'],ensure_ascii=False) for v in variants)
+   else:t['references']=main_detail_references(t,self.tasks)
    from image_retry import configure
    configure(t)
    t['prompt']=generation_prompt(t['facts'],t.get('group_facts',''),t.get('expected_images',8))+'\n'+reference_contract(t)
@@ -630,7 +637,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.35','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.36','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
