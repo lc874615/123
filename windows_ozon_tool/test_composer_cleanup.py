@@ -19,6 +19,15 @@ class CleanupTests(unittest.TestCase):
   with tempfile.TemporaryDirectory() as tmp:
    store=Store(tmp);store.create_set('A','椅子');store.create_set('B','桌子');a,b=store.tasks;a.update(state='needs_attention',message='未识别到唯一可用发送按钮；提示词已保留，请人工检查。未自动发送');b.update(state='needs_attention',message='发送结果不确定');store.set_paused(False)
    self.assertEqual(store.resume_unsent_upload()['resumed'],1);self.assertEqual(a['state'],'queued');self.assertEqual(b['state'],'needs_attention')
+ def test_changed_page_unsent_image_job_requeues_twice_without_touching_uncertain_send(self):
+  import test_image_regeneration as fixture
+  with tempfile.TemporaryDirectory() as tmp:
+   store=fixture.ImageRegenerationTests().setup(tmp);store.image_jobs.create('CHAIR(1)','variant_main',['CHAIR(1)'],'')
+   job=store.image_jobs.jobs[0]
+   for i in range(3):
+    job.update(state='needs_attention',message='输入框内容或页面状态已变化，未发送任务')
+    self.assertEqual(store.resume_unsent_upload()['resumed'],1 if i<2 else 0)
+   self.assertEqual(job['automatic_unsent_retries'],2)
  def test_finished_previous_variant_in_same_group_does_not_block_next_variant(self):
   with tempfile.TemporaryDirectory() as tmp:
    store=Store(tmp);store.create_set('A','椅子');store.create_set('B','椅子');a,b=store.tasks;a.update(copy_leader='A',state='saved');b.update(copy_leader='A',state='claimed')

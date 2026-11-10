@@ -18,3 +18,7 @@ test('copy send wait respects pause and expires without clicking',async()=>{
 test('only the exact previous unsent prompt may be replaced',()=>{
  assert.equal(global.OzonComposer.sameDraft('【OWN】\r\ntext','【OWN】\ntext'),true);assert.equal(global.OzonComposer.sameDraft('【OWN】\ntext edited','【OWN】\ntext'),false);assert.equal(global.OzonComposer.sameDraft('unrelated',''),false);
 });
+test('React paragraph spacing and nonbreaking spaces do not change owned prompt identity',()=>{
+ assert.equal(global.OzonComposer.sameDraft('A\n\nB\u00a0C\n【OWN】','A\nB C\n【OWN】'),true);
+ assert.equal(global.OzonComposer.sameDraft('A changed\n【OWN】','A\n【OWN】'),false);
+});

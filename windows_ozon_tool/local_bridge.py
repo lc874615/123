@@ -194,10 +194,11 @@ class Store:
   self.save();return stamp
  def resume_unsent_upload(self):
   if self.control.get('paused'):return {'resumed':0}
-  known={'未找到图片上传控件，已暂停，未发送任务','未识别到唯一可用发送按钮；提示词已保留，请人工检查。未自动发送'}
+  known={'未找到图片上传控件，已暂停，未发送任务','未识别到唯一可用发送按钮；提示词已保留，请人工检查。未自动发送','输入框内容或页面状态已变化，未发送任务','任务已暂停或草稿改变，未发送','未找到当前任务输入框，未发送','上传后输入框变化，请刷新对话；未发送'}
   count=0
   for task in self.tasks+(self.image_jobs.jobs if hasattr(self,'image_jobs') else []):
-   if task['state']=='needs_attention' and not task.get('received_images') and not task.get('pause_requested') and task.get('message') in known:
+   if task['state']=='needs_attention' and not task.get('received_images') and not task.get('pause_requested') and task.get('message') in known and task.get('automatic_unsent_retries',0)<2:
+    task['automatic_unsent_retries']=task.get('automatic_unsent_retries',0)+1
     task.update(state='queued',message='已知尚未发送的任务已恢复，自动备份清理遗留输入后继续');count+=1
   if count:self.save()
   return {'resumed':count}
@@ -637,7 +638,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.37','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.38','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)

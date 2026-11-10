@@ -6,7 +6,7 @@ test('generating missing results quota and already generated images do not resta
 test('owned draft keyboard fallback clicks no unverified task and confirms the new user marker',async()=>{
  let clock=0,pressed=0;const ctx={KeyboardEvent:class{constructor(type,p){this.type=type;Object.assign(this,p);}},OzonConversation:{generating:()=>false,requestAnchor:()=>pressed?{}:null}};vm.runInNewContext(fs.readFileSync(__dirname+'/composer.js','utf8'),ctx);
  const e={value:'owned',focus(){},dispatchEvent(ev){if(ev.type==='keydown')pressed++;}};assert.equal(await ctx.OzonComposer.sendOwnedByEnter(e,{doc:{},expected:'owned',marker:'own',stopped:()=>false,report:async()=>{},sleep:async ms=>clock+=ms,now:()=>clock}),true);assert.equal(pressed,1);
- e.value='user edited';await assert.rejects(ctx.OzonComposer.sendOwnedByEnter(e,{doc:{},expected:'owned',marker:'own',stopped:()=>false,report:async()=>{},sleep:async()=>{},now:()=>clock}),/已变化/);assert.equal(pressed,1);
+ ctx.OzonConversation.requestAnchor=()=>null;e.value='user edited';await assert.rejects(ctx.OzonComposer.sendOwnedByEnter(e,{doc:{},expected:'owned',marker:'own',stopped:()=>false,report:async()=>{},sleep:async()=>{},now:()=>clock}),/已变化/);assert.equal(pressed,1);
 });
 test('exact failed remake reply is recognized despite stale previous delivery metadata',()=>{
  const x=f();x.ctx.__ozonDeliveryInfo={fileCount:7};x.text('本次Ozon主图生成失败，图片生成工具返回错误。因此，暂时无法交付符合要求的01_main.jpg。本次没有生成有效成品文件，因此不提供虚假下载链接。图像生成失败');assert.equal(x.check(0),null);assert.equal(x.check(3100).reply_finished,true);
@@ -18,4 +18,11 @@ test('failure detection runs before order-repair extraction during automatic col
 });
 test('a downloadable image in the current failed reply preserves its result',()=>{
  const x=f();x.ctx.OzonFiles={allowedElement:()=>true};x.ctx.OzonConversation.requestReplies=()=>[{textContent:message,querySelectorAll:()=>[{}]}];assert.equal(x.check(0),null);assert.equal(x.check(5000),null);
+});
+test('Enter fallback reacquires replaced editor and never resends an existing request',async()=>{
+ let pressed=0;const old={isConnected:false,innerText:'stale'};const live={innerText:'owned\n\ntext',focus(){},dispatchEvent(e){if(e.type==='keydown')pressed++;}};
+ const ctx={KeyboardEvent:class{constructor(type){this.type=type;}},OzonConversation:{generating:()=>false,requestAnchor:()=>pressed?{}:null}};vm.runInNewContext(fs.readFileSync(__dirname+'/composer.js','utf8'),ctx);
+ const options={doc:{},expected:'owned\ntext',marker:'own',getEditor:()=>live,stopped:()=>false,report:async()=>{},sleep:async()=>{}};
+ assert.equal(await ctx.OzonComposer.sendOwnedByEnter(old,options),true);assert.equal(pressed,1);
+ assert.equal(await ctx.OzonComposer.sendOwnedByEnter(old,options),true);assert.equal(pressed,1);
 });
