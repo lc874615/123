@@ -3,7 +3,7 @@ import copy,secrets,shutil,time
 from pathlib import Path
 from pricing_service import read,write
 
-RUN_KEYS=('resume_mode','pause_requested','pause_ack','recollection_requested','recollection_backup','image_retry_attempts','sheet_layout','contact_sheet_sha256','contact_sheet_info','source_request_id','plans','video','generation_parameters','generation_variants')
+RUN_KEYS=('automatic_failure_restarts','automatic_failure_pending','resume_mode','pause_requested','pause_ack','recollection_requested','recollection_backup','image_retry_attempts','sheet_layout','contact_sheet_sha256','contact_sheet_info','source_request_id','plans','video','generation_parameters','generation_variants')
 
 def reset_fields(task):
  for key in RUN_KEYS:task.pop(key,None)

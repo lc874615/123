@@ -623,7 +623,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.33','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.34','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
@@ -686,6 +686,9 @@ def server(store,token,port=8765):
      elif self.path=='/delivery-plan':
       from image_retry import plan
       value=plan(store.find(body['task_id']))
+     elif self.path=='/generation-failed':
+      from failed_generation import request
+      value=request(store,body['task_id'],body)
      elif self.path=='/image-retry':
       from image_retry import reserve
       value=reserve(store,body['task_id'],body)
@@ -1117,30 +1120,31 @@ def main(test_mode=False,on_ready=None):
   if not ids or ids[0].startswith('group:'):
    messagebox.showinfo('请选择具体变体','请展开商品组，选择需要重启的具体变体行。',parent=root);return
   from queue_restart import choose,ready,restart
-  try:
-   with store.lock:
-    target=choose(store,task['id']);skus=[t['sku'] for t in target['targets']] if target.get('image_job') else [target['sku']]
-    if publication.active(skus):raise ValueError('该条仍有上架任务跟进中，请先在上架进度停止跟进；本操作不会重置平台商品或库存')
-    store.set_paused(True);restart_pending=True
-  except Exception as error:restart_pending=False;show_task_error('未重启队列',str(error));return
-  connection.configure(text='正在等待插件停止确认，随后重启 '+task['sku']+'；旧素材将备份，完成后继续后续队列')
-  deadline=time.time()+90
-  def stopped():
+  restart_pending=True;connection.configure(text='正在后台准备重启 '+task['sku']+'；等待插件停止确认并备份素材')
+  def finish(error=None,result=None):
    nonlocal restart_pending
+   restart_pending=False
+   if error:show_task_error('未重启队列',error);return
+   connection.configure(text='已重启 '+result['sku']+'，等待插件接收并自动执行后续队列')
+   def select_new():
+    if view.exists(result['id']):view.selection_set(result['id']);view.see(result['id'])
+   root.after(1800,select_new)
+  def work():
    try:
     with store.lock:
-     target=choose(store,task['id']);waiting=not ready(store,target)
-    if waiting:
-     if time.time()<deadline:root.after(500,stopped);return
-     raise ValueError('插件尚未确认暂停或旧视频仍在处理。请保持插件连接；原队列和文件尚未重置')
+     target=choose(store,task['id']);skus=[t['sku'] for t in target['targets']] if target.get('image_job') else [target['sku']]
+     if publication.active(skus):raise ValueError('该条仍有上架任务跟进中，请先在上架进度停止跟进')
+     store.set_paused(True)
+    deadline=time.time()+90
+    while True:
+     with store.lock:target=choose(store,task['id']);waiting=not ready(store,target)
+     if not waiting:break
+     if time.time()>deadline:raise ValueError('插件尚未确认暂停或视频仍在处理，原队列与文件保留')
+     time.sleep(.3)
     with store.lock:result=restart(store,task['id'])
-    restart_pending=False
-    connection.configure(text='已重启 '+result['sku']+'，旧记录已备份；完成后继续后续自动化队列')
-    def select_new():
-     if view.exists(result['id']):view.selection_set(result['id']);view.see(result['id'])
-    root.after(1800,select_new)
-   except Exception as error:restart_pending=False;show_task_error('未重启队列',str(error))
-  stopped()
+    root.after(0,lambda:finish(result=result))
+   except Exception as error:root.after(0,lambda error=str(error):finish(error=error))
+  threading.Thread(target=work,daemon=True).start()
  ttk.Button(task_actions,text='重启本条队列',command=restart_current_queue).pack(side='left',padx=4)
  task_more.add_command(label='重启本条队列（备份后重新制作并自动继续）',command=restart_current_queue)
  def rebuild_assets():

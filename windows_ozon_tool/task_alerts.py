@@ -141,10 +141,6 @@ class AlertPopup:
    ttk.Button(bar,text='我已知晓',command=self.close).pack(side='right',padx=4);ttk.Button(bar,text='打开任务中心',command=lambda:(self.open_tasks(),self.close())).pack(side='right',padx=4)
    self.window.protocol('WM_DELETE_WINDOW',self.close)
    self.window.update_idletasks()
-   try:self.previous_grab=self.root.grab_current()
-   except (tk.TclError,KeyError):self.previous_grab=None
-   try:self.window.grab_set()
-   except tk.TclError:pass
   self.text.configure(state='normal');self.text.delete('1.0','end');self.text.insert('1.0',render(self.shown.values()));self.text.configure(state='disabled');self.window.lift();self.window.focus_force();self.window.bell()
  def reopen(self):
   if self.window is not None and self.window.winfo_exists():self.window.lift();self.window.focus_force();return
@@ -155,12 +151,9 @@ class AlertPopup:
  def close(self):
   self.state.acknowledge(self.shown);self.shown={}
   if self.window is not None:
-   try:self.window.grab_release();self.window.destroy()
+   try:self.window.destroy()
    except Exception:pass
   self.window=None
-  try:
-   if self.previous_grab and self.previous_grab.winfo_exists():self.previous_grab.grab_set()
-  except Exception:pass
 
 class ProgressWatch:
  def __init__(self):self.progress={};self.offline_since=None
