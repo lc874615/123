@@ -15,7 +15,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  paths=[Path(p)/'listing_bundle.json' for p in group_folders]
  if not paths:messagebox.showinfo('没有变体','请选择尚未取消的商品组');return
  coordinator=GroupService(paths,service,pricing,store)
- dialog=tk.Toplevel(root);dialog.title('整组预览 · Ozon 商品自动化 1.0.38');dialog.geometry('1280x850');dialog.minsize(950,650)
+ dialog=tk.Toplevel(root);dialog.title('整组预览 · Ozon 商品自动化 1.0.39');dialog.geometry('1280x850');dialog.minsize(950,650)
  busy=False;selected=set(range(len(paths)));focus=['',''];bundles=[];token=None;rendered=None;warehouses={};photos=[];rows={};last_job=None;copy_dirty=False;displayed_copy=None;copy_timer=None;busy_since=0;operation_error='';operation_name=''
  ttk.Label(dialog,text='每列一个变体；双击单格修改，点击参数名选中整行后批量修改。仓库显示当前店铺全部类型和状态。',wraplength=900).pack(pady=6)
  status=ttk.Label(dialog,text='正在加载整组预览',wraplength=1200);status.pack(pady=3)
@@ -154,7 +154,10 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   rendered=None;refresh()
  search.trace_add('write',refilter);missing.trace_add('write',refilter)
  def text_editor(label,indices,initial,save,multiline=False):
-  window=tk.Toplevel(dialog);window.title(label);window.geometry('760x420');ttk.Label(window,text='目标：'+'、'.join(paths[n].parent.name for n in indices),wraplength=720).pack(pady=7)
+  window=tk.Toplevel(dialog);window.title(label);window.geometry('760x420')
+  from ui_layout import dialog_footer
+  footer=dialog_footer(window,760,420)
+  ttk.Label(window,text='目标：'+'、'.join(paths[n].parent.name for n in indices),wraplength=720).pack(pady=7)
   text=ScrolledText(window,height=12);text.pack(fill='both',expand=True,padx=8);text.insert('1.0',initial)
   ttk.Label(window,text='一行表示全部目标填相同值；多行按目标顺序逐项填写。集合属性内多个值用中文分号；分隔。').pack(pady=4)
   def apply():
@@ -162,7 +165,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    try:values=column_updates(content,len(indices)) if not multiline else [content]
    except ValueError as exc:messagebox.showerror('未修改',str(exc),parent=window);return
    window.destroy();run(lambda:save(values))
-  ttk.Button(window,text='保存并同步属性与售价',command=apply).pack(pady=7)
+  ttk.Button(footer,text='保存并同步属性与售价',command=apply).pack(pady=7)
  def edit_row(indices,iid):
   if not editable() or iid not in rows:return
   if not indices:messagebox.showinfo('未选择变体','请至少勾选一个变体列',parent=dialog);return
@@ -300,12 +303,15 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    snapshot=coordinator.load();model=OfficialChoices(service,[snapshot[n] for n in indices],key)
   except ValueError as exc:messagebox.showerror('无法选择',str(exc),parent=dialog);return
   window=tk.Toplevel(dialog);window.title(('批量' if len(indices)>1 else paths[indices[0]].parent.name)+' · 官方选项：'+field.get('name',''));window.geometry('850x650')
-  ttk.Label(window,text='目标：'+'、'.join(paths[n].parent.name for n in indices),wraplength=810).pack(pady=5)
+  from ui_layout import dialog_footer
+  footer=dialog_footer(window)
+  target_label=ttk.Label(window,text='目标：'+'、'.join(paths[n].parent.name for n in indices),wraplength=810);target_label.pack(fill='x',padx=8,pady=5)
+  window.bind('<Configure>',lambda e:target_label.configure(wraplength=max(200,e.width-40)) if e.widget is window else None,add='+')
   ttk.Label(window,text=('点击勾选，可多选，最多'+str(model.maximum)+'项' if model.multiple else '此参数按API规则只能单选')+('；批量显示所有目标类目共有的官方选项，保存后统一替换本参数' if len(indices)>1 else '') ,wraplength=810).pack(pady=4)
   query=tk.StringVar();ttk.Entry(window,textvariable=query,width=65).pack(pady=5)
   holder=ttk.Frame(window);holder.pack(fill='both',expand=True,padx=8);holder.rowconfigure(0,weight=1);holder.columnconfigure(0,weight=1)
   box=ttk.Treeview(holder,columns=('label',),show='tree headings',selectmode='browse',height=10);box.heading('#0',text='勾选');box.column('#0',width=60,stretch=False);box.heading('label',text='API官方选项 / 说明');box.column('label',width=660);box.grid(row=0,column=0,sticky='nsew');scroll=ttk.Scrollbar(holder,orient='vertical',command=box.yview);scroll.grid(row=0,column=1,sticky='ns');box.configure(yscrollcommand=scroll.set)
-  count=ttk.Label(window);count.pack(pady=3);selected_box=tk.Listbox(window,height=4,selectmode='multiple',exportselection=False);selected_box.pack(fill='x',padx=8);loading=[False]
+  count=ttk.Label(footer);count.pack(pady=3);selected_box=tk.Listbox(footer,height=3,selectmode='multiple',exportselection=False);selected_box.pack(fill='x',padx=8);loading=[False]
   def render(*args):
    if not window.winfo_exists():return
    box.delete(*box.get_children());needle=query.get().strip().casefold()
@@ -322,7 +328,8 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    try:model.toggle(int(iid));render()
    except ValueError as exc:messagebox.showerror('无法选择',str(exc),parent=window)
   box.bind('<ButtonRelease-1>',toggle);query.trace_add('write',render)
-  tools=ttk.Frame(window);tools.pack(pady=4)
+  tools=ttk.Frame(footer);tools.pack(pady=4,fill='x')
+  for col in range(3):tools.columnconfigure(col,weight=1)
   def fetch(next_page=False,force=False):
    if loading[0]:return
    loading[0]=True;save_button.configure(state='disabled');count.configure(text='正在读取所选变体的API官方选项…')
@@ -338,20 +345,20 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
     except Exception as exc:return str(exc)
     return None
    run(load_action,show)
-  ttk.Button(tools,text='官方关键词搜索',command=lambda:fetch()).pack(side='left',padx=4)
-  next_button=ttk.Button(tools,text='加载下一页',command=lambda:fetch(True));next_button.pack(side='left',padx=4)
-  ttk.Button(tools,text='刷新API选项',command=lambda:fetch(force=True)).pack(side='left',padx=4)
+  ttk.Button(tools,text='官方关键词搜索',command=lambda:fetch()).grid(row=0,column=0,sticky='ew',padx=3,pady=2)
+  next_button=ttk.Button(tools,text='加载下一页',command=lambda:fetch(True));next_button.grid(row=0,column=1,sticky='ew',padx=3,pady=2)
+  ttk.Button(tools,text='刷新API选项',command=lambda:fetch(force=True)).grid(row=0,column=2,sticky='ew',padx=3,pady=2)
   def remove():
    ids=list(model.selected)
    for n in selected_box.curselection():model.selected.pop(ids[n],None)
    render()
-  ttk.Button(tools,text='移除下方选中项',command=remove).pack(side='left',padx=4);ttk.Button(tools,text='清空已选',command=lambda:(model.clear(),render())).pack(side='left',padx=4)
+  ttk.Button(tools,text='移除下方选中项',command=remove).grid(row=1,column=0,sticky='ew',padx=3,pady=2);ttk.Button(tools,text='清空已选',command=lambda:(model.clear(),render())).grid(row=1,column=1,sticky='ew',padx=3,pady=2)
   def save():
    if loading[0]:return
    try:values=model.values()
    except ValueError as exc:messagebox.showerror('未保存',str(exc),parent=window);return
    window.destroy();run(lambda:coordinator.set_attributes(indices,key,values,expected))
-  save_button=ttk.Button(window,text='保存所选官方选项并重算售价',command=save);save_button.pack(pady=7);render();fetch()
+  save_button=ttk.Button(footer,text='保存所选官方选项并重算售价',command=save);save_button.pack(pady=7);render();fetch()
  def choose_category(indices):
   # Show the known category immediately. A click no longer fetches both full trees.
   window=tk.Toplevel(dialog);window.title('确认当前类目 / 搜索其他官方类目');window.geometry('1000x600')

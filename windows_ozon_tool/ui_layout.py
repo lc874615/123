@@ -4,7 +4,7 @@ import os
 def build(root):
  import tkinter as tk
  from tkinter import ttk
- root.title('Ozon 商品自动化 · 1.0.38');root.geometry('1280x880');root.minsize(1000,680)
+ root.title('Ozon 商品自动化 · 1.0.39');root.geometry('1280x880');root.minsize(1000,680)
  style=ttk.Style(root);style.theme_use('clam')
  font='Microsoft YaHei UI' if os.name=='nt' else 'Noto Sans CJK SC'
  style.configure('.',font=(font,10));style.configure('TButton',padding=(12,7));style.configure('TNotebook.Tab',padding=(24,10));style.configure('Treeview',rowheight=32);style.configure('Treeview.Heading',font=(font,10,'bold'));style.configure('Primary.TButton',foreground='white',background='#2167b7');style.map('Primary.TButton',background=[('active','#18518f')])
@@ -22,3 +22,12 @@ def build(root):
  tasks=ttk.Frame(notebook,padding=12);notebook.add(tasks,text='任务中心');pages['tasks']=tasks
  page,body=scroll_page('设置');pages['settings']=page;pages['settings_body']=body
  return notebook,pages,connection
+
+def dialog_footer(window,width=850,height=650):
+ """Reserve action space before expanding lists/text; fit the visible screen."""
+ from tkinter import ttk
+ width=min(width,max(320,window.winfo_screenwidth()-60))
+ height=min(height,max(300,window.winfo_screenheight()-100))
+ window.geometry(str(width)+'x'+str(height))
+ footer=ttk.Frame(window,padding=(8,4));footer.pack(side='bottom',fill='x')
+ return footer

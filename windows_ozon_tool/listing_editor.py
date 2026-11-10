@@ -60,6 +60,8 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   selected=tree.selection()
   if not selected:return
   key=selected[0];field=fields[key];state=bundle.get('attribute_draft') or {};window=tk.Toplevel(dialog);window.title(field.get('name','属性')+' · '+field.get('name_ru',''));window.geometry('850x530')
+  from ui_layout import dialog_footer
+  footer=dialog_footer(window,850,530)
   ttk.Label(window,text=field.get('description',''),wraplength=800).pack(pady=6)
   current=(state.get('values') or {}).get(key) or []
   if not field.get('dictionary_id'):
@@ -69,7 +71,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
     value=text.get('1.0','end-1c').strip();values=[{'value':v.strip()} for v in value.splitlines() if v.strip()] if field.get('is_collection') else [{'value':value}]
     try:service.save_values(path,key,values);window.destroy();refresh()
     except ValueError as exc:messagebox.showerror('未保存',str(exc),parent=window)
-   ttk.Button(window,text='保存此属性',command=save).pack(pady=7)
+   ttk.Button(footer,text='保存此属性',command=save).pack(pady=7)
   else:
    query=tk.StringVar();ttk.Label(window,text='中文筛选已加载选项；官方服务器搜索支持至少2字符，俄文关键词更精确。').pack()
    ttk.Entry(window,textvariable=query,width=60).pack(pady=4);options=tk.Listbox(window,selectmode='extended' if field.get('is_collection') else 'browse',exportselection=False);options.pack(fill='both',expand=True,padx=10)
@@ -93,14 +95,14 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
       filter_local()
      root.after(0,show)
     work(action)
-   buttons=ttk.Frame(window);buttons.pack(pady=4)
+   buttons=ttk.Frame(footer);buttons.pack(pady=4)
    ttk.Button(buttons,text='加载官方中文选项 / 下一页',command=lambda:fetch(False)).pack(side='left',padx=5)
    ttk.Button(buttons,text='按关键词查官方字典',command=lambda:fetch(True)).pack(side='left',padx=5)
    def save():
     selected=options.curselection();values=[{'dictionary_value_id':visible[n]['id'],'value':visible[n]['value']} for n in selected]
     try:service.save_values(path,key,values);window.destroy();refresh()
     except ValueError as exc:messagebox.showerror('未保存',str(exc),parent=window)
-   ttk.Button(window,text='保存已选官方值',command=save).pack(pady=7);fetch(False)
+   ttk.Button(footer,text='保存已选官方值',command=save).pack(pady=7);fetch(False)
  tree.bind('<Double-1>',edit)
  def show_help(event=None):
   if not tree.selection():return
