@@ -89,7 +89,8 @@ class GroupService:
      b.update(variant_parameters=p,facts=text,stock=int(p.get('stock','0') or 0))
      if key=='stock':b['stock_revision']=secrets.token_hex(8)
      for field in (b.get('attribute_draft') or {}).get('fields',[]):
-      if binding(field) and binding(field)[0]==key:
+      from color_selection import is_color_field
+      if (binding(field) and binding(field)[0]==key) or (key=='color' and is_color_field(field)):
        state=b['attribute_draft'];state.get('values',{}).pop(field_key(field),None);state['manual_keys']=[k for k in state.get('manual_keys',[]) if k!=field_key(field)]
      self._invalidate(b)
     from asset_state import mark_changes
@@ -116,6 +117,8 @@ class GroupService:
      state=b['attribute_draft'];state.setdefault('values',{})[key]=canonical;state['manual_keys']=sorted(set(state.get('manual_keys') or [])|{key});state['confirmed']=False
      (state.get('migration_pending') or {}).pop(key,None)
      link=binding(field)
+     if link and link[0]=='color' and not canonical:
+      b.setdefault('variant_parameters',{})['color']='';b['facts']=facts(b['variant_parameters'])
      if link and len(canonical)>1 and link[0] in ('color','material','accessory_material'):
       b.setdefault('variant_parameters',{})[link[0]]='；'.join(v.get('value','') for v in canonical);b['facts']=facts(b['variant_parameters'])
      if link and len(canonical)==1:
@@ -129,6 +132,12 @@ class GroupService:
         try:text=str(Decimal(text)*multiplier)
         except Exception:raise ValueError('此官方属性无法自动换算基础尺寸/重量，请核对单位') from None
       b.setdefault('variant_parameters',{})[param]=text;b['facts']=facts(b['variant_parameters'])
+     if link and link[0]=='color':
+      from color_selection import is_color_field
+      for other in state.get('fields',[]):
+       other_key=field_key(other)
+       if other_key!=key and is_color_field(other):
+        state.get('values',{}).pop(other_key,None);state['manual_keys']=[k for k in state.get('manual_keys') or [] if k!=other_key]
      self._invalidate(b);prepared.append(n)
     from asset_state import mark_changes
     mark_changes(before,bundles);self._write(bundles)

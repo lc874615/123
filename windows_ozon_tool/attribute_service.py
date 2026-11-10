@@ -31,7 +31,7 @@ def api(path,body):
  if not isinstance(value,dict) or not isinstance(value.get('result'),list):raise ValueError('Ozon属性响应格式异常')
  return value
 
-AUTOFILL_VERSION=6
+AUTOFILL_VERSION=7
 def normalized_name(field):
  return re.sub(r'\s+',' ',(field.get('name_ru') or field.get('name','')).casefold().replace('ё','е').replace('#','')).strip()
 def audience(bundle):
@@ -225,6 +225,8 @@ class AttributeService:
     from rich_content import is_rich_field
     from tag_rules import is_tag_field,is_series_field
     if is_rich_field(field) or is_tag_field(field) or (is_series_field(field) and old.get('autofill_version',0)<5):values.pop(key,None);manual.discard(key)
+    from color_selection import is_color_field
+    if is_color_field(field) and not values.get(key):values.pop(key,None)
     if key in values or field['id'] in (8229,21841,21837,21845):continue
     suggestion=suggested_value(field,bundle)
     if suggestion is None or suggestion=='':continue
@@ -268,6 +270,7 @@ class AttributeService:
     current=latest.get('attribute_draft') or {}
     if current.get('schema_hash')==digest:
      for k,v in (current.get('values') or {}).items():
+      if not v and any(field_key(f)==k and is_color_field(f) for f in fields) and state['values'].get(k):continue
       if (k not in auto_references or k in (current.get('manual_keys') or [])) and not any(field_key(f)==k and (is_rich_field(f) or is_tag_field(f) or (is_series_field(f) and current.get('autofill_version',0)<5)) for f in fields) and ((current.get('source_fingerprint')==source and current.get('autofill_version')==AUTOFILL_VERSION) or k in (current.get('manual_keys') or [])):state['values'][k]=v
      for k in (current.get('manual_keys') or []):
       state['auto_references'].pop(k,None)
@@ -300,7 +303,21 @@ class AttributeService:
    for name,key,values in changes:
     path=Path(name);bundle=read(path);values=self.prepare_values(bundle,key,values);state=bundle['attribute_draft']
     state.setdefault('values',{})[key]=values;state['manual_keys']=sorted(set(state.get('manual_keys') or [])|{key});state['confirmed']=False
-    (state.get('migration_pending') or {}).pop(key,None);prepared.append((path,bundle))
+    (state.get('migration_pending') or {}).pop(key,None)
+    from color_selection import is_color_field
+    field=next(f for f in state['fields'] if field_key(f)==key)
+    if is_color_field(field,include_name=False):
+     before=copy.deepcopy(bundle);bundle.setdefault('variant_parameters',{})['color']='；'.join(v.get('value','') for v in values)
+     if bundle['variant_parameters'].get('name'):
+      from variants import facts
+      bundle['facts']=facts(bundle['variant_parameters'])
+     for other in state['fields']:
+      other_key=field_key(other)
+      if other_key!=key and is_color_field(other):
+       state['values'].pop(other_key,None);state['manual_keys']=[k for k in state['manual_keys'] if k!=other_key]
+     from asset_state import mark_changes
+     mark_changes([before],[bundle])
+    prepared.append((path,bundle))
    for path,bundle in prepared:write(path,bundle)
   return len(prepared)
  def confirm(self,path,vat,currency_confirmed):return self.confirm_many([path],vat,currency_confirmed)

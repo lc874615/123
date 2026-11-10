@@ -61,6 +61,7 @@ class VariantGrid:
   from tkinter import font as tkfont
   heading_font=tkfont.nametofont('TkDefaultFont');copy_keys={k for k,_,_ in FIELDS}-{'stock'}
   for key,title,width in [('index','序号',55),('article','货号',160),('refs','主图参考',95)]+[(k,label,170 if k in ('name','extra') else 125) for k,label,_ in FIELDS]:
+   if key=='color':title='颜色（可多选）'
    heading=title+(' · 同首行' if key in copy_keys else '')
    self.tree.heading(key,text=heading,anchor='center',command=(lambda k=key:self.bulk_column(k)) if key in copy_keys else (lambda:None));self.tree.column(key,width=max(width,heading_font.measure(heading)+24),stretch=False,anchor='center')
   self.tree.grid(row=0,column=0,sticky='nsew');sx=ttk.Scrollbar(holder,orient='horizontal',command=self.tree.xview);sx.grid(row=1,column=0,sticky='ew');sy=ttk.Scrollbar(holder,orient='vertical',command=self.tree.yview);sy.grid(row=0,column=1,sticky='ns');self.tree.configure(xscrollcommand=sx.set,yscrollcommand=sy.set)
@@ -142,6 +143,10 @@ class VariantGrid:
   if key=='stock':return
   row=next(r for r in self.rows if str(r['index'])==item);box=self.tree.bbox(item,column)
   if not box:return
+  if key=='color':
+   from color_selection import choose
+   def save_color(value):row['values']['color']=value;self.refresh()
+   choose(self.frame,row['values'][key],save_color);return
   entry=self.ttk.Entry(self.tree,justify='center');entry.insert(0,row['values'][key]);entry.place(x=box[0],y=box[1],width=box[2],height=box[3]);entry.focus_set();entry.selection_range(0,'end');self.editor=(entry,row,key)
   entry.bind('<Return>',lambda e:self.commit());entry.bind('<FocusOut>',lambda e:self.commit())
  def fill_row(self):

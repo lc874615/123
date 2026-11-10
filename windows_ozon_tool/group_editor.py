@@ -15,7 +15,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  paths=[Path(p)/'listing_bundle.json' for p in group_folders]
  if not paths:messagebox.showinfo('没有变体','请选择尚未取消的商品组');return
  coordinator=GroupService(paths,service,pricing,store)
- dialog=tk.Toplevel(root);dialog.title('整组预览 · Ozon 商品自动化 1.0.39');dialog.geometry('1280x850');dialog.minsize(950,650)
+ dialog=tk.Toplevel(root);dialog.title('整组预览 · Ozon 商品自动化 1.0.40');dialog.geometry('1280x850');dialog.minsize(950,650)
  busy=False;selected=set(range(len(paths)));focus=['',''];bundles=[];token=None;rendered=None;warehouses={};photos=[];rows={};last_job=None;copy_dirty=False;displayed_copy=None;copy_timer=None;busy_since=0;operation_error='';operation_name=''
  ttk.Label(dialog,text='每列一个变体；双击单格修改，点击参数名选中整行后批量修改。仓库显示当前店铺全部类型和状态。',wraplength=900).pack(pady=6)
  status=ttk.Label(dialog,text='正在加载整组预览',wraplength=1200);status.pack(pady=3)
@@ -195,6 +195,9 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   if str(initial).startswith('待匹配原值：'):initial=initial.split('：',1)[1]
   if kind=='p' and key=='stock' and publication.initial_stock is not None:
    messagebox.showinfo('统一初始库存','新商品初始库存固定为'+str(publication.initial_stock)+'，销售后正常扣减，不自动重置。',parent=dialog);return
+  if kind=='p' and key=='color':
+   from color_selection import choose
+   choose(dialog,str(initial),lambda value:run(lambda:coordinator.set_parameters(indices,'color',[value]*len(indices),expected)),title='选择颜色 · '+str(len(indices))+'个变体（可多选）');return
   if kind=='p':text_editor('修改 '+iid,indices,str(initial),lambda values:coordinator.set_parameters(indices,key,values,expected));return
   if field.get('dictionary_id'):dictionary_editor(indices,key,field,expected);return
   def save(values):

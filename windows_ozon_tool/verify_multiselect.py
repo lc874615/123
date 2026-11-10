@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 def main():
  with patch('urllib.request.urlopen',side_effect=AssertionError('本地验证禁止网络请求，请检查测试隔离')):
-  suite=unittest.defaultTestLoader.loadTestsFromNames(['test_attribute_choices','test_attributes','test_group_publication','test_asset_reconcile','test_final_workflow','test_preview_submission','test_copy_pipeline','test_copy_scheduling','test_copy_privacy','test_variants','test_image_prompts','test_task_alerts','test_image_retry','test_queue_restart','test_responsive_pipeline','test_color_sample','test_failed_generation','test_composer_cleanup','test_group_references'])
+  suite=unittest.defaultTestLoader.loadTestsFromNames(['test_attribute_choices','test_attributes','test_group_publication','test_asset_reconcile','test_final_workflow','test_preview_submission','test_copy_pipeline','test_copy_scheduling','test_copy_privacy','test_variants','test_image_prompts','test_task_alerts','test_image_retry','test_queue_restart','test_responsive_pipeline','test_color_sample','test_failed_generation','test_composer_cleanup','test_group_references','test_color_sync'])
   result=unittest.TextTestRunner(verbosity=2).run(suite)
  if result.wasSuccessful():print('\n本地自动化验证通过：多选、素材、文案去货号、制作同首行、首变体调度、作图提示词及中文异常提醒。\n本次未连接Ozon，不会修改店铺商品或库存。')
  return 0 if result.wasSuccessful() else 1
