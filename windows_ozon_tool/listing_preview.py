@@ -113,7 +113,7 @@ def build_item(folder,bundle):
   else:attributes.append(row)
  # Ozon /v3/product/import documents this exact complex group for a product video.
  groups.setdefault(100001,[]).extend([{'id':21841,'complex_id':100001,'values':[{'value':video['https_url']}]},{'id':21837,'complex_id':100001,'values':[{'value':bundle['copy']['title_ru'][:100]}]}])
- item={'offer_id':offer,'name':bundle['copy']['title_ru'],'description_category_id':category['description_category_id'],'type_id':category['type_id'],'price':str(price),'currency_code':'CNY','vat':settings['vat'],'images':[i['https_url'] for i in images],'attributes':attributes,'complex_attributes':[{'attributes':groups[key]} for key in sorted(groups)],'dimension_unit':'mm','weight_unit':'g',**package}
+ item={'offer_id':offer,'name':bundle['copy']['title_ru'],'description_category_id':category['description_category_id'],'type_id':category['type_id'],'price':str(price),'currency_code':'CNY','vat':settings['vat'],'images':[i['https_url'] for i in images],'color_image':images[0]['https_url'],'attributes':attributes,'complex_attributes':[{'attributes':groups[key]} for key in sorted(groups)],'dimension_unit':'mm','weight_unit':'g',**package}
  from listing_prices import listing_prices
  try:prices=listing_prices(bundle)
  except Exception:return None,['售价或成本缺失/无效']

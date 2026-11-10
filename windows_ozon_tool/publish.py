@@ -31,6 +31,8 @@ def validate(payload):
   for u in images:
    p=urllib.parse.urlsplit(u)
    if p.scheme!='https' or not p.hostname or p.username or p.password:raise ValueError('图片必须为可公开读取的HTTPS地址')
+  x.setdefault('color_image',images[0])
+  if x.get('color_image')!=images[0]:raise ValueError('颜色样本必须使用本变体对应的第一张主图链接')
   attributes=list(x.get('attributes') or [])
   for group in x.get('complex_attributes') or []:attributes.extend(group.get('attributes') or [])
   for attribute in attributes:
