@@ -15,7 +15,7 @@ def make_video(files,output,ffmpeg=None):
    with Image.open(p) as im:
     im=ImageOps.exif_transpose(im).convert('RGB');canvas=Image.new('RGB',(1080,1440),'white');fit=ImageOps.contain(im,(1080,1440));canvas.paste(fit,((1080-fit.width)//2,(1440-fit.height)//2));canvas.save(folder/f'{i:02d}.png')
   target=output.with_suffix('.partial.mp4')
-  command=[str(ffmpeg),'-y','-framerate','1','-start_number','0','-i',str(folder/'%02d.png'),'-vf','fps=30','-frames:v','240','-an','-c:v','libx264','-pix_fmt','yuv420p','-movflags','+faststart',str(target)]
+  command=[str(ffmpeg),'-y','-framerate','1','-start_number','0','-i',str(folder/'%02d.png'),'-vf','fps=30','-frames:v','240','-an','-c:v','libx264','-threads','2','-preset','veryfast','-pix_fmt','yuv420p','-movflags','+faststart',str(target)]
   subprocess.run(command,check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=180)
   target.replace(output)
  return str(output)

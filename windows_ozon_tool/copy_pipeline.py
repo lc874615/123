@@ -1,5 +1,5 @@
 """One copy pipeline: inspect safely first, generate only when needed, share to every SKU."""
-import secrets
+import secrets,hashlib
 from pathlib import Path
 from variants import valid_article
 from pricing_service import read,write
@@ -27,6 +27,7 @@ def prepare(store,body):
  previous_prompt=None;prompt_file=folder/'copy_prompt.txt'
  if not read_only and owner.get('copy_phase')=='inspecting' and owner.get('copy_request_marker') and prompt_file.exists():
   previous=prompt_file.read_text(encoding='utf-8');previous_prompt=previous if previous.startswith(owner['copy_request_marker']) else None
+ if previous_prompt:owner['previous_unsent_copy_prompt_hash']=hashlib.sha256(previous_prompt.encode()).hexdigest()
  if dispatched and not read_only:raise ValueError('已有文案请求等待结果，先自动采集，不重新发送')
  context={'group_facts':'\n'.join(row['sku']+'：'+str(row.get('facts') or '') for row in bundles),'group_variants':[{'sku':row['sku'],'facts':row.get('facts',''),'variant_parameters':row.get('variant_parameters') or {}} for row in bundles]};b.update(context);write(path,b)
  from reference_prefill import build,prompt as attribute_prompt

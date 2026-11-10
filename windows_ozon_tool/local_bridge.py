@@ -21,7 +21,7 @@ class ImageOrderConflict(ValueError):
 
 class Store:
  def __init__(self,folder):
-  self.folder=Path(folder);self.folder.mkdir(parents=True,exist_ok=True);self.lock=threading.Lock();self.client={};self.download_tickets={};self.path=self.folder/'tasks.json';self.video_running=set();self.tasks=json.loads(self.path.read_text(encoding='utf-8-sig')) if self.path.exists() else []
+  self.folder=Path(folder);self.folder.mkdir(parents=True,exist_ok=True);self.lock=threading.Lock();self.client={};self.download_tickets={};self.path=self.folder/'tasks.json';self.video_running=set();self.video_slots=threading.BoundedSemaphore(1);self.tasks=json.loads(self.path.read_text(encoding='utf-8-sig')) if self.path.exists() else []
   for t in self.tasks:
    if t['state'] in ('claimed','sending','waiting'):t['state']='needs_attention';t['resume_mode']='inspect_only';t['message']='服务已重启，等待自动读取现有网页结果；不重新发送'
    if t.get('copy_state')=='running':t['copy_state']='needs_attention';t['resume_mode']='copy_inspect_only';t['message']='文案被重启中断，等待自动读取现有结果，不重新生成'
@@ -193,11 +193,14 @@ class Store:
    t['prompt']=generation_prompt(t['facts'],t.get('group_facts',''),t['expected_images'])
   self.save();return stamp
  def resume_unsent_upload(self):
+  if self.control.get('paused'):return {'resumed':0}
+  known={'未找到图片上传控件，已暂停，未发送任务','未识别到唯一可用发送按钮；提示词已保留，请人工检查。未自动发送'}
   count=0
-  for task in self.tasks:
-   if task['state']=='needs_attention' and not task.get('received_images') and task.get('message')=='未找到图片上传控件，已暂停，未发送任务':
-    task.update(state='queued',message='上传适配已更新，恢复尚未发送的任务');count+=1
-  self.save();return {'resumed':count}
+  for task in self.tasks+(self.image_jobs.jobs if hasattr(self,'image_jobs') else []):
+   if task['state']=='needs_attention' and not task.get('received_images') and not task.get('pause_requested') and task.get('message') in known:
+    task.update(state='queued',message='已知尚未发送的任务已恢复，自动备份清理遗留输入后继续');count+=1
+  if count:self.save()
+  return {'resumed':count}
  def blockers(self):
   if hasattr(self,'image_jobs'):self.image_jobs.tick()
   tasks=self.tasks+([j for j in self.image_jobs.jobs if j['state'] not in ('saved','cancelled','queued')] if hasattr(self,'image_jobs') else [])
@@ -539,7 +542,7 @@ class Store:
   if changed:self.save()
  def poll_state(self):
   from asset_reconcile import reconcile
-  reconcile(self);self.sync_shared_copies();self.repair_unsent_copy()
+  reconcile(self);self.sync_shared_copies();self.repair_unsent_copy();self.resume_unsent_upload()
   active=bool(self.blockers()) or self.control.get('paused',False)
   # Missing shared copy has priority over queued image work; active requests still block.
   copy_task=self.next_copy() if not active else None
@@ -578,6 +581,9 @@ class Store:
   with self.lock:
    if sku in self.video_running:return
    self.video_running.add(sku);group=sorted([dict(x) for x in self.tasks if x['sku']==sku],key=lambda x:x['name'])
+  # Reserve the SKU before waiting; media replacement must wait for queued videos too.
+  # Never wait for an encoder slot while holding the shared material lock.
+  self.video_slots.acquire()
   try:
    files=[x['file'] for x in group[0]['received_images']] if len(group)==1 and group[0].get('set_mode') else [x['file'] for x in group]
    output=make_video(files,self.folder/'products'/sku/'video'/'product_8s.mp4')
@@ -595,6 +601,7 @@ class Store:
     self.save()
   finally:
    with self.lock:self.video_running.discard(sku)
+   self.video_slots.release()
 
 
 def server(store,token,port=8765):
@@ -623,7 +630,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.34','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.35','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
@@ -686,6 +693,9 @@ def server(store,token,port=8765):
      elif self.path=='/delivery-plan':
       from image_retry import plan
       value=plan(store.find(body['task_id']))
+     elif self.path=='/backup-composer':
+      from composer_cleanup import backup
+      value=backup(store,body['task_id'],body.get('text'),body.get('attachments'))
      elif self.path=='/generation-failed':
       from failed_generation import request
       value=request(store,body['task_id'],body)
@@ -1086,7 +1096,10 @@ def main(test_mode=False,on_ready=None):
   if not path.exists():messagebox.showinfo('等待草稿','请先等待素材和文案完成');return
   from category_match import group_key
   from group_editor import open_editor
-  with store.lock:
+  if not store.lock.acquire(blocking=False):
+   connection.configure(text='后台正在更新共用素材，整组预览将在保存完成后打开；其他按钮仍可操作')
+   root.after(250,listing_editor);return
+  try:
    current=read_pricing(path)
    if not isinstance(current,dict):show_task_error('草稿无效','当前草稿不是JSON对象，请检查本地文件；原文件保留。');return
    key=group_key(current);folders=[]
@@ -1096,6 +1109,7 @@ def main(test_mode=False,on_ready=None):
      try:candidate=read_pricing(target)
      except (OSError,ValueError):continue
      if isinstance(candidate,dict) and group_key(candidate)==key:folders.append(target.parent)
+  finally:store.lock.release()
   def show_price(index=0):
    with store.lock:item=next((dict(t) for t in store.tasks if t['sku']==folders[index].name),None)
    if item:pricing_details(item)
