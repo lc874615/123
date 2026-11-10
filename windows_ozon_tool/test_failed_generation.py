@@ -11,6 +11,25 @@ class FailureRestartTests(unittest.TestCase):
  def test_definite_failure_restarts_and_persists_command_once(self):
   with tempfile.TemporaryDirectory() as tmp:
    store,t=self.setup(tmp);body=self.body(t);r=request(store,t['id'],body);self.assertFalse(r['pending']);self.assertEqual(r['restart_count'],1);self.assertFalse(store.control['paused']);self.assertEqual(store.control['queue_restart']['task_id'],r['id']);self.assertEqual(store.find(r['id'])['state'],'queued');self.assertEqual(request(store,t['id'],body)['id'],r['id'])
+ def test_exact_screenshot_failure_restarts_partial_regeneration_job(self):
+  import test_image_regeneration as fixture
+  with tempfile.TemporaryDirectory() as tmp:
+   store=fixture.ImageRegenerationTests().setup(tmp)
+   store.image_jobs.create(store.tasks[0]['sku'],'variant_main',[store.tasks[0]['sku']],'')
+   task=store.claim();job=store.find(task['id']);body=self.body(job)
+   body['message']='本次Ozon主图生成失败，图片生成工具返回错误。因此，暂时无法交付符合要求的01_main.jpg。本次没有生成有效成品文件，因此不提供虚假下载链接。'
+   result=request(store,job['id'],body);fresh=store.find(result['id'])
+   self.assertEqual(fresh['kind'],'variant_main');self.assertEqual(fresh['state'],'queued');self.assertFalse(store.control['paused']);self.assertEqual(fresh['targets'],job['targets']);self.assertEqual(len(store.tasks[0]['received_images']),8)
+ def test_automatic_recollection_failure_restarts_the_matching_source_queue(self):
+  import test_image_regeneration as fixture
+  with tempfile.TemporaryDirectory() as tmp:
+   store=fixture.ImageRegenerationTests().setup(tmp)
+   store.image_jobs.create(store.tasks[0]['sku'],'shared_details',[],'保持大特写')
+   job=store.image_jobs.jobs[0];job.update(kind='asset_recollection',source_request_id='failed-source',state='waiting')
+   body=self.body(job);body['marker']='【OZON_TASK:failed-source】'
+   result=request(store,job['id'],body);fresh=store.find(result['id'])
+   self.assertEqual(fresh['kind'],'shared_details');self.assertEqual(fresh['expected_images'],7);self.assertEqual(fresh['targets'],job['targets']);self.assertNotIn('source_request_id',fresh)
+   self.assertEqual(store.claim()['id'],fresh['id'])
  def test_restart_limit_survives_new_request_ids(self):
   with tempfile.TemporaryDirectory() as tmp:
    store,t=self.setup(tmp)

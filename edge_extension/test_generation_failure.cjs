@@ -8,3 +8,14 @@ test('owned draft keyboard fallback clicks no unverified task and confirms the n
  const e={value:'owned',focus(){},dispatchEvent(ev){if(ev.type==='keydown')pressed++;}};assert.equal(await ctx.OzonComposer.sendOwnedByEnter(e,{doc:{},expected:'owned',marker:'own',stopped:()=>false,report:async()=>{},sleep:async ms=>clock+=ms,now:()=>clock}),true);assert.equal(pressed,1);
  e.value='user edited';await assert.rejects(ctx.OzonComposer.sendOwnedByEnter(e,{doc:{},expected:'owned',marker:'own',stopped:()=>false,report:async()=>{},sleep:async()=>{},now:()=>clock}),/已变化/);assert.equal(pressed,1);
 });
+test('exact failed remake reply is recognized despite stale previous delivery metadata',()=>{
+ const x=f();x.ctx.__ozonDeliveryInfo={fileCount:7};x.text('本次Ozon主图生成失败，图片生成工具返回错误。因此，暂时无法交付符合要求的01_main.jpg。本次没有生成有效成品文件，因此不提供虚假下载链接。图像生成失败');assert.equal(x.check(0),null);assert.equal(x.check(3100).reply_finished,true);
+});
+test('failure detection runs before order-repair extraction during automatic collection',async()=>{
+ const source=fs.readFileSync(__dirname+'/content.js','utf8');const fn=source.slice(source.indexOf('async function collectImages('),source.indexOf('async function saveImage('));let restarts=0,collections=0;
+ const ctx={document:{},OzonGenerationFailure:{inspect:()=>({marker:'source',message:'failed',reply_finished:true,no_images:true})},tell:async()=>{},chrome:{runtime:{sendMessage:async m=>{assert.equal(m.kind,'generation-failed');restarts++;return {ok:true};}}},collectSource:async()=>{collections++;throw Error('must not collect');}};
+ vm.runInNewContext(fn,ctx);const result=await ctx.collectImages({id:'image-remake',_deliveryPlanChecked:true,orderRepairPending:true,recovery_marker:'source'},{marker:'source'});assert.equal(result.length,0);assert.equal(restarts,1);assert.equal(collections,0);
+});
+test('a downloadable image in the current failed reply preserves its result',()=>{
+ const x=f();x.ctx.OzonFiles={allowedElement:()=>true};x.ctx.OzonConversation.requestReplies=()=>[{textContent:message,querySelectorAll:()=>[{}]}];assert.equal(x.check(0),null);assert.equal(x.check(5000),null);
+});
