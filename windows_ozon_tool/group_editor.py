@@ -2,7 +2,7 @@
 import copy,json,os,threading,time,webbrowser
 from pathlib import Path
 from attribute_service import field_key,category_key
-from group_service import GroupService,revision
+from group_service import GroupService,revision,edit_guard,EditConflict
 from variants import FIELDS,column_updates
 from pricing_service import read
 from publication_service import TERMINAL,warehouse_label
@@ -15,7 +15,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  paths=[Path(p)/'listing_bundle.json' for p in group_folders]
  if not paths:messagebox.showinfo('没有变体','请选择尚未取消的商品组');return
  coordinator=GroupService(paths,service,pricing,store)
- dialog=tk.Toplevel(root);dialog.title('整组预览 · Ozon 商品自动化 1.0.40');dialog.geometry('1280x850');dialog.minsize(950,650)
+ dialog=tk.Toplevel(root);dialog.title('整组预览 · Ozon 商品自动化 1.0.41');dialog.geometry('1280x850');dialog.minsize(950,650)
  busy=False;selected=set(range(len(paths)));focus=['',''];bundles=[];token=None;rendered=None;warehouses={};photos=[];rows={};last_job=None;copy_dirty=False;displayed_copy=None;copy_timer=None;busy_since=0;operation_error='';operation_name=''
  ttk.Label(dialog,text='每列一个变体；双击单格修改，点击参数名选中整行后批量修改。仓库显示当前店铺全部类型和状态。',wraplength=900).pack(pady=6)
  status=ttk.Label(dialog,text='正在加载整组预览',wraplength=1200);status.pack(pady=3)
@@ -45,17 +45,19 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   nonlocal busy,busy_since,operation_error,operation_name
   if busy:return
   busy=True;busy_since=time.monotonic();operation_error='';operation_name=label;coordinator.status=label;submit_button.configure(state='disabled');update_button.configure(state='disabled');status.configure(text='处理中，参数与售价同步后刷新…')
-  def finish(error=None,result=None):
+  def finish(error=None,result=None,conflict=False):
    nonlocal busy,rendered,operation_error
    if not dialog.winfo_exists():return
    busy=False;rendered=None;operation_error=error or '';refresh()
+   if error and conflict:
+    status.configure(text=error);messagebox.showwarning('参数已更新，请核对',error+'\n编辑窗口及本次输入已保留。',parent=dialog);return
    if error:
     notebook.select(progress_tab);progress_info.delete('1.0','end');progress_info.insert('1.0','提交/处理未完成：\n'+error+'\n\n若提示预览内容变化，核对所列字段后再提交。若有结果不确定的导入任务，请先核对平台回执。');from task_alerts import issue as alert_issue,render as render_alert
     messagebox.showerror('整组处理未完成',render_alert([alert_issue('、'.join(offers()),operation_name or '整组预览',error)]),parent=dialog)
    elif after:after(result)
   def work():
    try:result=action();root.after(0,lambda:finish(result=result))
-   except Exception as exc:root.after(0,lambda text=str(exc):finish(error=text))
+   except Exception as exc:root.after(0,lambda text=str(exc),conflict=isinstance(exc,EditConflict):finish(error=text,conflict=conflict))
   threading.Thread(target=work,daemon=True).start()
  def chosen():return sorted(selected)
  def headings():
@@ -164,12 +166,12 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    content=text.get('1.0','end-1c')
    try:values=column_updates(content,len(indices)) if not multiline else [content]
    except ValueError as exc:messagebox.showerror('未修改',str(exc),parent=window);return
-   window.destroy();run(lambda:save(values))
+   run(lambda:save(values),lambda result:window.destroy() if window.winfo_exists() else None)
   ttk.Button(footer,text='保存并同步属性与售价',command=apply).pack(pady=7)
  def edit_row(indices,iid):
   if not editable() or iid not in rows:return
   if not indices:messagebox.showinfo('未选择变体','请至少勾选一个变体列',parent=dialog);return
-  row,field=rows[iid];kind,key=row;expected=token
+  row,field=rows[iid];kind,key=row;expected=edit_guard(bundles,indices,kind,key) if kind in ('p','a') or (kind=='s' and key=='price') else token
   from rich_content import is_rich_field
   if kind=='a' and is_rich_field(field):
    window=tk.Toplevel(dialog);window.title('自动富内容JSON · '+paths[indices[0]].parent.name);window.geometry('850x600');text=ScrolledText(window,wrap='word');text.pack(fill='both',expand=True,padx=8,pady=8)
@@ -177,6 +179,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    try:value=json.dumps(json.loads(value),ensure_ascii=False,indent=2)
    except (ValueError,TypeError):value='等待对应变体8张图片托管完成后生成'
    text.insert('1.0',value);text.configure(state='disabled');ttk.Label(window,text='自动使用本变体01主图和02—08详情；图片更新后自动重建。').pack(pady=5);return
+  if kind=='a' and (int(key.rsplit(':',1)[1]) in (4180,4191) or 'тег' in str((field or {}).get('name_ru','')).casefold()):expected=token
   if kind=='a' and int(key.rsplit(':',1)[1]) in (21841,21837):
    messagebox.showinfo('自动使用生成视频','视频链接自动使用本变体生成的8秒MP4；视频名称沿用共用标题。',parent=dialog);return
   if kind=='s':
@@ -197,7 +200,8 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    messagebox.showinfo('统一初始库存','新商品初始库存固定为'+str(publication.initial_stock)+'，销售后正常扣减，不自动重置。',parent=dialog);return
   if kind=='p' and key=='color':
    from color_selection import choose
-   choose(dialog,str(initial),lambda value:run(lambda:coordinator.set_parameters(indices,'color',[value]*len(indices),expected)),title='选择颜色 · '+str(len(indices))+'个变体（可多选）');return
+   def save_color(value):run(lambda:coordinator.set_parameters(indices,'color',[value]*len(indices),expected),lambda result:color_window.destroy() if color_window.winfo_exists() else None)
+   color_window=choose(dialog,str(initial),save_color,title='选择颜色 · '+str(len(indices))+'个变体（可多选）',close_on_save=False);return
   if kind=='p':text_editor('修改 '+iid,indices,str(initial),lambda values:coordinator.set_parameters(indices,key,values,expected));return
   if field.get('dictionary_id'):dictionary_editor(indices,key,field,expected);return
   def save(values):
@@ -360,7 +364,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    if loading[0]:return
    try:values=model.values()
    except ValueError as exc:messagebox.showerror('未保存',str(exc),parent=window);return
-   window.destroy();run(lambda:coordinator.set_attributes(indices,key,values,expected))
+   run(lambda:coordinator.set_attributes(indices,key,values,expected),lambda result:window.destroy() if window.winfo_exists() else None)
   save_button=ttk.Button(footer,text='保存所选官方选项并重算售价',command=save);save_button.pack(pady=7);render();fetch()
  def choose_category(indices):
   # Show the known category immediately. A click no longer fetches both full trees.

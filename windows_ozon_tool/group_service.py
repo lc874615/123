@@ -16,6 +16,26 @@ def revision(bundles,legacy=False):
   for row in data:row.pop('asset_review',None);row.pop('regeneration_pending',None)
  return hashlib.sha256(json.dumps(data,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
 
+class EditConflict(ValueError):pass
+
+def edit_guard(bundles,indices,kind,key):
+ rows=[]
+ for n in indices:
+  b=bundles[n];state=b.get('attribute_draft') or {};category=b.get('category') or {}
+  row={'sku':b['sku'],'category':[category.get('description_category_id'),category.get('type_id')]}
+  if kind=='p':row['value']=(b.get('variant_parameters') or {}).get(key,'')
+  elif kind=='a':
+   field=next((f for f in state.get('fields',[]) if field_key(f)==key),None)
+   row['field']=field;row['value']=(state.get('values') or {}).get(key,[])
+   link=binding(field) if field else None
+   if link:row['parameter']=(b.get('variant_parameters') or {}).get(link[0],'')
+  elif kind=='s' and key=='price':
+   row['parameters']=b.get('variant_parameters');row['manual']=bool(b.get('manual_price'))
+   if row['manual']:row['price']=b.get('price_cny')
+  else:raise ValueError('编辑校验范围无效')
+  rows.append(row)
+ return copy.deepcopy({'edit_scope':True,'indices':list(indices),'kind':kind,'key':key,'rows':rows})
+
 def binding(field):
  name=(field.get('name_ru') or field.get('name','')).strip().casefold()
  for key,names in [('color',('цвет','цвет товара','颜色','商品颜色')),('material',('материал','основной материал','主体材质','主要材质')),('accessory_material',('материал подкладки','内衬材质')),('quantity',('количество предметов в комплекте','количество в упаковке','количество в упаковке, шт','количество товара в единице измерения','количество товара','единиц в одном товаре','套装件数','包装件数'))]:
@@ -38,7 +58,9 @@ class GroupService:
   finally:self.lock.release()
  def token(self):return revision(self.load())
  def _check(self,bundles,expected):
-  if expected is not None and revision(bundles)!=expected:raise ValueError('预览内容已更新，请先核对最新表格再操作')
+  if isinstance(expected,dict) and expected.get('edit_scope'):
+   if edit_guard(bundles,expected['indices'],expected['kind'],expected['key'])!=expected:raise EditConflict('正在编辑的参数或类目已更新；本次输入尚未保存，请核对最新值后重新打开编辑。')
+  elif expected is not None and revision(bundles)!=expected:raise ValueError('预览内容已更新，请先核对最新表格再操作')
  def _invalidate(self,bundle):
   bundle.pop('pricing_fingerprint',None);bundle.pop('pricing_confirmed_fingerprint',None)
   if not bundle.get('manual_price'):bundle['price_cny']=None
