@@ -5,7 +5,7 @@ PALETTE={'bg':'#F3F5FA','surface':'#FFFFFF','ink':'#17243B','muted':'#64748B','l
 def build(root):
  import tkinter as tk
  from tkinter import ttk
- c=PALETTE;root.title('Ozon 商品自动化 · 1.0.44');root.geometry('1440x900');root.minsize(1080,700);root.configure(background=c['bg'])
+ c=PALETTE;root.title('Ozon 商品自动化 · 1.0.45');root.geometry('1440x900');root.minsize(1080,700);root.configure(background=c['bg'])
  style=ttk.Style(root);style.theme_use('clam')
  font='Microsoft YaHei UI' if os.name=='nt' else 'Noto Sans CJK SC'
  style.configure('.',font=(font,10),background=c['bg'],foreground=c['ink'])
@@ -40,7 +40,7 @@ def build(root):
  banner=ttk.Frame(root,padding=(24,18));banner.pack(fill='x')
  ttk.Label(banner,text='Ozon 工作台',style='Heading.TLabel').pack(side='left')
  ttk.Label(banner,text='商品制作  /  素材自动化  /  上架审核',style='Muted.TLabel').pack(side='left',padx=22)
- ttk.Label(banner,text='DESKTOP   ·   1.0.44',style='Muted.TLabel').pack(side='right')
+ ttk.Label(banner,text='DESKTOP   ·   1.0.45',style='Muted.TLabel').pack(side='right')
  connection=ttk.Label(root,text='正在检查本地连接…',padding=(24,9),wraplength=1360,style='Muted.TLabel');connection.pack(fill='x')
  workspace=ttk.Frame(root);workspace.pack(fill='both',expand=True,padx=16,pady=(8,16))
  rail=ttk.Frame(workspace,style='Card.TFrame',padding=(12,18));rail.pack(side='left',fill='y',padx=(0,16))
@@ -67,11 +67,15 @@ def build(root):
  metrics=ttk.Frame(tasks);metrics.pack(fill='x',pady=(0,16));values={}
  for i,(key,label) in enumerate([('total','有效变体'),('queued','等待制作'),('running','制作进行中'),('attention','需要处理')]):
   metrics.columnconfigure(i,weight=1);card=ttk.Frame(metrics,style='Card.TFrame',padding=(18,13));card.grid(row=0,column=i,sticky='ew',padx=(0,10 if i<3 else 0))
-  ttk.Label(card,text=label,style='Caption.TLabel').pack(anchor='w');value=ttk.Label(card,text='0',style='Metric.TLabel');value.pack(anchor='w',pady=(4,0));values[key]=value
+  caption=ttk.Label(card,text=label,style='Caption.TLabel',cursor='hand2');caption.pack(anchor='w');value=ttk.Label(card,text='0',style='Metric.TLabel',cursor='hand2');value.pack(anchor='w',pady=(4,0));values[key]=value
+  def jump(event=None,k=key):
+   search.set('');mode.set({'total':'全部任务','queued':'排队中','running':'制作中','attention':'需处理'}[k])
+  for widget in (card,caption,value):widget.bind('<Button-1>',jump)
  pages['metrics']=values
+ ttk.Label(tasks,text='“需要处理”表示待核对、待补充或明确异常，不等于上架失败。点击卡片可定位变体，查看“当前阶段 / 原因”。',style='Muted.TLabel',wraplength=1000).pack(anchor='w',pady=(0,12))
  filters=ttk.Frame(tasks);filters.pack(fill='x',pady=(0,12));search=tk.StringVar();mode=tk.StringVar(value='全部任务')
  ttk.Label(filters,text='快速查找',style='Muted.TLabel').pack(side='left',padx=(0,8));entry=ttk.Entry(filters,textvariable=search,width=30);entry.pack(side='left',fill='x',expand=True)
- ttk.Combobox(filters,textvariable=mode,state='readonly',values=['全部任务','排队中','制作中','素材已保存','需处理'],width=13).pack(side='left',padx=10)
+ ttk.Combobox(filters,textvariable=mode,state='readonly',values=['全部任务','排队中','制作中','素材已保存','已上架','需处理'],width=13).pack(side='left',padx=10)
  ttk.Button(filters,text='清除筛选',command=lambda:(search.set(''),mode.set('全部任务'))).pack(side='right')
  result_label=ttk.Label(tasks,text='正在读取任务…',style='Muted.TLabel');result_label.pack(anchor='w',pady=(0,8));pages['task_results']=result_label
  pages['task_search']=search;pages['task_filter']=mode

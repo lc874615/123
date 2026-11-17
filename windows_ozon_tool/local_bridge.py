@@ -639,7 +639,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.44','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.45','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
@@ -916,13 +916,19 @@ def main(test_mode=False,on_ready=None):
  view=ttk.Treeview(task_table,columns=('sku','progress','price','hosting','status'),show='tree headings',height=15,selectmode='browse')
  view.heading('#0',text='商品组');view.column('#0',width=150,stretch=False,anchor='center')
  for key,label,width in [('sku','变体货号',165),('progress','图片',90),('price','售价（元）',110),('hosting','托管链接',130),('status','当前阶段 / 原因',360)]:view.heading(key,text=label,anchor='center');view.column(key,width=width,stretch=key=='status',anchor='center')
+ view.tag_configure('published',foreground='#16785B',background='#F1FAF5')
  view.tag_configure('group',background='#EDF1F8',foreground='#334155');view.tag_configure('even',background='#FFFFFF');view.tag_configure('odd',background='#F8FAFE');view.tag_configure('attention',foreground='#B74347',background='#FFF4F2')
  view.grid(row=0,column=0,sticky='nsew');scroll_y=ttk.Scrollbar(task_table,orient='vertical',command=view.yview);scroll_y.grid(row=0,column=1,sticky='ns');scroll_x=ttk.Scrollbar(task_table,orient='horizontal',command=view.xview);scroll_x.grid(row=1,column=0,sticky='ew');view.configure(yscrollcommand=scroll_y.set,xscrollcommand=scroll_x.set)
  task_actions=ttk.Frame(tasks_page);task_actions.pack(side='bottom',before=task_table,fill='x',pady=10);task_more=tk.Menu(root,tearoff=False);more_button=ttk.Menubutton(task_actions,text='更多操作',menu=task_more);more_button.pack(side='right')
+ task_note=ttk.Label(tasks_page,text='选中具体变体后，在这里查看完整的当前阶段与原因。',style='Muted.TLabel',wraplength=1000)
+ task_note.pack(side='bottom',before=task_table,fill='x',pady=4)
+ def show_task_note(event=None):
+  ids=view.selection();task_note.configure(text=row_notes.get(ids[0],'请展开商品组，选择具体变体查看状态。') if ids else '选中具体变体后，在这里查看完整的当前阶段与原因。')
+ view.bind('<<TreeviewSelect>>',show_task_note)
  from task_alerts import AlertPopup,ProgressWatch,collect as collect_alerts,issue as make_alert
  alert_popup=AlertPopup(root,DATA/'task_alert_state.json',lambda:notebook.select(pages['tasks']));alert_watch=ProgressWatch()
  task_more.add_command(label='查看当前异常及中文处理办法',command=alert_popup.reopen)
- visible=[];last_view=None;refresh_timer=None
+ visible=[];last_view=None;refresh_timer=None;row_notes={}
  def schedule_refresh(delay=1500):
   nonlocal refresh_timer
   if refresh_timer is not None:root.after_cancel(refresh_timer)
@@ -933,38 +939,40 @@ def main(test_mode=False,on_ready=None):
   ids=view.selection()
   return next((t for t in visible if ids and (t['id']==ids[0] or ('group:'+str(t.get('base_article') or t.get('copy_leader') or t['sku']))==ids[0])),None)
  def refresh():
-  nonlocal visible,last_view,refresh_timer
+  nonlocal visible,last_view,refresh_timer,row_notes
   if refresh_timer is not None:root.after_cancel(refresh_timer);refresh_timer=None
   if not store.lock.acquire(blocking=False):
    connection.configure(text='后台正在保存/校验素材，界面稍后自动刷新');schedule_refresh(300);return
   try:visible=[dict(t) for t in store.tasks];image_snapshot=[dict(j) for j in store.image_jobs.jobs];reason=store.queue_reason();plugin_online=time.time()-store.client.get('last_seen',0)<75
   finally:store.lock.release()
-  from ui_state import task_summary,matches
-  for key,value in task_summary(visible,image_snapshot).items():pages['metrics'][key].configure(text=str(value))
+  from ui_state import task_summary,matches,task_bucket
   from pipeline_status import stage,group_summary
   import os
   merchant=os.environ.get('OZON_CLIENT_ID','');connection.configure(text=('店铺 '+merchant if merchant else 'Ozon未连接')+' · 插件'+('在线' if plugin_online else '待连接')+' · COS'+('已配置' if (DATA/'hosting'/'config.json').exists() else '待配置')+' · 定价来源'+('已配置' if all((DATA/'pricing'/(name+'.json')).exists() for name in ('ogl','commissions','fx')) else '待配置')+' | '+reason)
   try:fx=read_pricing(pricing.root/'fx.json');fx_note=' | '+fx['date']+'：1元='+fx['rub_per_cny']+'卢布'
   except (OSError,ValueError,KeyError):fx_note=''
   pricing_label.configure(text='自动定价：'+pricing.status+fx_note);hosting_label.configure(text='图片托管：'+hosting.status);video_label.configure(text='视频托管：'+video_hosting.status)
-  jobs=[j for j in publication.jobs() if j.get('account_id')==merchant];groups={};snapshot=[];alert_bundles=[]
+  jobs=[j for j in publication.jobs() if j.get('account_id')==merchant];groups={};snapshot=[];alert_bundles=[];stage_map={}
   for task in visible:
    try:bundle=read_pricing(DATA/'products'/task['sku']/'listing_bundle.json')
    except (OSError,ValueError):bundle={}
    if bundle and task['state']!='cancelled':alert_bundles.append(bundle)
-   state=stage(task,bundle,jobs);row=(task['sku'],str(len(task.get('received_images') or []))+'/8',bundle.get('price_cny') or '—',str((bundle.get('hosting') or {}).get('verified_images',0))+'/8 · '+('视频✓' if (bundle.get('video_hosting') or {}).get('state')=='done' else '视频…'),state)
-   if not matches(task,pages['task_search'].get(),pages['task_filter'].get(),image_snapshot):continue
+   state=stage(task,bundle,jobs,image_snapshot);stage_map[task['id']]=state;row=(task['sku'],str(len(task.get('received_images') or []))+'/8',bundle.get('price_cny') or '—',str((bundle.get('hosting') or {}).get('verified_images',0))+'/8 · '+('视频✓' if (bundle.get('video_hosting') or {}).get('state')=='done' else '视频…'),state)
+   if not matches(task,pages['task_search'].get(),pages['task_filter'].get(),image_snapshot,stage_map):continue
    group=str(task.get('base_article') or task.get('copy_leader') or task['sku']);groups.setdefault(group,[]).append((task,row));snapshot.append((task['id'],group,row))
-  pages['task_results'].configure(text=('显示 '+str(len(snapshot))+' 个变体 · '+str(len(groups))+' 个商品组') if snapshot else ('没有匹配的任务，可清除筛选查看全部。' if visible else '还没有制作任务，请前往“商品制作”创建第一组商品。'))
-  if snapshot!=last_view:
+  for key,value in task_summary(visible,image_snapshot,stage_map).items():pages['metrics'][key].configure(text=str(value))
+  pages['task_results'].configure(text=('显示 '+str(len(snapshot))+' 个变体 · '+str(len(groups))+' 个商品组') if snapshot else ('当前没有需要人工核对或修正的任务。' if pages['task_filter'].get()=='需处理' else '没有匹配的任务，可清除筛选查看全部。' if visible else '还没有制作任务，请前往“商品制作”创建第一组商品。'))
+  row_notes=stage_map
+  view_key=(pages['task_filter'].get(),pages['task_search'].get(),snapshot)
+  if view_key!=last_view:
    selection=view.selection();position=view.yview()[0];expanded={i:view.item(i,'open') for i in view.get_children()};view.delete(*view.get_children())
    for group,items in groups.items():
-    key='group:'+group;stages=[row[-1] for task,row in items];view.insert('','end',iid=key,text=group,values=(str(len(items))+' 个变体','','','',group_summary(stages)),open=expanded.get(key,True),tags=('group',))
+    key='group:'+group;stages=[row[-1] for task,row in items];row_notes[key]=group_summary(stages)+'；展开商品组可查看每个变体的具体状态。';view.insert('','end',iid=key,text=group,values=(str(len(items))+' 个变体','','','',group_summary(stages)),open=True if pages['task_filter'].get()!='全部任务' else expanded.get(key,True),tags=('group',))
     for n,(task,row) in enumerate(items):
-     tag='attention' if '需处理' in row[-1] or task.get('state')=='needs_attention' else 'even' if n%2==0 else 'odd'
+     tag='attention' if task_bucket(task,image_snapshot,stage_map)=='需处理' else 'published' if row[-1]=='已上架' else 'even' if n%2==0 else 'odd'
      view.insert(key,'end',iid=task['id'],text='',values=row,tags=(tag,))
    if selection and view.exists(selection[0]):view.selection_set(selection[0])
-   view.yview_moveto(position);last_view=snapshot
+   view.yview_moveto(position);last_view=view_key
   if not test_mode:
    if not store.lock.acquire(blocking=False):schedule_refresh(300);return
    try:alert_jobs=[dict(j) for j in store.image_jobs.jobs];plugin=dict(store.plugin_status);paused=bool(store.control.get('paused'));client=dict(store.client)

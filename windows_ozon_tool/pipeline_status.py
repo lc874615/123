@@ -3,7 +3,14 @@ import time
 from asset_state import pending
 from listing_bundle import copy_complete
 
-def stage(task,bundle,jobs):
+def stage(task,bundle,jobs,image_jobs=()):
+ active=[j for j in image_jobs if j.get('state') not in ('saved','cancelled') and any(t.get('sku')==task['sku'] for t in j.get('targets',[]))]
+ failure=next((j for j in active if j.get('state')=='needs_attention'),None)
+ if failure:
+  kind={'shared_details':'共用详情重做','variant_main':'主图重做','asset_recollection':'已有图片采集'}.get(failure.get('kind'),'图片任务')
+  return '需处理：'+kind+' · '+str(failure.get('message') or '请核对本任务状态')
+ if active:return '图片重做排队中' if all(j.get('state')=='queued' for j in active) else '图片重做与自动采集中（原图已备份）'
+
  if bundle.get('image_regeneration_jobs'):return '图片重做与自动采集中（原图已备份）'
  if task.get('recollection_requested'):
   if task.get('state')=='waiting':return '自动采集已有图片：'+task.get('message','正在定位并下载')
@@ -21,6 +28,7 @@ def stage(task,bundle,jobs):
   if state not in ('cancelled_followup','rejected','failed','superseded'):
    return ('等待较久：' if job.get('needs_attention') else '')+(item.get('status') or job.get('message','上架处理中'))
  if task.get('state')=='cancelled':return '已停止制作'
+ if task.get('copy_state')=='needs_attention':return '需处理：'+('属性读取' if task.get('copy_mode')=='attributes' else '文案生成/采集')+' · '+str(task.get('message') or '请核对已有回复')
  if task.get('state')=='queued':return '排队中'
  if task.get('state') in ('claimed','sending','waiting'):return '作图与采集中'
  if task.get('state')=='needs_attention':return '需处理：'+task.get('message','请检查作图页')
