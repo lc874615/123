@@ -639,7 +639,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.45','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.46','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
@@ -788,7 +788,7 @@ def main(test_mode=False,on_ready=None):
  video_hosting=VideoHostingService(hosting);None if test_mode else threading.Thread(target=video_hosting.worker,args=(pricing_stop,),daemon=True).start()
  video_label=ttk.Label(sources_panel,wraplength=850,text='视频托管：等待8秒MP4与图片链接');video_label.pack(pady=3)
  from attribute_service import AttributeService
- attributes=AttributeService(DATA,store.lock,active_skus=hosting_skus)
+ attributes=AttributeService(DATA,store.lock,active_skus=hosting_skus);grid.color_service=attributes
  None if test_mode else threading.Thread(target=attributes.worker,args=(pricing_stop,),daemon=True).start()
  from publication_service import PublicationService
  publication=PublicationService(DATA,store.lock,initial_stock=1000)

@@ -64,6 +64,16 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   if not selected:return
   key=selected[0];field=fields[key];state=bundle.get('attribute_draft') or {};cached=lookup(dialog,('single_attribute',str(path.resolve()),key))
   if cached is not None:return cached
+  from color_selection import is_color_field,choose
+  if field.get('dictionary_id') and is_color_field(field,False):
+   initial='；'.join(v.get('value','') for v in (state.get('values') or {}).get(key,[]))
+   def save_color(text):
+    def action():
+     from prefill_rules import color_values,split
+     values=service.resolve_suggestion(read(path),field,color_values(text) or split(text)) if text else []
+     service.save_values(path,key,values);root.after(0,color_window.destroy)
+    work(action)
+   color_window=choose(dialog,initial,save_color,title='官方颜色（含色块示意）',close_on_save=False,window_key=('single_official',str(path.resolve()),key),service=service,bundles=[bundle]);return
   window=remember(dialog,('single_attribute',str(path.resolve()),key),tk.Toplevel(dialog));window.title(field.get('name','属性')+' · '+field.get('name_ru',''));window.geometry('850x530')
   from ui_layout import dialog_footer
   footer=dialog_footer(window,850,530)

@@ -105,21 +105,21 @@ def validate_values(field,values):
 class AttributeService:
  def __init__(self,data,lock=None,caller=api,active_skus=None):
   self.data=Path(data);self.root=self.data/'attributes';self.root.mkdir(parents=True,exist_ok=True);self.lock=lock or threading.Lock();self.io_lock=threading.RLock();self.caller=caller;self.active_skus=active_skus;self.schema_cache={};self.status='等待类目确认后读取必填属性';self.wake=threading.Event();self.retry_at={}
- def dictionary(self,bundle,field,query='',last_value_id=0,force=False):
+ def dictionary(self,bundle,field,query='',last_value_id=0,force=False,language='ZH_HANS'):
   category,type_id=category_key(bundle);base={'attribute_id':field['id'],'description_category_id':category,'type_id':type_id}
   with self.io_lock:
    cache_path=self.root/f'{category}-{type_id}-{field["id"]}-queries.json'
    try:cached=read(cache_path) if cache_path.exists() else {}
    except (OSError,ValueError):cached={}
    if not isinstance(cached,dict):cached={}
-   cache_key=json.dumps([query.strip(),last_value_id,'ZH_HANS',field.get('dictionary_id')],ensure_ascii=False);entry=cached.get(cache_key) or {}
+   cache_key=json.dumps([query.strip(),last_value_id,language,field.get('dictionary_id')],ensure_ascii=False);entry=cached.get(cache_key) or {}
    if not isinstance(entry,dict):entry={}
    if not force and 0<=time.time()-entry.get('fetched_at',0)<86400 and isinstance((entry.get('response') or {}).get('result'),list):return copy.deepcopy(entry['response'])
    self.status='正在读取官方选项：'+(field.get('name') or field.get('name_ru') or str(field['id']))
    if query:
     if len(query.strip())<2:raise ValueError('官方字典关键词至少2个字符')
     response=self.caller('/v1/description-category/attribute/values/search',{**base,'value':query.strip(),'limit':100})
-   else:response=self.caller('/v1/description-category/attribute/values',{**base,'language':'ZH_HANS','last_value_id':last_value_id,'limit':200})
+   else:response=self.caller('/v1/description-category/attribute/values',{**base,'language':language,'last_value_id':last_value_id,'limit':200})
    path=self.root/(f'{category}-{type_id}-{field["id"]}.json');known=read(path) if path.exists() else {}
    for row in response['result']:
     if isinstance(row.get('id'),int) and row['id']>0:known[str(row['id'])]=row
@@ -166,13 +166,37 @@ class AttributeService:
    found={r['id']:r for r in result if str(r.get('value','')).casefold().replace('ё','е') in accepted}
    if len(found)!=1:
     result=self.dictionary(bundle,field,force=force)['result'];found={r['id']:r for r in result if str(r.get('value','')).casefold().replace('ё','е') in accepted}
+   if len(found)!=1:
+    category,type_id=category_key(bundle);path=self.root/f'{category}-{type_id}-{field["id"]}.json'
+    known=read(path) if path.exists() else {}
+    found={r['id']:r for r in known.values() if str(r.get('value','')).casefold().replace('ё','е') in accepted}
    if len(found)!=1:raise ValueError('官方选项未唯一匹配：'+str(value))
    return next(iter(found.values()))
   requested=suggestion if isinstance(suggestion,list) else [suggestion]
+  from color_selection import is_color_field
+  if is_color_field(field,False):
+   category,type_id=category_key(bundle);full=self.root/f'{category}-{type_id}-{field["id"]}-fullcolors-{field.get("dictionary_id")}.json'
+   entry=read(full) if full.exists() else {}
+   if not force and 0<=time.time()-entry.get('fetched_at',0)<86400:
+    rows=entry.get('rows') or [];matched=[]
+    if len(requested)>1 and (not field.get('is_collection') or int(field.get('max_value_count') or 100)<len(requested)):
+     expected={v.casefold().replace('ё','е') for v in requested}
+     choices=[r for r in rows if {v.casefold().replace('ё','е') for v in (color_values(r.get('value')) or [])}==expected]
+     if len(choices)==1:matched=choices
+    else:
+     for value in requested:
+      accepted=aliases(field,value);choices=[r for r in rows if str(r.get('value','')).casefold().replace('ё','е') in accepted]
+      if len(choices)!=1:matched=[];break
+      matched.append(choices[0])
+    if matched:
+     values=[{'dictionary_value_id':r['id'],'value':r['value']} for r in matched];validate_values(field,values);return values
+
   if len(requested)>1 and (not field.get('is_collection') or int(field.get('max_value_count') or 100)<len(requested)):
    if normalized_name(field) not in ('цвет товара','цвет','颜色','商品颜色'):raise ValueError('官方字段不支持多个值')
    label=', '.join(requested);rows=self.dictionary(bundle,field,label,force=force)['result']
    rows+=self.dictionary(bundle,field,force=force)['result']
+   category,type_id=category_key(bundle);known_path=self.root/f'{category}-{type_id}-{field["id"]}.json'
+   if known_path.exists():rows+=list(read(known_path).values())
    expected={x.casefold().replace('ё','е') for x in requested}
    matches={r['id']:r for r in rows if {x.casefold().replace('ё','е') for x in (color_values(r.get('value')) or [])}==expected}
    if len(matches)!=1:raise ValueError('该颜色字段只允许一个选项，未找到同时包含全部颜色的官方组合；原始双颜色完整保留')

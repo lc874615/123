@@ -18,7 +18,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  coordinator=GroupService(paths,service,pricing,store)
  cached=lookup(root,('group_preview',tuple(sorted(str(p.resolve()) for p in paths))))
  if cached is not None:return cached
- dialog=remember(root,('group_preview',tuple(sorted(str(p.resolve()) for p in paths))),tk.Toplevel(root));dialog.title('整组预览 · Ozon 商品自动化 1.0.45');dialog.geometry('1280x850');dialog.minsize(950,650)
+ dialog=remember(root,('group_preview',tuple(sorted(str(p.resolve()) for p in paths))),tk.Toplevel(root));dialog.title('整组预览 · Ozon 商品自动化 1.0.46');dialog.geometry('1280x850');dialog.minsize(950,650)
  busy=False;selected=set(range(len(paths)));focus=['',''];bundles=[];token=None;rendered=None;warehouses={};photos=[];rows={};last_job=None;copy_dirty=False;displayed_copy=None;copy_timer=None;busy_since=0;operation_error='';operation_name=''
  ttk.Label(dialog,text='每列一个变体；双击单格修改，点击参数名选中整行后批量修改。仓库显示当前店铺全部类型和状态。',wraplength=900).pack(pady=6)
  status=ttk.Label(dialog,text='正在加载整组预览',wraplength=1200);status.pack(pady=3)
@@ -180,7 +180,9 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    existing_key=None
    if kind_now=='p' and key_now=='color':existing_key=('color_selection',('group',target_paths))
    elif kind_now=='p':existing_key=('parameter_text',str(paths[0].parent.resolve()),'修改 '+iid,tuple(indices))
-   elif kind_now=='a' and (current_field or {}).get('dictionary_id'):existing_key=('official_choices',target_paths,key_now)
+   elif kind_now=='a' and (current_field or {}).get('dictionary_id'):
+    from color_selection import is_color_field
+    existing_key=('color_selection',('official',target_paths,key_now)) if is_color_field(current_field,False) else ('official_choices',target_paths,key_now)
    if existing_key is not None:
     cached=lookup(dialog,existing_key)
     if cached is not None:return cached
@@ -218,8 +220,13 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   if kind=='p' and key=='color':
    from color_selection import choose
    def save_color(value):run(lambda:coordinator.set_parameters(indices,'color',[value]*len(indices),expected),lambda result:color_window.destroy() if color_window.winfo_exists() else None)
-   color_window=choose(dialog,str(initial),save_color,title='选择颜色 · '+str(len(indices))+'个变体（可多选）',close_on_save=False,window_key=('group',tuple(str(paths[n].resolve()) for n in indices)));return
+   color_window=choose(dialog,str(initial),save_color,title='选择颜色 · '+str(len(indices))+'个变体（可多选）',close_on_save=False,window_key=('group',tuple(str(paths[n].resolve()) for n in indices)),service=service,bundles=[bundles[n] for n in indices]);return
   if kind=='p':text_editor('修改 '+iid,indices,str(initial),lambda values:coordinator.set_parameters(indices,key,values,expected));return
+  from color_selection import is_color_field
+  if kind=='a' and field.get('dictionary_id') and is_color_field(field,False):
+   from color_selection import choose
+   def save_official_color(value):run(lambda:coordinator.set_parameters(indices,'color',[value]*len(indices),expected),lambda result:official_color_window.destroy() if official_color_window.winfo_exists() else None)
+   official_color_window=choose(dialog,str(initial),save_official_color,title='官方颜色（含色块示意）',close_on_save=False,window_key=('official',tuple(str(paths[n].resolve()) for n in indices),key),service=service,bundles=[bundles[n] for n in indices]);return
   if field.get('dictionary_id'):dictionary_editor(indices,key,field,expected);return
   def save(values):
    resolved=[coordinator.resolve_text(n,key,v) for n,v in zip(indices,values)];coordinator.set_attributes(indices,key,resolved,expected)
