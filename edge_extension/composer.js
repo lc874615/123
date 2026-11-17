@@ -2,7 +2,7 @@
  function visible(el){return !!el&&el.getClientRects().length>0&&el.getAttribute('aria-hidden')!=='true';}
  function enabled(el){return visible(el)&&!el.disabled&&el.getAttribute('aria-disabled')!=='true';}
  function findSend(editor,doc=document){
-  const roots=[...new Set([editor.closest('form'),editor.closest('[class*="ComposerLayoutRoot"],[data-testid="composer"],[data-composer-root]')].filter(Boolean))];
+  const roots=[...new Set([editor.closest('form'),editor.closest('[class*="ComposerLayoutRoot"],[class*="ComposerLayoutBody"],[data-testid="composer"],[data-composer-root]')].filter(Boolean))];
   const scopes=roots.length?roots:[doc];
   for(const scope of scopes){
    const explicit=[...scope.querySelectorAll('[data-testid="send-button"], [data-testid="composer-send-button"], button[aria-label="Send"], button[aria-label="Send prompt"], button[aria-label="Send message"], button[aria-label="Отправить"], button[aria-label="发送"], button[aria-label="发送提示"], button[aria-label="发送消息"], button[aria-label="提交"], button[title="Send"], button[title="发送"]')].filter(enabled);

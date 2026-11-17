@@ -6,6 +6,12 @@ from local_bridge import Store
 class AlertTests(unittest.TestCase):
  def test_image_exception_has_chinese_task_and_recovery_steps(self):
   rows=collect([{'id':'T','sku':'SKU(1)','state':'needs_attention','message':'未找到原始作图标记'}],[],[]);text=render(rows);self.assertIn('SKU(1)',text);self.assertIn('中文说明',text);self.assertIn('定位 / 更换作图页',text);self.assertIn('不重新作图',text)
+ def test_published_old_copy_attention_has_no_false_production_alert(self):
+  task={'id':'T','sku':'A','state':'saved','copy_state':'needs_attention','message':'8图、视频、共用俄语文案及草稿已完成；待上架审核'}
+  jobs=[{'state':'on_sale','items':{'A':{'on_sale':True}}}]
+  self.assertEqual(collect([task],[{'sku':'A'}],jobs),[])
+  active=[{'id':'R','sku':'A','state':'needs_attention','kind':'variant_main','targets':[{'sku':'A'}],'message':'本次重做失败'}]
+  self.assertTrue(collect([task],[{'sku':'A'}],jobs,active))
  def test_normal_queue_generation_pause_restart_and_recovery_do_not_popup(self):
   tasks=[{'id':'1','sku':'A','state':'queued'},{'id':'2','sku':'B','state':'waiting','message':'正在生成图片'},{'id':'3','sku':'C','state':'needs_attention','pause_requested':True,'message':'已请求暂停'},{'id':'4','sku':'D','state':'needs_attention','message':'服务已重启，等待自动读取现有网页结果；不重新发送'}];self.assertEqual(collect(tasks,[],[]),[])
  def test_same_exception_is_acknowledged_across_polls_and_restart(self):

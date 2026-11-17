@@ -27,6 +27,16 @@ class ResponsiveTests(unittest.TestCase):
      conn.request('POST','/queue-diagnostic','{}',{'Host':'127.0.0.1:0','Origin':'chrome-extension://offline','Authorization':'Bearer fixture','Content-Type':'application/json'})
      response=conn.getresponse();value=json.loads(response.read());conn.close();self.assertEqual(response.status,200);self.assertTrue(value['busy'])
    finally:httpd.shutdown();httpd.server_close();worker.join(2)
+ def test_queue_diagnostic_includes_hidden_copy_states_without_prompt_or_secrets(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   store=Store(tmp);store.create_set('OLD','synthetic facts');store.tasks[0].update(state='saved',copy_state='needs_attention',copy_mode='attributes',copy_phase='generating',message='optional failure')
+   httpd=server(store,'fixture',port=0);worker=threading.Thread(target=httpd.serve_forever,daemon=True);worker.start()
+   try:
+    conn=http.client.HTTPConnection('127.0.0.1',httpd.server_address[1],timeout=2)
+    conn.request('POST','/queue-diagnostic','{}',{'Host':'127.0.0.1:0','Origin':'chrome-extension://offline','Authorization':'Bearer fixture','Content-Type':'application/json'})
+    response=conn.getresponse();value=json.loads(response.read());conn.close();row=value['tasks'][0]
+    self.assertEqual(row['copy_state'],'needs_attention');self.assertEqual(row['copy_mode'],'attributes');self.assertEqual(row['copy_phase'],'generating');self.assertNotIn('prompt',row);self.assertNotIn('references',row)
+   finally:httpd.shutdown();httpd.server_close();worker.join(2)
 if __name__=='__main__':unittest.main()
 
 class SharedRegenerationResponsiveTests(unittest.TestCase):

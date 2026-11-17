@@ -38,7 +38,7 @@ class CopySchedulingTests(unittest.TestCase):
     leader.update(copy_mode='attributes',copy_state=state,copy_phase='generating',message='属性请求结果未知')
     store.sync_shared_copies();store.repair_unsent_copy()
     self.assertEqual(leader['message'],'属性请求结果未知');self.assertEqual(leader['copy_state'],state)
-    self.assertTrue(store.blockers())
+    self.assertEqual(bool(store.blockers()),state=='running')
  def test_missing_new_group_copy_precedes_old_group_optional_attribute_read(self):
   with tempfile.TemporaryDirectory() as tmp,patch('image_regeneration.threading.Thread'):
    store=fixtures.ImageRegenerationTests().setup(tmp);new=store.tasks[1];new['copy_leader']=new['sku'];new['base_article']='SECOND';new.pop('copy_state',None);path=store.folder/'products'/new['sku']/'listing_bundle.json';b=read(path);b['copy']={};write(path,b);self.assertEqual(store.next_copy()['sku'],new['sku']);self.assertEqual(new['copy_mode'],'copy')

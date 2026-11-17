@@ -35,7 +35,8 @@
    if(a===b)return 0;const p=a.compareDocumentPosition?.(b)||0;return p&4?-1:p&2?1:0;
   });
  }
- function userNodes(doc){return [...doc.querySelectorAll('[data-message-author-role="user"], [data-turn="user"], [class*="group/user-message"]')].filter(n=>!n.querySelector?.('[data-message-author-role="user"], [data-turn="user"], [class*="group/user-message"]'));}
+ const USER='[data-message-author-role="user"], [data-turn="user"], [class*="group/user-message"], [data-testid="user-message"]';
+ function userNodes(doc){return [...doc.querySelectorAll(USER)].filter(n=>!n.closest?.('[contenteditable="true"],textarea,[data-testid="composer"],[data-composer-root],[class*="ComposerLayout"]')&&!n.querySelector?.(USER));}
  function requestReplies(doc,marker){
   const users=userNodes(doc);
   const start=[...users].reverse().find(n=>(String(n.innerText||'')+' '+String(n.textContent||'')).includes(marker));
@@ -77,8 +78,7 @@
   if(!marker)return null;
   const user=userNodes(doc).find(n=>(String(n.innerText||'')+' '+String(n.textContent||'')).includes(marker));
   if(user)return user;
-  const root=main(doc);if(root&&doc.createTreeWalker){const walker=doc.createTreeWalker(root,4);let n;while((n=walker.nextNode()))if(n.nodeValue.includes(marker))return n;}
-  return null;
+   return null;
  }
  async function revealRequest(doc,marker,{sleep=ms=>new Promise(r=>setTimeout(r,ms)),stopped=()=>false,report=async()=>{},alternatives=[],onMarker=()=>{}}={}){
   globalThis.__ozonRecoveryInfo={phase:'locating',scrollers:0,checkedSegments:0,historyCandidates:alternatives.filter(m=>m!==marker).length};

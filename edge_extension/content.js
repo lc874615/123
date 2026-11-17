@@ -1,4 +1,4 @@
-(()=>{if(window.__ozonLocalInstalled)return;window.__ozonLocalInstalled=true;globalThis.__ozonContentVersion='1.0.48';let stop=false,running=false,activeImageTaskId=null,copyRunning=false;
+(()=>{if(window.__ozonLocalInstalled)return;window.__ozonLocalInstalled=true;globalThis.__ozonContentVersion='1.0.49';let stop=false,running=false,activeImageTaskId=null,copyRunning=false;
 async function collectSource(task,options){
  if(!globalThis.OzonDelivery)throw Error('最终交付采集模块未加载，请更新插件并刷新作图页');
  return globalThis.OzonDelivery.collect(document,{...options,task});
@@ -10,7 +10,7 @@ function findEditor(){
  for(const sel of selectors){const found=[...document.querySelectorAll(sel)].filter(e=>e.getClientRects().length&&!e.disabled&&e.getAttribute('aria-hidden')!=='true');if(found.length===1)return found[0];}
  return null;
 }
-function preflight(){const e=findEditor(),generating=globalThis.OzonConversation.generating(document);return {version:'1.0.48',imageTaskId:running?activeImageTaskId:null,ready:!!e&&!generating&&!running&&!copyRunning,copyTaskActive:copyRunning,generating,url:location.origin+location.pathname,message:running?'上一图片采集仍在完成，稍后自动继续':generating?'上一条回复仍在生成，等待完成后自动继续':e?'输入框已识别':'未找到可见输入框。请在普通ChatGPT文字对话中刷新页面，点击输入区后重试；不能在图片查看器或其他应用中执行。'};}
+function preflight(){const e=findEditor(),generating=globalThis.OzonConversation.generating(document);return {version:'1.0.49',imageTaskId:running?activeImageTaskId:null,ready:!!e&&!generating&&!running&&!copyRunning,copyTaskActive:copyRunning,generating,url:location.origin+location.pathname,message:running?'上一图片采集仍在完成，稍后自动继续':generating?'上一条回复仍在生成，等待完成后自动继续':e?'输入框已识别':'未找到可见输入框。请在普通ChatGPT文字对话中刷新页面，点击输入区后重试；不能在图片查看器或其他应用中执行。'};}
 async function run(task){
  if(running)throw Error('本页正在执行任务');running=true;activeImageTaskId=task.id;stop=false;
  try{
@@ -128,9 +128,9 @@ async function copy(task){
  try{
   if(running||globalThis.OzonConversation.generating(document))throw Error('图片回复尚未结束，文案等待下一次自动继续');
   let editor=findEditor();if(!editor)throw Error('未找到输入框');
-  const prepared=await globalThis.OzonComposerCleanup.prepare(task,{doc:document,findEditor,sleep,stopped:()=>stop,report:async()=>{}});
+  const prepared=await globalThis.OzonComposerCleanup.prepare(task,{doc:document,findEditor,sleep,stopped:()=>stop,report:message=>chrome.runtime.sendMessage({kind:'copy-progress',task_id:task.id,message})});
   editor=findEditor();
-  if(!prepared.alreadySent&&task.references?.length){await globalThis.OzonUploads.upload(task.references,{editor,sleep,stopped:()=>stop,report:()=>{}});editor=findEditor();if(!editor)throw Error('原始参考图上传后未找到输入框');}
+  if(!prepared.alreadySent&&task.references?.length){await globalThis.OzonUploads.upload(task.references,{editor,sleep,stopped:()=>stop,report:message=>chrome.runtime.sendMessage({kind:'copy-progress',task_id:task.id,message})});editor=findEditor();if(!editor)throw Error('原始参考图上传后未找到输入框');}
   const excluded=prepared.alreadySent?new Set():globalThis.OzonCopy.snapshot();
   const copyNodes=globalThis.OzonConversation.assistantNodes(document);
   const beforeCopy=prepared.alreadySent?new Set():new Set(copyNodes),beforeText=prepared.alreadySent?new Map():new Map(copyNodes.map(n=>[n,n.innerText||n.textContent||'']));
@@ -140,6 +140,7 @@ async function copy(task){
   if(editor instanceof HTMLTextAreaElement){Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(editor,task.prompt);editor.dispatchEvent(new Event('input',{bubbles:true}));}else{document.execCommand('insertText',false,task.prompt);editor.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:task.prompt}));}
   await globalThis.OzonComposer.submitOwned({doc:document,getEditor:findEditor,references:task.references||[],expected:task.prompt,marker:task.marker,sleep,stopped:()=>stop,report:message=>chrome.runtime.sendMessage({kind:'copy-progress',task_id:task.id,message})});
   }
+  await chrome.runtime.sendMessage({kind:'copy-progress',task_id:task.id,message:'文案请求已发送并确认，等待当前回复完成'});
   const until=Date.now()+300000;let stable='',repeats=0,changed=false;
   while(Date.now()<until){
    await sleep(1000);if(stop)throw Error('文案任务已暂停；生成可能仍在继续，请保存现有结果');

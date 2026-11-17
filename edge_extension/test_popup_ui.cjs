@@ -5,3 +5,5 @@ test('saved complete copy and in-flight final collection have distinct presentat
 test('presentation update changes labels only and requires no automation APIs',()=>{const {api,elements,ctx}=ui();assert.equal(ctx.document.body.dataset.phase,'paused');elements.status.textContent='正在提交当前任务';api.render();assert.equal(ctx.document.body.dataset.phase,'sending');assert.equal(elements['task-state'].textContent,'提交请求');});
 
 test('queue blocker takes precedence over completed draft words',()=>{const {api}=ui();assert.equal(api.phase('队列暂停：前序任务 pdd-14(1) 尚未完成：8图、视频、共用俄语文案及草稿已完成；待上架审核').label,'等待前序任务');assert.equal(api.phase('8图、视频、共用俄语文案及草稿已完成；待上架审核').label,'等待审核');});
+
+test('preparing copy never looks like collecting future saved results',()=>{const {api}=ui();assert.equal(api.phase('正在准备整组文案请求，等待上传与发送确认').key,'sending');assert.equal(api.phase('文案请求已发送并确认，等待当前回复完成').key,'generating');});

@@ -18,3 +18,15 @@ test('Enter-only fallback is attempted once and never releases an unconfirmed ta
  const ctx={KeyboardEvent:class{constructor(type){this.type=type;}},OzonConversation:{requestAnchor:()=>null,generating:()=>false}};vm.runInNewContext(fs.readFileSync(__dirname+'/composer.js','utf8'),ctx);
  await assert.rejects(ctx.OzonComposer.submitOwned({doc:{querySelectorAll:()=>[]},expected:'own',marker:'own',getEditor:()=>editor,now:()=>time,confirmMs:500,timeout:2000,sleep:async ms=>time+=ms}),/尚未确认/);assert.equal(keys,1);
 });
+test('real conversation lookup excludes the owned draft and clicks before accepting a user receipt',async()=>{
+ let time=0,clicks=0,users=[];const expected='owned\n【OZON_COPY:fixture】';
+ const root={innerText:expected,textContent:expected,querySelectorAll:()=>[]};
+ const button={type:'submit',isConnected:true,disabled:false,getClientRects:()=>[{}],getAttribute:()=>null,click(){clicks++;users=[{innerText:expected,textContent:expected,closest:()=>null,querySelector:()=>null}];editor.value='';}};
+ const form={querySelectorAll:()=>[button]};const editor={value:expected,isConnected:true,closest:()=>form};
+ const doc={querySelector:s=>s==='main,[role="main"]'?root:null,querySelectorAll:s=>s==='main,[role="main"]'?[root]:s.includes('data-message-author-role="user"')?users:[],createTreeWalker:()=>{let seen=false;return {nextNode:()=>seen?null:(seen=true,{nodeValue:expected})};}};
+ const ctx={OzonUploads:{attachmentState:()=>({ready:0})}};
+ vm.runInNewContext(fs.readFileSync(__dirname+'/conversation.js','utf8'),ctx);vm.runInNewContext(fs.readFileSync(__dirname+'/composer.js','utf8'),ctx);
+ assert.equal(ctx.OzonConversation.requestAnchor(doc,'【OZON_COPY:fixture】'),null);
+ await ctx.OzonComposer.submitOwned({doc,expected,marker:'【OZON_COPY:fixture】',getEditor:()=>editor,now:()=>time,sleep:async ms=>time+=ms,timeout:2000,confirmMs:500});
+ assert.equal(clicks,1);assert.ok(ctx.OzonConversation.requestAnchor(doc,'【OZON_COPY:fixture】'));
+});

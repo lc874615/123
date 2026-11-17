@@ -36,3 +36,21 @@ class Tests(unittest.TestCase):
   with tempfile.TemporaryDirectory() as tmp,patch.dict(os.environ,{'OZON_CLIENT_ID':'mock-shop'}),patch('image_regeneration.threading.Thread'):
    store,task=self.setup(tmp);p=store.folder/'publications'/'receipt.json';p.write_text('invalid')
    self.assertTrue(store.blockers());p.unlink();self.assertTrue(store.blockers())
+ def test_saved_optional_failure_does_not_require_publication_receipt(self):
+  with tempfile.TemporaryDirectory() as tmp,patch('image_regeneration.threading.Thread'):
+   store,task=self.setup(tmp);(store.folder/'publications'/'receipt.json').unlink()
+   task.update(state='saved',copy_state='needs_attention',copy_mode='attributes',copy_phase='generating',message='旧属性任务异常')
+   store.create_set('NEW','new product');before=dict(task)
+   self.assertFalse(store.blockers());self.assertTrue(store.poll_state()['ready']);self.assertEqual(task['copy_state'],before['copy_state']);self.assertEqual(task['message'],before['message']);self.assertEqual(task['copy_phase'],before['copy_phase'])
+ def test_idle_extension_defers_orphan_optional_request_without_resending(self):
+  with tempfile.TemporaryDirectory() as tmp,patch('image_regeneration.threading.Thread'):
+   store,task=self.setup(tmp);task.update(state='saved',copy_state='running',copy_mode='attributes',copy_phase='generating')
+   store.create_set('NEW','new product');self.assertTrue(store.blockers())
+   self.assertFalse(store.poll_state()['ready']);self.assertEqual(task['copy_state'],'running')
+   self.assertTrue(store.poll_state(extension_idle=True)['ready']);self.assertEqual(task['copy_state'],'needs_attention');self.assertEqual(task['copy_phase'],'generating')
+   self.assertEqual(store.claim()['sku'],'NEW')
+ def test_optional_failure_with_missing_or_stale_copy_still_blocks(self):
+  with tempfile.TemporaryDirectory() as tmp,patch('image_regeneration.threading.Thread'):
+   store,task=self.setup(tmp);(store.folder/'publications'/'receipt.json').unlink();task.update(state='saved',copy_state='needs_attention',copy_mode='attributes')
+   path=store.folder/'products'/task['sku']/'listing_bundle.json';b=read(path);b['copy']={};write(path,b);self.assertTrue(store.blockers())
+   task['copy_mode']='copy';self.assertTrue(store.blockers())

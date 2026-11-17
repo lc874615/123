@@ -70,9 +70,12 @@ def hosting_failed(state):
 
 def collect(tasks,bundles,jobs,image_jobs=(),plugin=None):
  found=[]
+ from pipeline_status import stage as production_stage
+ bundles_by_sku={b['sku']:b for b in bundles}
  for task in list(tasks)+list(image_jobs):
   if task.get('state')=='cancelled':continue
   owner=task.get('sku') or task.get('id','未知任务');m=task.get('message','')
+  if task.get('sku') and production_stage(task,bundles_by_sku.get(owner,{}),jobs,image_jobs)=='已上架':continue
   intentional=task.get('pause_requested') or any(s in m for s in ('已请求暂停','用户暂停','制作已暂停','服务已重启，等待自动读取','等待恢复已有结果','已备份旧素材，已加入','等待自动定位原始图片','文案被重启中断，等待自动读取'))
   if not intentional and (task.get('state') in ('needs_attention','failed','error') or task.get('copy_state')=='needs_attention'):found.append(issue(owner,'文案处理' if task.get('copy_state')=='needs_attention' else '图片制作/采集',m or '任务状态异常，需检查原页面',task.get('id')))
   if task.get('state')=='saved' and '视频合成失败' in m:found.append(issue(owner,'视频合成',m,task.get('id')))

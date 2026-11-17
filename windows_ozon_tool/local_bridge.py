@@ -205,17 +205,19 @@ class Store:
   return {'resumed':count}
  def blockers(self):
   if hasattr(self,'image_jobs'):self.image_jobs.tick()
-  from queue_completion import completed_skus
-  completed=completed_skus(self) if hasattr(self,'image_jobs') else set()
+  from queue_completion import completed_skus,optional_failure_skus
+  completed=(completed_skus(self)|optional_failure_skus(self)) if hasattr(self,'image_jobs') else set()
   tasks=[t for t in self.tasks if t['sku'] not in completed]+([j for j in self.image_jobs.jobs if j['state'] not in ('saved','cancelled','queued')] if hasattr(self,'image_jobs') else [])
-  return [{'id':t['id'],'sku':t['sku'],'state':t['state'],'copy_state':t.get('copy_state'),'message':t.get('message',''),'resume_mode':t.get('resume_mode'),'recollection_requested':bool(t.get('recollection_requested')),'expected_images':t.get('expected_images',8)} for t in tasks if t['state'] in ('claimed','sending','waiting','needs_attention','review','processing','committing') or t.get('copy_state') in ('running','needs_attention')]
+  return [{'id':t['id'],'sku':t['sku'],'state':t['state'],'copy_state':t.get('copy_state'),'copy_mode':t.get('copy_mode'),'copy_phase':t.get('copy_phase'),'message':t.get('message',''),'resume_mode':t.get('resume_mode'),'recollection_requested':bool(t.get('recollection_requested')),'expected_images':t.get('expected_images',8)} for t in tasks if t['state'] in ('claimed','sending','waiting','needs_attention','review','processing','committing') or t.get('copy_state') in ('running','needs_attention')]
  def queue_reason(self):
   if self.control.get('paused'):return '制作已暂停；点击继续制作或在插件继续'
   restart=self.control.get('queue_restart') or {};ack=self.control.get('queue_restart_ack') or {}
   if restart and ack.get('token')!=restart.get('token'):return '等待插件接收重启请求：'+restart.get('sku','')+'；请保持插件与原作图页打开'
   blockers=self.blockers()
   if blockers:
-   t=blockers[0];return '前序任务 '+t['sku']+' 尚未完成：'+t.get('message','')
+   t=blockers[0]
+   detail=('属性读取' if t.get('copy_mode')=='attributes' else '文案任务')+'（'+str(t.get('copy_state'))+' / '+str(t.get('copy_phase') or '未记录阶段')+'）；' if t.get('copy_state') in ('running','needs_attention') else ''
+   return '前序任务 '+t['sku']+' 尚未完成：'+detail+t.get('message','')
   if time.time()-self.client.get('last_seen',0)>75:return '等待扩展连接：请保存配对码，并绑定当前ChatGPT标签'
   if not self.client.get('auto_enabled'):return '扩展已连接，但自动批次未启用'
   return '扩展已连接，等待下一次轮询领取（最长约30秒）'
@@ -551,8 +553,11 @@ class Store:
    if task.get('copy_state')=='needs_attention' and task.get('message') in known and task.get('copy_phase') in (None,'inspecting'):
     task.pop('copy_state',None);task.pop('resume_mode',None);task['message']='前次文案未发送，待页面就绪后自动继续';changed=True
   if changed:self.save()
- def poll_state(self):
+ def poll_state(self,extension_idle=False):
   from asset_reconcile import reconcile
+  if extension_idle is True:
+   from queue_completion import reconcile_idle_attributes
+   reconcile_idle_attributes(self)
   reconcile(self);self.sync_shared_copies();self.repair_unsent_copy();self.resume_unsent_upload()
   active=bool(self.blockers()) or self.control.get('paused',False)
   # Missing shared copy has priority over queued image work; active requests still block.
@@ -638,12 +643,12 @@ def server(store,token,port=8765):
     body=json.loads(self.rfile.read(n))
     if self.path=='/queue-diagnostic':
      if not store.lock.acquire(blocking=False):return self.reply(200,{'busy':True,'message':'本地正在处理素材，已跳过队列快照；页面诊断仍可导出'})
-     try:value={'busy':False,'paused':store.control.get('paused',False),'tasks':[{'id':t['id'],'sku':t['sku'],'state':t['state'],'received':len(t.get('received_images') or [])} for t in store.tasks],'image_jobs':[{'id':j['id'],'sku':j['sku'],'state':j['state'],'received':len(j.get('received_images') or []),'expected':j.get('expected_images')} for j in store.image_jobs.jobs if j['state'] not in ('saved','cancelled')]}
+     try:value={'busy':False,'paused':store.control.get('paused',False),'tasks':[{'id':t['id'],'sku':t['sku'],'state':t['state'],'received':len(t.get('received_images') or []),'copy_state':t.get('copy_state'),'copy_mode':t.get('copy_mode'),'copy_phase':t.get('copy_phase'),'resume_mode':t.get('resume_mode'),'pause_requested':bool(t.get('pause_requested')),'recollection_requested':bool(t.get('recollection_requested')),'message':t.get('message',''),'attribute_deferred_reason':t.get('attribute_deferred_reason')} for t in store.tasks],'image_jobs':[{'id':j['id'],'sku':j['sku'],'state':j['state'],'received':len(j.get('received_images') or []),'expected':j.get('expected_images')} for j in store.image_jobs.jobs if j['state'] not in ('saved','cancelled')]}
      finally:store.lock.release()
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.48','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.49','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
@@ -686,7 +691,7 @@ def server(store,token,port=8765):
      elif self.path=='/task-status':value=store.task_status(body['task_id'])
      elif self.path=='/poll':
       store.client={'last_seen':time.time(),'auto_enabled':bool(body.get('auto_enabled',True))}
-      value=store.poll_state()
+      value=store.poll_state(extension_idle=body.get('execution_idle') is True)
      elif self.path=='/copy-task':
       from copy_pipeline import prepare as prepare_copy
       value=prepare_copy(store,body)
