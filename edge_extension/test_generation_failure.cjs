@@ -26,3 +26,10 @@ test('Enter fallback reacquires replaced editor and never resends an existing re
  assert.equal(await ctx.OzonComposer.sendOwnedByEnter(old,options),true);assert.equal(pressed,1);
  assert.equal(await ctx.OzonComposer.sendOwnedByEnter(old,options),true);assert.equal(pressed,1);
 });
+
+test('failed full set reply saying unable to finish or provide real downloads restarts',()=>{
+ const x=f();x.text('本次图片生成失败，未能完成要求的8张独立高清Ozon商品图。因此，暂时无法提供01_main.jpg至08_contents.jpg的真实成品下载链接。没有使用简化模板、占位图或原始图片冒充最终成品。图像生成失败');assert.equal(x.check(0),null);assert.equal(x.check(3100).no_images,true);
+});
+test('download problem without explicit image generation failure never resends',()=>{
+ const x=f();x.text('暂时无法提供下载链接，已生成图片仍在保存中');assert.equal(x.check(0),null);assert.equal(x.check(3100),null);
+});

@@ -11,6 +11,12 @@ class FailureRestartTests(unittest.TestCase):
  def test_definite_failure_restarts_and_persists_command_once(self):
   with tempfile.TemporaryDirectory() as tmp:
    store,t=self.setup(tmp);body=self.body(t);r=request(store,t['id'],body);self.assertFalse(r['pending']);self.assertEqual(r['restart_count'],1);self.assertFalse(store.control['paused']);self.assertEqual(store.control['queue_restart']['task_id'],r['id']);self.assertEqual(store.find(r['id'])['state'],'queued');self.assertEqual(request(store,t['id'],body)['id'],r['id'])
+ def test_full_set_failure_wording_resends_as_a_new_queued_instruction(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   store,t=self.setup(tmp);body=self.body(t)
+   body['message']='本次图片生成失败，未能完成要求的8张独立高清Ozon商品图。因此，暂时无法提供01_main.jpg至08_contents.jpg的真实成品下载链接。没有使用简化模板、占位图或原始图片冒充最终成品。图像生成失败'
+   result=request(store,t['id'],body);fresh=store.find(result['id'])
+   self.assertNotEqual(fresh['id'],t['id']);self.assertEqual(fresh['state'],'queued');self.assertFalse(store.control['paused']);self.assertEqual(store.control['queue_restart']['task_id'],fresh['id'])
  def test_exact_screenshot_failure_restarts_partial_regeneration_job(self):
   import test_image_regeneration as fixture
   with tempfile.TemporaryDirectory() as tmp:

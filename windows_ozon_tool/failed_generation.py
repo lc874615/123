@@ -7,7 +7,7 @@ from queue_restart import restart,ready
 def explicit_failure(text):
  text=str(text or '')
  if re.search(r'限额|额度|验证码|登录|quota|rate limit|sign in',text,re.I):return False
- return bool(re.search(r'(?:主图|图片|图像|image|generation).{0,24}(?:生成失败|生成工具返回错误|生成工具.*错误|generation failed|generation error|failed to generate)|(?:图片|图像)生成失败',text,re.I|re.S)) and bool(re.search(r'未能交付|没有可用|无法生成|未生成|(?:没有|未能|未)生成.{0,12}(?:有效|成品|文件|图片)|暂时无法交付|无.*成品|no (?:image|output)|failed to generate',text,re.I))
+ return bool(re.search(r'(?:主图|图片|图像|image|generation).{0,24}(?:生成失败|生成工具返回错误|生成工具.*错误|generation failed|generation error|failed to generate)|(?:图片|图像)生成失败',text,re.I|re.S)) and bool(re.search(r'未能交付|未能完成.{0,40}(?:图片|商品图|主图|详情图)|(?:暂时|目前)?无法提供.{0,80}(?:成品|下载链接)|没有可用|无法生成|未生成|(?:没有|未能|未)生成.{0,12}(?:有效|成品|文件|图片)|暂时无法交付|无.*成品|no (?:image|output)|failed to generate',text,re.I))
 
 def request(store,identifier,body):
  if not isinstance(identifier,str) or not re.fullmatch(r'[A-Za-z0-9_-]+',identifier):raise ValueError('任务标记无效')
