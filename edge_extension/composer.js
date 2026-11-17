@@ -38,6 +38,7 @@
  async function submitOwned({doc=document,expected,marker,getEditor,references=[],sleep=ms=>new Promise(r=>setTimeout(r,ms)),stopped=()=>false,report=async()=>{},now=Date.now,timeout=45000,confirmMs=12000}){
   const conversation=globalThis.OzonConversation;
   const accepted=()=>!!conversation.requestAnchor(doc,marker);
+  await conversation.expandUserPrompts?.(doc,{sleep,stopped});
   const draft=e=>e?.value??e?.innerText??e?.textContent??'';
   let actions=0,sawConsumption=false,enterUsed=false;const deadline=now()+timeout;
   while(now()<deadline){
@@ -70,10 +71,11 @@
     if(enterUsed)break;enterUsed=true;
     live.focus();live.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true}));live.dispatchEvent(new KeyboardEvent('keyup',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));
    }
-   actions++;const until=Math.min(deadline,now()+confirmMs);
+   actions++;let expandedAt=-Infinity;const until=Math.min(deadline,now()+confirmMs);
    while(now()<until){
     if(stopped())throw Error('已暂停；发送可能已执行，请核对已有请求');
     if(accepted())return true;
+    if(now()-expandedAt>=1000){expandedAt=now();await conversation.expandUserPrompts?.(doc,{sleep,stopped});if(accepted())return true;}
     const current=getEditor();
     if(conversation.generating(doc)||current&&!sameDraft(draft(current),expected))sawConsumption=true;
     await sleep(250);

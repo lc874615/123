@@ -30,3 +30,10 @@ test('real conversation lookup excludes the owned draft and clicks before accept
  await ctx.OzonComposer.submitOwned({doc,expected,marker:'【OZON_COPY:fixture】',getEditor:()=>editor,now:()=>time,sleep:async ms=>time+=ms,timeout:2000,confirmMs:500});
  assert.equal(clicks,1);assert.ok(ctx.OzonConversation.requestAnchor(doc,'【OZON_COPY:fixture】'));
 });
+test('a successful send with a collapsed marker is expanded and confirmed without a second send',async()=>{
+ let time=0,clicks=0,sent=false,expanded=false;const expected='owned 【OZON_TASK:folded】';
+ const button={disabled:false,type:'submit',isConnected:true,getClientRects:()=>[{}],getAttribute:()=>null,click(){clicks++;sent=true;editor.value='';}};
+ const root={querySelectorAll:()=>[button]};const editor={value:expected,isConnected:true,closest:()=>root};
+ const ctx={OzonConversation:{requestAnchor:()=>sent&&expanded?{}:null,generating:()=>false,expandUserPrompts:async()=>{if(sent)expanded=true;}}};vm.runInNewContext(fs.readFileSync(__dirname+'/composer.js','utf8'),ctx);
+ await ctx.OzonComposer.submitOwned({doc:{},expected,marker:'【OZON_TASK:folded】',getEditor:()=>editor,now:()=>time,sleep:async ms=>time+=ms,timeout:2000,confirmMs:500});assert.equal(clicks,1);assert.equal(expanded,true);
+});

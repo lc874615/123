@@ -80,6 +80,15 @@
   if(user)return user;
    return null;
  }
+ async function expandUserPrompts(doc,{sleep=ms=>new Promise(r=>setTimeout(r,ms)),stopped=()=>false}={}){
+  let changed=false;
+  for(const user of userNodes(doc))for(const b of user.querySelectorAll('button,[role="button"]')){
+   if(stopped())return;
+   const label=(b.textContent||b.getAttribute('aria-label')||'').trim();
+   if(/^(?:展开|显示更多|查看更多|read more|show more)$/i.test(label)&&b.getAttribute('aria-expanded')!=='true'){b.click();changed=true;}
+  }
+  if(changed)await sleep(150);
+ }
  async function revealRequest(doc,marker,{sleep=ms=>new Promise(r=>setTimeout(r,ms)),stopped=()=>false,report=async()=>{},alternatives=[],onMarker=()=>{}}={}){
   globalThis.__ozonRecoveryInfo={phase:'locating',scrollers:0,checkedSegments:0,historyCandidates:alternatives.filter(m=>m!==marker).length};
   const expanded=new WeakSet();
@@ -132,6 +141,6 @@
   globalThis.__ozonRecoveryInfo.phase='not_found';
   return false;
  }
- globalThis.OzonConversation={auxiliary,requestAnchor,nextUser,revealRequest,assistantNodes,assistantImages,userOwned,imageScopes,requestReplies,main,contentRoots,userNodes,generating,region};
+ globalThis.OzonConversation={expandUserPrompts,auxiliary,requestAnchor,nextUser,revealRequest,assistantNodes,assistantImages,userOwned,imageScopes,requestReplies,main,contentRoots,userNodes,generating,region};
  if(typeof module!=='undefined')module.exports=globalThis.OzonConversation;
 })();

@@ -54,3 +54,9 @@ class Tests(unittest.TestCase):
    store,task=self.setup(tmp);(store.folder/'publications'/'receipt.json').unlink();task.update(state='saved',copy_state='needs_attention',copy_mode='attributes')
    path=store.folder/'products'/task['sku']/'listing_bundle.json';b=read(path);b['copy']={};write(path,b);self.assertTrue(store.blockers())
    task['copy_mode']='copy';self.assertTrue(store.blockers())
+ def test_uncertain_image_remake_recovers_without_requeueing_or_generating(self):
+  with tempfile.TemporaryDirectory() as tmp,patch('image_regeneration.threading.Thread'):
+   store,task=self.setup(tmp);store.image_jobs.create(task['sku'],'shared_details',[],'synthetic remake')
+   job=store.image_jobs.jobs[0];job.update(state='needs_attention',message='发送结果尚未确认，已保留当前任务；请核对页面回执，不会启动下一任务或重复生成')
+   store.poll_state();self.assertEqual(job['resume_mode'],'inspect_only');self.assertEqual(job['state'],'needs_attention');self.assertIsNone(store.image_jobs.next())
+   store.set_paused(True);job.pop('resume_mode');store.poll_state();self.assertNotIn('resume_mode',job)

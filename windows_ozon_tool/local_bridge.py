@@ -553,12 +553,22 @@ class Store:
    if task.get('copy_state')=='needs_attention' and task.get('message') in known and task.get('copy_phase') in (None,'inspecting'):
     task.pop('copy_state',None);task.pop('resume_mode',None);task['message']='前次文案未发送，待页面就绪后自动继续';changed=True
   if changed:self.save()
+ def repair_uncertain_send_collection(self):
+  # A missing UI receipt is never proof that a request was not sent.
+  # Recover matching existing results only; never enqueue a generation request.
+  if self.control.get('paused'):return
+  known=('发送结果尚未确认','Enter发送结果不确定')
+  changed=False
+  for task in self.tasks+self.image_jobs.jobs:
+   if task.get('state')=='needs_attention' and not task.get('pause_requested') and any(str(task.get('message','')).startswith(m) for m in known):
+    if task.get('resume_mode')!='inspect_only':task['resume_mode']='inspect_only';changed=True
+  if changed:self.save()
  def poll_state(self,extension_idle=False):
   from asset_reconcile import reconcile
   if extension_idle is True:
    from queue_completion import reconcile_idle_attributes
    reconcile_idle_attributes(self)
-  reconcile(self);self.sync_shared_copies();self.repair_unsent_copy();self.resume_unsent_upload()
+  reconcile(self);self.sync_shared_copies();self.repair_unsent_copy();self.resume_unsent_upload();self.repair_uncertain_send_collection()
   active=bool(self.blockers()) or self.control.get('paused',False)
   # Missing shared copy has priority over queued image work; active requests still block.
   copy_task=self.next_copy() if not active else None
@@ -643,12 +653,12 @@ def server(store,token,port=8765):
     body=json.loads(self.rfile.read(n))
     if self.path=='/queue-diagnostic':
      if not store.lock.acquire(blocking=False):return self.reply(200,{'busy':True,'message':'本地正在处理素材，已跳过队列快照；页面诊断仍可导出'})
-     try:value={'busy':False,'paused':store.control.get('paused',False),'tasks':[{'id':t['id'],'sku':t['sku'],'state':t['state'],'received':len(t.get('received_images') or []),'copy_state':t.get('copy_state'),'copy_mode':t.get('copy_mode'),'copy_phase':t.get('copy_phase'),'resume_mode':t.get('resume_mode'),'pause_requested':bool(t.get('pause_requested')),'recollection_requested':bool(t.get('recollection_requested')),'message':t.get('message',''),'attribute_deferred_reason':t.get('attribute_deferred_reason')} for t in store.tasks],'image_jobs':[{'id':j['id'],'sku':j['sku'],'state':j['state'],'received':len(j.get('received_images') or []),'expected':j.get('expected_images')} for j in store.image_jobs.jobs if j['state'] not in ('saved','cancelled')]}
+     try:value={'busy':False,'paused':store.control.get('paused',False),'tasks':[{'id':t['id'],'sku':t['sku'],'state':t['state'],'received':len(t.get('received_images') or []),'copy_state':t.get('copy_state'),'copy_mode':t.get('copy_mode'),'copy_phase':t.get('copy_phase'),'resume_mode':t.get('resume_mode'),'pause_requested':bool(t.get('pause_requested')),'recollection_requested':bool(t.get('recollection_requested')),'message':t.get('message',''),'attribute_deferred_reason':t.get('attribute_deferred_reason')} for t in store.tasks],'image_jobs':[{'id':j['id'],'sku':j['sku'],'state':j['state'],'received':len(j.get('received_images') or []),'expected':j.get('expected_images'),'kind':j.get('kind'),'resume_mode':j.get('resume_mode'),'message':j.get('message','')} for j in store.image_jobs.jobs if j['state'] not in ('saved','cancelled')]}
      finally:store.lock.release()
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.49','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.50','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)

@@ -14,7 +14,7 @@ async def main():
     const expected='真实商品资料\\nМатериал: металл\\n【OZON_COPY:local_fixture】',e=document.querySelector('#prompt-textarea');
     if(e.tagName==='TEXTAREA')e.value=expected;else e.innerText=expected;
     let clicks=0;
-    document.querySelector('#send').onclick=()=>{clicks++;let n=document.createElement('div');n.dataset.messageAuthorRole='user';n.textContent=expected;document.querySelector('#history').append(n);if(e.tagName==='TEXTAREA')e.value='';else e.innerText='';};
+    document.querySelector('#send').onclick=()=>{clicks++;let n=document.createElement('div');n.className='group/user-message';const span=document.createElement('span');span.textContent='long folded prompt';const expand=document.createElement('button');expand.textContent='显示更多';expand.onclick=()=>{span.textContent=expected;expand.remove();};n.append(span,expand);document.querySelector('#history').append(n);if(e.tagName==='TEXTAREA')e.value='';else e.innerText='';};
     const draftWasAccepted=!!OzonConversation.requestAnchor(document,'【OZON_COPY:local_fixture】');
     await OzonComposer.submitOwned({expected,marker:'【OZON_COPY:local_fixture】',getEditor:()=>e,timeout:1500,confirmMs:100});
     return {draftWasAccepted,clicks,accepted:!!OzonConversation.requestAnchor(document,'【OZON_COPY:local_fixture】')};

@@ -3,6 +3,7 @@
  const marker=task=>task.marker||task.recovery_marker||task.source_marker||'【OZON_TASK:'+task.id+'】';
  async function prepare(task,{doc=document,findEditor,sleep,stopped,report}){
   let editor=findEditor();if(!editor)throw Error('未找到当前输入框');
+  await globalThis.OzonConversation.expandUserPrompts?.(doc,{sleep,stopped});
   const ownMarker=marker(task),alreadySent=!!globalThis.OzonConversation.requestAnchor(doc,ownMarker),original=text(editor);
   const state=()=>globalThis.OzonUploads.attachmentState(doc,editor,task.references||[]);
   if(!original.trim()){
