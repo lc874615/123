@@ -1,4 +1,5 @@
 """Local attribute review and export UI. This module never submits products."""
+from window_registry import lookup,remember
 from pathlib import Path
 import json,os,threading
 from attribute_service import field_key
@@ -8,7 +9,9 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  import tkinter as tk
  from tkinter import ttk,messagebox
  from tkinter.scrolledtext import ScrolledText
- folder=Path(folder);path=folder/'listing_bundle.json';dialog=tk.Toplevel(root);dialog.title(folder.name+' · 上架草稿与必填属性');dialog.geometry('1100x740')
+ folder=Path(folder);path=folder/'listing_bundle.json';cached=lookup(root,('single_preview',str(path.resolve())))
+ if cached is not None:return cached
+ dialog=remember(root,('single_preview',str(path.resolve())),tk.Toplevel(root));dialog.title(folder.name+' · 上架草稿与必填属性');dialog.geometry('1100x740')
  ttk.Label(dialog,text='读取官方类目属性 → 核对缺失项 → 确认真实税率与CNY币种 → 导出整组提交预览。此窗口不会提交商品或设置库存。').pack(pady=7)
  status=ttk.Label(dialog,text='等待读取属性',wraplength=1050);status.pack(pady=4)
  bar=ttk.Frame(dialog);bar.pack(pady=4)
@@ -59,7 +62,9 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  def edit(event=None):
   selected=tree.selection()
   if not selected:return
-  key=selected[0];field=fields[key];state=bundle.get('attribute_draft') or {};window=tk.Toplevel(dialog);window.title(field.get('name','属性')+' · '+field.get('name_ru',''));window.geometry('850x530')
+  key=selected[0];field=fields[key];state=bundle.get('attribute_draft') or {};cached=lookup(dialog,('single_attribute',str(path.resolve()),key))
+  if cached is not None:return cached
+  window=remember(dialog,('single_attribute',str(path.resolve()),key),tk.Toplevel(dialog));window.title(field.get('name','属性')+' · '+field.get('name_ru',''));window.geometry('850x530')
   from ui_layout import dialog_footer
   footer=dialog_footer(window,850,530)
   ttk.Label(window,text=field.get('description',''),wraplength=800).pack(pady=6)
@@ -119,7 +124,9 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    for directory in group_folders:
     target=Path(directory)/'listing_bundle.json';data=read(target);state=data.get('attribute_draft') or {};snapshots[str(target)]=review_hash(state)
     details.append({'货号':data.get('offer_id',data.get('sku')),'属性':[{'名称':f.get('name'),'俄文原名':f.get('name_ru'),'必填':bool(f.get('is_required')),'值':(state.get('values') or {}).get(field_key(f),[])} for f in state.get('fields',[]) if f['id'] not in (8229,21841,21837,21845)]})
-  preview=tk.Toplevel(dialog);preview.title('整组属性核对 · 确认后仍不提交');preview.geometry('950x700');text=ScrolledText(preview,wrap='word');text.pack(fill='both',expand=True)
+  cached=lookup(dialog,('attribute_review',str(path.resolve())))
+  if cached is not None:return cached
+  preview=remember(dialog,('attribute_review',str(path.resolve())),tk.Toplevel(dialog));preview.title('整组属性核对 · 确认后仍不提交');preview.geometry('950x700');text=ScrolledText(preview,wrap='word');text.pack(fill='both',expand=True)
   text.insert('1.0',json.dumps({'本组税率':vat.get(),'店铺币种CNY已确认':currency.get(),'各变体属性':details},ensure_ascii=False,indent=2));text.configure(state='disabled')
   chosen_vat=vat.get();chosen_currency=currency.get()
   def apply():
@@ -134,7 +141,9 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   def action():
    output=folder/'listing_preview';report=export_preview(group_folders,output,service.lock)
    def show():
-    preview=tk.Toplevel(dialog);preview.title('整组上架提交预览 · 未提交');preview.geometry('900x650');text=ScrolledText(preview,wrap='word');text.pack(fill='both',expand=True)
+    cached=lookup(dialog,('payload_preview',str(path.resolve())))
+    if cached is not None:return cached
+    preview=remember(dialog,('payload_preview',str(path.resolve())),tk.Toplevel(dialog));preview.title('整组上架提交预览 · 未提交');preview.geometry('900x650');text=ScrolledText(preview,wrap='word');text.pack(fill='both',expand=True)
     target=output/('ozon_import_preview.json' if report['ready'] else 'review_report.json');text.insert('1.0',target.read_text(encoding='utf-8'));text.configure(state='disabled')
     ttk.Label(preview,text='预览通过，尚未提交商品。' if report['ready'] else '存在待处理项目；未生成可提交的载荷。').pack(pady=5)
     if os.name=='nt':ttk.Button(preview,text='打开本地预览文件夹',command=lambda:os.startfile(str(output))).pack(pady=5)

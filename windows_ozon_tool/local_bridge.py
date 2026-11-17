@@ -1,4 +1,5 @@
 """Loopback-only authenticated bridge. Does not read Edge cookies or send Ozon writes."""
+from window_registry import lookup,remember
 import copy,base64,hashlib,hmac,io,json,re,secrets,threading,time
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
@@ -638,7 +639,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.42','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.43','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
@@ -793,7 +794,9 @@ def main(test_mode=False,on_ready=None):
  None if test_mode else threading.Thread(target=publication.worker,args=(pricing_stop,),daemon=True).start()
  def hosting_settings():
   import os,webbrowser
-  dialog=tk.Toplevel(root);dialog.title('腾讯云COS图片托管');dialog.geometry('780x650')
+  cached=lookup(root,('cos_settings',))
+  if cached is not None:return cached
+  dialog=remember(root,('cos_settings',),tk.Toplevel(root));dialog.title('腾讯云COS图片托管');dialog.geometry('780x650')
   ttk.Label(dialog,text='COS免费存储额度不覆盖请求和外网下载，使用时可能计费。\n托管8张生成原图和本地8秒MP4，主图固定01，共用详情图只上传一次。').pack(padx=12,pady=10)
   ttk.Button(dialog,text='打开腾讯云COS控制台',command=lambda:webbrowser.open('https://console.cloud.tencent.com/cos/bucket')).pack(pady=4)
   try:config,credentials=hosting.settings()
@@ -822,7 +825,9 @@ def main(test_mode=False,on_ready=None):
   update_hosting_state()
  ttk.Button(settings_page,text='腾讯云COS托管设置 / 自动生成链接',command=hosting_settings).pack(pady=4)
  def pricing_settings():
-  dialog=tk.Toplevel(root);dialog.title('自动定价设置与来源');dialog.geometry('760x470')
+  cached=lookup(root,('pricing_settings',))
+  if cached is not None:return cached
+  dialog=remember(root,('pricing_settings',),tk.Toplevel(root));dialog.title('自动定价设置与来源');dialog.geometry('760x470')
   info=tk.Text(dialog,height=13,wrap='word');info.pack(fill='both',expand=True,padx=10,pady=8)
   def show():
    info.delete('1.0','end')
@@ -972,7 +977,9 @@ def main(test_mode=False,on_ready=None):
   if not task:return
   path=DATA/'products'/task['sku']/'listing_bundle.json'
   if not path.exists():messagebox.showinfo('定价','等待素材完成及草稿创建');return
-  bundle=read_pricing(path);dialog=tk.Toplevel(root);dialog.title(task['sku']+' 售价明细');dialog.geometry('780x600')
+  bundle=read_pricing(path);cached=lookup(root,('price_details',str(path.resolve())))
+  if cached is not None:return cached
+  dialog=remember(root,('price_details',str(path.resolve())),tk.Toplevel(root));dialog.title(task['sku']+' 售价明细');dialog.geometry('780x600')
   text=tk.Text(dialog,wrap='word');text.pack(fill='both',expand=True)
   result=None;rendered=None
   def render_details():
@@ -997,7 +1004,9 @@ def main(test_mode=False,on_ready=None):
    try:
     cfg=read_pricing(pricing.root/'commissions.json')
     from category_search import commission_options
-    picker=tk.Toplevel(dialog);picker.title('中文搜索官方佣金类型');picker.geometry('1100x520');picker.minsize(850,420)
+    cached=lookup(dialog,('commission_picker',str(path.resolve())))
+    if cached is not None:return cached
+    picker=remember(dialog,('commission_picker',str(path.resolve())),tk.Toplevel(dialog));picker.title('中文搜索官方佣金类型');picker.geometry('1100x520');picker.minsize(850,420)
     ttk.Label(picker,text='输入中文或俄文关键词，可搜索商品类型及所属类目；中文来自官方佣金表。此处仅设置佣金对应关系。').pack(pady=6)
     query=tk.StringVar();entry=ttk.Entry(picker,textvariable=query,width=70);entry.pack(pady=4);entry.focus_set()
     frame=ttk.Frame(picker);frame.pack(fill='both',expand=True,padx=8)
@@ -1101,6 +1110,10 @@ def main(test_mode=False,on_ready=None):
   task=selected()
   if not task:return
   folder=DATA/'products'/task['sku'];path=folder/'listing_bundle.json'
+  for key in list(getattr(root,'_ozon_windows',{})):
+   if isinstance(key,tuple) and len(key)==2 and key[0]=='group_preview' and str(path.resolve()) in key[1]:
+    cached=lookup(root,key)
+    if cached is not None:return cached
   if not path.exists():messagebox.showinfo('等待草稿','请先等待素材和文案完成');return
   from category_match import group_key
   from group_editor import open_editor
@@ -1188,7 +1201,9 @@ def main(test_mode=False,on_ready=None):
  task_more.add_command(label='重新合成所选变体8秒视频并自动托管',command=retry_video)
  def connect_category():
   import os
-  dialog=tk.Toplevel(root);dialog.title('连接Ozon API与类目匹配')
+  cached=lookup(root,('ozon_connection',))
+  if cached is not None:return cached
+  dialog=remember(root,('ozon_connection',),tk.Toplevel(root));dialog.title('连接Ozon API与类目匹配')
   ttk.Label(dialog,text='填写店铺API连接；读取类目、仓库和状态。只有点击提交才写入商品。\n可使用Windows加密保存密钥；切换店铺会隔离任务和仓库配置。').pack(padx=12,pady=8)
   client=tk.StringVar(value=os.environ.get('OZON_CLIENT_ID',''));key=tk.StringVar(value=os.environ.get('OZON_API_KEY',''))
   ttk.Label(dialog,text='Client-Id').pack();ttk.Entry(dialog,textvariable=client,width=55).pack()
@@ -1219,7 +1234,9 @@ def main(test_mode=False,on_ready=None):
   if not task:return
   path=DATA/'products'/task['sku']/'listing_bundle.json'
   if not path.exists():show_task_error('提示','请等待生成上架草稿');return
-  data=json.loads(path.read_text(encoding='utf-8-sig'));dialog=tk.Toplevel(win);dialog.title('类目确认/修改')
+  data=json.loads(path.read_text(encoding='utf-8-sig'));cached=lookup(win,('category_edit',str(path.resolve())))
+  if cached is not None:return cached
+  dialog=remember(win,('category_edit',str(path.resolve())),tk.Toplevel(win));dialog.title('类目确认/修改')
   ttk.Label(dialog,text=data.get('category_match_status','尚未推荐；可手动填写官方类目与类型ID')).pack()
   candidates=data.get('category_candidates') or [];current=data.get('category') or {}
   if current.get('type_id') and not any(x.get('type_id')==current['type_id'] for x in candidates):candidates=[dict(current,path=current.get('path') or current.get('name') or str(current['type_id']))]+candidates

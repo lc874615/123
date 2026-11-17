@@ -1,15 +1,18 @@
 """Shared multi-color editor; official IDs remain category-validated separately."""
+from window_registry import lookup,remember
 from prefill_rules import COLORS,split
 
 def is_color_field(field,include_name=True):
  from prefill_rules import name
  return name(field) in ('цвет','цвет товара','颜色','商品颜色')+ (('название цвета','颜色名称') if include_name else ())
 
-def choose(parent,initial,save,title='选择颜色（可多选）',close_on_save=True):
+def choose(parent,initial,save,title='选择颜色（可多选）',close_on_save=True,window_key=None):
  import tkinter as tk
  from tkinter import ttk,messagebox
  from ui_layout import dialog_footer
- window=tk.Toplevel(parent);window.title(title);footer=dialog_footer(window,660,490)
+ cached=lookup(parent,('color_selection',window_key if window_key is not None else (str(parent),title)))
+ if cached is not None:return cached
+ window=remember(parent,('color_selection',window_key if window_key is not None else (str(parent),title)),tk.Toplevel(parent));window.title(title);footer=dialog_footer(window,660,490)
  ttk.Label(window,text='勾选商品实际包含的全部颜色；不会增加商品变体。保存后同步基础参数与对应官方颜色。',wraplength=610).pack(fill='x',padx=10,pady=8)
  current=split(initial);selected={};options=list(dict.fromkeys(COLORS))
  # Avoid showing both synonymous choices; retain unknown/custom labels verbatim.

@@ -1,4 +1,5 @@
 """Variant columns: stable natural-number suffixes, explicit units, TSV paste."""
+from window_registry import lookup,remember
 from decimal import Decimal,InvalidOperation
 import re
 FIELDS=[('name','商品名称/用途',''),('color','颜色',''),('size','规格/型号',''),('quantity','每套件数','1'),('material','主体材质',''),('accessory_material','配件/内衬材质',''),('length','商品长(cm)',''),('width','商品宽(cm)',''),('height','商品高(cm)',''),('net_weight','商品净重(g)',''),('pack_length','包装长(cm)',''),('pack_width','包装宽(cm)',''),('pack_height','包装高(cm)',''),('pack_weight','包装总重(g)',''),('cost','每套成本含国内运费(元)',''),('margin','目标净利润率(%)','25'),('stock','初始库存（固定1000）','1000'),('origin','产地','中国'),('assembly','组装方式(未知留空)',''),('extra','其他真实参数/卖点','')]
@@ -53,10 +54,14 @@ class VariantGrid:
   self.tk=tk;self.ttk=ttk;self.base=base;self.rows=[];self.next_index=1;self.focus=(1,0);self.editor=None;self.photos={}
   self.frame=ttk.Frame(parent);self.frame.pack(fill='both',padx=12,pady=8)
   bar=ttk.Frame(self.frame);bar.pack(fill='x',pady=4)
-  for label,cmd in [('增加变体',self.add),('删除选中变体',self.remove),('选择主图参考',self.choose),('当前参数同首行',self.fill_row),('粘贴Excel表格',self.paste)]:ttk.Button(bar,text=label,command=cmd).pack(side='left',padx=3)
+  for label,cmd in [('增加变体',self.add),('删除选中变体',self.remove),('添加主图参考',self.choose),('管理主图参考',self.manage_selected),('当前参数同首行',self.fill_row),('粘贴Excel表格',self.paste)]:ttk.Button(bar,text=label,command=cmd).pack(side='left',padx=3)
   self.hint=ttk.Label(self.frame,text='每行一个变体；双击编辑。点击参数列标题“同首行”，将首行该参数复制到其余全部变体。');self.hint.pack(anchor='w')
-  holder=ttk.Frame(self.frame);holder.pack(fill='both',expand=True);holder.rowconfigure(0,weight=1);holder.columnconfigure(0,weight=1)
-  self.tree=ttk.Treeview(holder,columns=('index','article','refs')+tuple(k for k,_,_ in FIELDS),show='tree headings',height=6,selectmode='extended')
+  holder=ttk.Frame(self.frame);holder.pack(fill='both',expand=True);holder.rowconfigure(0,weight=1);holder.columnconfigure(1,weight=1)
+  self.frozen=ttk.Treeview(holder,columns=('index',),show='tree headings',height=6,selectmode='extended')
+  self.frozen.heading('#0',text='主图 · 点击查看');self.frozen.column('#0',width=110,stretch=False,anchor='center')
+  self.frozen.heading('index',text='序号');self.frozen.column('index',width=60,stretch=False,anchor='center')
+  self.frozen.grid(row=0,column=0,sticky='ns')
+  self.tree=ttk.Treeview(holder,columns=('index','article','refs')+tuple(k for k,_,_ in FIELDS),displaycolumns=('article','refs')+tuple(k for k,_,_ in FIELDS),show='headings',height=6,selectmode='extended')
   self.tree.heading('#0',text='主图');self.tree.column('#0',width=85,stretch=False,anchor='center')
   from tkinter import font as tkfont
   heading_font=tkfont.nametofont('TkDefaultFont');copy_keys={k for k,_,_ in FIELDS}-{'stock'}
@@ -64,22 +69,43 @@ class VariantGrid:
    if key=='color':title='颜色（可多选）'
    heading=title+(' · 同首行' if key in copy_keys else '')
    self.tree.heading(key,text=heading,anchor='center',command=(lambda k=key:self.bulk_column(k)) if key in copy_keys else (lambda:None));self.tree.column(key,width=max(width,heading_font.measure(heading)+24),stretch=False,anchor='center')
-  self.tree.grid(row=0,column=0,sticky='nsew');sx=ttk.Scrollbar(holder,orient='horizontal',command=self.tree.xview);sx.grid(row=1,column=0,sticky='ew');sy=ttk.Scrollbar(holder,orient='vertical',command=self.tree.yview);sy.grid(row=0,column=1,sticky='ns');self.tree.configure(xscrollcommand=sx.set,yscrollcommand=sy.set)
-  ttk.Style().configure('Variants.Treeview',rowheight=58);self.tree.configure(style='Variants.Treeview')
-  self.tree.bind('<Button-1>',self.image_click);self.tree.bind('<Double-1>',self.edit);self.tree.bind('<ButtonRelease-1>',self.track);self.tree.bind('<Control-v>',lambda e:self.paste());self.base.trace_add('write',lambda *_:self.refresh());self.add()
+  self.tree.grid(row=0,column=1,sticky='nsew')
+  def horizontal(*args):self.commit();self.tree.xview(*args)
+  sx=ttk.Scrollbar(holder,orient='horizontal',command=horizontal);sx.grid(row=1,column=1,sticky='ew')
+  def vertical(*args):self.frozen.yview(*args);self.tree.yview(*args)
+  sy=ttk.Scrollbar(holder,orient='vertical',command=vertical);sy.grid(row=0,column=2,sticky='ns')
+  def report(source,other,first,last):
+   sy.set(first,last)
+   if abs(other.yview()[0]-float(first))>.000001:other.yview_moveto(first)
+  self.tree.configure(xscrollcommand=sx.set,yscrollcommand=lambda a,b:report(self.tree,self.frozen,a,b))
+  self.frozen.configure(yscrollcommand=lambda a,b:report(self.frozen,self.tree,a,b))
+  def selection(source,other):
+   ids=source.selection()
+   if ids:
+    focused=source.focus();self.focus=(int(focused if focused in ids else ids[0]),self.focus[1])
+   if set(ids)!=set(other.selection()):other.selection_set([i for i in ids if other.exists(i)])
+  self.tree.bind('<<TreeviewSelect>>',lambda e:selection(self.tree,self.frozen))
+  self.frozen.bind('<<TreeviewSelect>>',lambda e:selection(self.frozen,self.tree))
+  self.frozen.bind('<Button-1>',self.image_click)
+  self.frozen.bind('<Control-v>',lambda e:self.paste())
+  ttk.Style().configure('Variants.Treeview',rowheight=58);self.tree.configure(style='Variants.Treeview');self.frozen.configure(style='Variants.Treeview')
+  self.tree.bind('<Double-1>',self.edit);self.tree.bind('<ButtonRelease-1>',self.track);self.tree.bind('<Control-v>',lambda e:self.paste());self.base.trace_add('write',lambda *_:self.refresh());self.add()
  def commit(self):
   if self.editor:
    widget,row,key=self.editor;row['values'][key]=widget.get().strip();self.editor=None;widget.destroy();self.refresh()
  def refresh(self):
-  selected=self.tree.selection()
-  for item in self.tree.get_children():self.tree.delete(item)
+  selected=self.tree.selection();xpos=self.tree.xview()[0];ypos=self.tree.yview()[0]
+  for widget in (self.tree,self.frozen):
+   for item in widget.get_children():widget.delete(item)
   for row in self.rows:
    row['values']['stock']='1000'
    try:code=article(self.base.get().strip(),row['index'])
    except ValueError:code='待填基础货号'
+   self.frozen.insert('','end',iid=str(row['index']),values=(row['index'],),image=self.photos.get(row['index'],''))
    self.tree.insert('', 'end',iid=str(row['index']),image=self.photos.get(row['index'],''),values=(row['index'],code,f"{len(row['refs'])} 张")+tuple(row['values'][k] for k,_,_ in FIELDS))
   selected=[i for i in selected if self.tree.exists(i)]
-  if selected:self.tree.selection_set(selected)
+  if selected:self.tree.selection_set(selected);self.frozen.selection_set(selected)
+  self.tree.xview_moveto(xpos);self.tree.yview_moveto(ypos);self.frozen.yview_moveto(ypos)
  def add(self):
   self.commit();self.rows.append({'index':self.next_index,'refs':[],'values':{k:d for k,_,d in FIELDS}});self.next_index+=1;self.refresh()
  def selected(self):
@@ -87,11 +113,11 @@ class VariantGrid:
  def remove(self):
   self.commit();ids={r['index'] for r in self.selected()};self.rows=[r for r in self.rows if r['index'] not in ids];self.refresh()
  def image_click(self,event):
-  item=self.tree.identify_row(event.y);column=self.tree.identify_column(event.x)
+  item=self.frozen.identify_row(event.y);column=self.frozen.identify_column(event.x)
   if item and column=='#0':
    self.tree.selection_set(item)
    row=next(r for r in self.rows if str(r['index'])==item)
-   self.tree.after(10,lambda:self.manage_images(row) if row['refs'] else self.choose())
+   self.tree.after(10,lambda:self.preview_reference(row) if row['refs'] else self.choose())
    return 'break'
  def thumbnail(self,row):
   from PIL import Image,ImageOps,ImageTk
@@ -111,9 +137,29 @@ class VariantGrid:
     with Image.open(path) as im:im.verify()
    rows[0]['refs']=list(dict.fromkeys(rows[0]['refs']+paths));self.thumbnail(rows[0])
   except Exception as e:messagebox.showerror('图片无法读取',str(e))
+ def manage_selected(self):
+  from tkinter import messagebox
+  rows=self.selected()
+  if len(rows)!=1:messagebox.showinfo('选择变体','请选中一个变体再管理主图参考');return
+  self.manage_images(rows[0])
+ def preview_reference(self,row,start=0):
+  from image_viewer import open_viewer
+  return open_viewer(self.frame,'',[{'local_file':p} for p in row['refs']],start,title='原始主图参考 · '+str(row['index']),on_replace=lambda index:self.replace_reference(row,index))
+ def replace_reference(self,row,index=0):
+  from tkinter import filedialog,messagebox
+  from PIL import Image
+  path=filedialog.askopenfilename(filetypes=[('Images','*.png *.jpg *.jpeg *.webp')])
+  if not path:return None
+  try:
+   with Image.open(path) as image:image.verify()
+   if path in row['refs'] and row['refs'].index(path)!=index:raise ValueError('这张图片已在本变体参考中，请选择另一张图片')
+   row['refs'][index]=path;self.thumbnail(row);return path
+  except (OSError,ValueError) as error:messagebox.showerror('未更换图片',str(error));return None
  def manage_images(self,row):
   from PIL import Image,ImageOps,ImageTk
-  dialog=self.tk.Toplevel(self.frame);dialog.title('主图参考：点击图片选中后删除');dialog.geometry('640x420')
+  cached=lookup(self.frame,('original_reference_manager',id(self),row['index']))
+  if cached is not None:return cached
+  dialog=remember(self.frame,('original_reference_manager',id(self),row['index']),self.tk.Toplevel(self.frame));dialog.title('主图参考：点击图片选中后删除');dialog.geometry('640x420')
   body=self.ttk.Frame(dialog);body.pack(fill='both',expand=True)
   selected=set();photos=[]
   def render():
@@ -135,18 +181,21 @@ class VariantGrid:
   render()
  def track(self,event):
   item=self.tree.identify_row(event.y);column=self.tree.identify_column(event.x)
-  if item and column.startswith('#') and int(column[1:])>=4:self.focus=(int(item),int(column[1:])-4)
+  if not item or not column:return
+  key=self.tree.column(column,'id')
+  if key in [f[0] for f in FIELDS]:self.focus=(int(item),next(i for i,f in enumerate(FIELDS) if f[0]==key))
  def edit(self,event):
   self.commit();self.track(event);item=self.tree.identify_row(event.y);column=self.tree.identify_column(event.x)
-  if not item or not column.startswith('#') or int(column[1:])<4:return
-  key=FIELDS[int(column[1:])-4][0]
+  if not item or not column:return
+  key=self.tree.column(column,'id')
+  if key not in [f[0] for f in FIELDS]:return
   if key=='stock':return
   row=next(r for r in self.rows if str(r['index'])==item);box=self.tree.bbox(item,column)
   if not box:return
   if key=='color':
    from color_selection import choose
    def save_color(value):row['values']['color']=value;self.refresh()
-   choose(self.frame,row['values'][key],save_color);return
+   choose(self.frame,row['values'][key],save_color,window_key=('create',id(self),row['index']));return
   entry=self.ttk.Entry(self.tree,justify='center');entry.insert(0,row['values'][key]);entry.place(x=box[0],y=box[1],width=box[2],height=box[3]);entry.focus_set();entry.selection_range(0,'end');self.editor=(entry,row,key)
   entry.bind('<Return>',lambda e:self.commit());entry.bind('<FocusOut>',lambda e:self.commit())
  def fill_row(self):

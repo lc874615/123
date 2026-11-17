@@ -1,4 +1,5 @@
 """Whole-group, API-schema-driven grid with bulk edits and explicit submission."""
+from window_registry import lookup,remember
 import copy,json,os,threading,time,webbrowser
 from pathlib import Path
 from attribute_service import field_key,category_key
@@ -15,7 +16,9 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  paths=[Path(p)/'listing_bundle.json' for p in group_folders]
  if not paths:messagebox.showinfo('没有变体','请选择尚未取消的商品组');return
  coordinator=GroupService(paths,service,pricing,store)
- dialog=tk.Toplevel(root);dialog.title('整组预览 · Ozon 商品自动化 1.0.42');dialog.geometry('1280x850');dialog.minsize(950,650)
+ cached=lookup(root,('group_preview',tuple(sorted(str(p.resolve()) for p in paths))))
+ if cached is not None:return cached
+ dialog=remember(root,('group_preview',tuple(sorted(str(p.resolve()) for p in paths))),tk.Toplevel(root));dialog.title('整组预览 · Ozon 商品自动化 1.0.43');dialog.geometry('1280x850');dialog.minsize(950,650)
  busy=False;selected=set(range(len(paths)));focus=['',''];bundles=[];token=None;rendered=None;warehouses={};photos=[];rows={};last_job=None;copy_dirty=False;displayed_copy=None;copy_timer=None;busy_since=0;operation_error='';operation_name=''
  ttk.Label(dialog,text='每列一个变体；双击单格修改，点击参数名选中整行后批量修改。仓库显示当前店铺全部类型和状态。',wraplength=900).pack(pady=6)
  status=ttk.Label(dialog,text='正在加载整组预览',wraplength=1200);status.pack(pady=3)
@@ -156,7 +159,9 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   rendered=None;refresh()
  search.trace_add('write',refilter);missing.trace_add('write',refilter)
  def text_editor(label,indices,initial,save,multiline=False):
-  window=tk.Toplevel(dialog);window.title(label);window.geometry('760x420')
+  cached=lookup(dialog,('parameter_text',str(paths[0].parent.resolve()),label,tuple(indices)))
+  if cached is not None:return cached
+  window=remember(dialog,('parameter_text',str(paths[0].parent.resolve()),label,tuple(indices)),tk.Toplevel(dialog));window.title(label);window.geometry('760x420')
   from ui_layout import dialog_footer
   footer=dialog_footer(window,760,420)
   ttk.Label(window,text='目标：'+'、'.join(paths[n].parent.name for n in indices),wraplength=720).pack(pady=7)
@@ -169,12 +174,24 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    run(lambda:save(values),lambda result:window.destroy() if window.winfo_exists() else None)
   ttk.Button(footer,text='保存并同步属性与售价',command=apply).pack(pady=7)
  def edit_row(indices,iid):
+  if iid in rows and indices:
+   current_row,current_field=rows[iid];kind_now,key_now=current_row
+   target_paths=tuple(str(paths[n].resolve()) for n in indices)
+   existing_key=None
+   if kind_now=='p' and key_now=='color':existing_key=('color_selection',('group',target_paths))
+   elif kind_now=='p':existing_key=('parameter_text',str(paths[0].parent.resolve()),'修改 '+iid,tuple(indices))
+   elif kind_now=='a' and (current_field or {}).get('dictionary_id'):existing_key=('official_choices',target_paths,key_now)
+   if existing_key is not None:
+    cached=lookup(dialog,existing_key)
+    if cached is not None:return cached
   if not editable() or iid not in rows:return
   if not indices:messagebox.showinfo('未选择变体','请至少勾选一个变体列',parent=dialog);return
   row,field=rows[iid];kind,key=row;expected=edit_guard(bundles,indices,kind,key) if kind in ('p','a') or (kind=='s' and key=='price') else token
   from rich_content import is_rich_field
   if kind=='a' and is_rich_field(field):
-   window=tk.Toplevel(dialog);window.title('自动富内容JSON · '+paths[indices[0]].parent.name);window.geometry('850x600');text=ScrolledText(window,wrap='word');text.pack(fill='both',expand=True,padx=8,pady=8)
+   cached=lookup(dialog,('rich_content',str(paths[indices[0]].resolve())))
+   if cached is not None:return cached
+   window=remember(dialog,('rich_content',str(paths[indices[0]].resolve())),tk.Toplevel(dialog));window.title('自动富内容JSON · '+paths[indices[0]].parent.name);window.geometry('850x600');text=ScrolledText(window,wrap='word');text.pack(fill='both',expand=True,padx=8,pady=8)
    value=value_for(bundles[indices[0]],row,indices[0])
    try:value=json.dumps(json.loads(value),ensure_ascii=False,indent=2)
    except (ValueError,TypeError):value='等待对应变体8张图片托管完成后生成'
@@ -201,7 +218,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   if kind=='p' and key=='color':
    from color_selection import choose
    def save_color(value):run(lambda:coordinator.set_parameters(indices,'color',[value]*len(indices),expected),lambda result:color_window.destroy() if color_window.winfo_exists() else None)
-   color_window=choose(dialog,str(initial),save_color,title='选择颜色 · '+str(len(indices))+'个变体（可多选）',close_on_save=False);return
+   color_window=choose(dialog,str(initial),save_color,title='选择颜色 · '+str(len(indices))+'个变体（可多选）',close_on_save=False,window_key=('group',tuple(str(paths[n].resolve()) for n in indices)));return
   if kind=='p':text_editor('修改 '+iid,indices,str(initial),lambda values:coordinator.set_parameters(indices,key,values,expected));return
   if field.get('dictionary_id'):dictionary_editor(indices,key,field,expected);return
   def save(values):
@@ -266,7 +283,9 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  warehouse_choice.bind('<<ComboboxSelected>>',warehouse_apply)
  def choose_warehouse(indices):
   def show(result):
-   window=tk.Toplevel(dialog);window.title('选择店铺仓库（全部类型和状态）');ttk.Label(window,text='目标：'+'、'.join(paths[n].parent.name for n in indices)).pack(pady=5);choices=ttk.Combobox(window,state='readonly',values=[warehouse_label(r) for r in result],width=65);choices.pack(padx=10,pady=10)
+   cached=lookup(dialog,('warehouse_picker',tuple(str(paths[n].resolve()) for n in indices)))
+   if cached is not None:return cached
+   window=remember(dialog,('warehouse_picker',tuple(str(paths[n].resolve()) for n in indices)),tk.Toplevel(dialog));window.title('选择店铺仓库（全部类型和状态）');ttk.Label(window,text='目标：'+'、'.join(paths[n].parent.name for n in indices)).pack(pady=5);choices=ttk.Combobox(window,state='readonly',values=[warehouse_label(r) for r in result],width=65);choices.pack(padx=10,pady=10)
    def apply():
     if choices.current()<0:return
     record=result[choices.current()];expected=coordinator.token();merchant=publication.account_getter();window.destroy();run(lambda:coordinator.set_settings(indices,'warehouse',{'warehouse_id':record['warehouse_id'],'warehouse_name':record['name'],'account_id':merchant},expected))
@@ -305,11 +324,13 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  def report_y(first,last):sy.set(first,last);badges.schedule()
  tree.configure(xscrollcommand=report_x,yscrollcommand=report_y)
  def dictionary_editor(indices,key,field,expected):
+  cached=lookup(dialog,('official_choices',tuple(str(paths[n].resolve()) for n in indices),key))
+  if cached is not None:return cached
   from attribute_choices import OfficialChoices
   try:
    snapshot=coordinator.load();model=OfficialChoices(service,[snapshot[n] for n in indices],key)
   except ValueError as exc:messagebox.showerror('无法选择',str(exc),parent=dialog);return
-  window=tk.Toplevel(dialog);window.title(('批量' if len(indices)>1 else paths[indices[0]].parent.name)+' · 官方选项：'+field.get('name',''));window.geometry('850x650')
+  window=remember(dialog,('official_choices',tuple(str(paths[n].resolve()) for n in indices),key),tk.Toplevel(dialog));window.title(('批量' if len(indices)>1 else paths[indices[0]].parent.name)+' · 官方选项：'+field.get('name',''));window.geometry('850x650')
   from ui_layout import dialog_footer
   footer=dialog_footer(window)
   target_label=ttk.Label(window,text='目标：'+'、'.join(paths[n].parent.name for n in indices),wraplength=810);target_label.pack(fill='x',padx=8,pady=5)
@@ -368,7 +389,9 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   save_button=ttk.Button(footer,text='保存所选官方选项并重算售价',command=save);save_button.pack(pady=7);render();fetch()
  def choose_category(indices):
   # Show the known category immediately. A click no longer fetches both full trees.
-  window=tk.Toplevel(dialog);window.title('确认当前类目 / 搜索其他官方类目');window.geometry('1000x600')
+  cached=lookup(dialog,('category_picker',tuple(str(paths[n].resolve()) for n in indices)))
+  if cached is not None:return cached
+  window=remember(dialog,('category_picker',tuple(str(paths[n].resolve()) for n in indices)),tk.Toplevel(dialog));window.title('确认当前类目 / 搜索其他官方类目');window.geometry('1000x600')
   text='\n'.join(paths[n].parent.name+'：'+str((bundles[n].get('category') or {}).get('path') or (bundles[n].get('category') or {}).get('name') or '未匹配')+'（'+('已确认' if (bundles[n].get('category') or {}).get('confirmed') else '待确认')+'）' for n in indices)
   ttk.Label(window,text=text,wraplength=950).pack(pady=8)
   def confirm_current():
@@ -453,15 +476,22 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   from image_viewer import open_viewer
   return open_viewer(dialog,paths[index].parent,bundles[index].get('images') or [],start,bundles[index]['sku']+' · 图片预览')
  def gallery(index):
-  window=tk.Toplevel(dialog);window.title(bundles[index]['sku']+' · 01主图 / 02—08详情');images=[]
+  cached=lookup(dialog,('gallery',str(paths[index].parent.resolve())))
+  if cached is not None:
+   cached._ozon_refresh();return cached
+  window=remember(dialog,('gallery',str(paths[index].parent.resolve())),tk.Toplevel(dialog));window.title(bundles[index]['sku']+' · 01主图 / 02—08详情');images=[]
   from PIL import Image,ImageOps,ImageTk
-  for i,row in enumerate(bundles[index].get('images') or []):
-   cell=ttk.Frame(window);cell.grid(row=i//4,column=i%4,padx=5,pady=5)
-   try:
-    with Image.open(paths[index].parent/row['local_file']) as source:photo=ImageTk.PhotoImage(ImageOps.contain(source.convert('RGB'),(150,200)))
-    images.append(photo);thumbnail=ttk.Label(cell,image=photo,cursor='hand2');thumbnail.pack();thumbnail.bind('<Button-1>',lambda e,n=index,start=i:show_image(n,start))
-   except (OSError,ValueError,KeyError):ttk.Label(cell,text='图片不可读').pack()
-   ttk.Label(cell,text=f'{i+1:02d} '+('本变体主图' if i==0 else '共用详情图')).pack()
+  def render_gallery():
+   for child in window.winfo_children():child.destroy()
+   images.clear()
+   for i,row in enumerate(bundles[index].get('images') or []):
+    cell=ttk.Frame(window);cell.grid(row=i//4,column=i%4,padx=5,pady=5)
+    try:
+     with Image.open(paths[index].parent/row['local_file']) as source:photo=ImageTk.PhotoImage(ImageOps.contain(source.convert('RGB'),(150,200)))
+     images.append(photo);thumbnail=ttk.Label(cell,image=photo,cursor='hand2');thumbnail.pack();thumbnail.bind('<Button-1>',lambda e,n=index,start=i:show_image(n,start))
+    except (OSError,ValueError,KeyError):ttk.Label(cell,text='图片不可读').pack()
+    ttk.Label(cell,text=f'{i+1:02d} '+('本变体主图' if i==0 else '共用详情图')).pack()
+  window._ozon_refresh=render_gallery;render_gallery()
   window._photos=images
  def play_video(index):
   path=paths[index].parent/'video'/'product_8s.mp4'
