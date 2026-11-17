@@ -5,7 +5,7 @@ PALETTE={'bg':'#F3F5FA','surface':'#FFFFFF','ink':'#17243B','muted':'#64748B','l
 def build(root):
  import tkinter as tk
  from tkinter import ttk
- c=PALETTE;root.title('Ozon 商品自动化 · 1.0.47');root.geometry('1440x900');root.minsize(1080,700);root.configure(background=c['bg'])
+ c=PALETTE;root.title('Ozon 商品自动化 · 1.0.48');root.geometry('1440x900');root.minsize(1080,700);root.configure(background=c['bg'])
  style=ttk.Style(root);style.theme_use('clam')
  font='Microsoft YaHei UI' if os.name=='nt' else 'Noto Sans CJK SC'
  style.configure('.',font=(font,10),background=c['bg'],foreground=c['ink'])
@@ -40,7 +40,7 @@ def build(root):
  banner=ttk.Frame(root,padding=(24,18));banner.pack(fill='x')
  ttk.Label(banner,text='Ozon 工作台',style='Heading.TLabel').pack(side='left')
  ttk.Label(banner,text='商品制作  /  素材自动化  /  上架审核',style='Muted.TLabel').pack(side='left',padx=22)
- ttk.Label(banner,text='DESKTOP   ·   1.0.47',style='Muted.TLabel').pack(side='right')
+ ttk.Label(banner,text='DESKTOP   ·   1.0.48',style='Muted.TLabel').pack(side='right')
  connection=ttk.Label(root,text='正在检查本地连接…',padding=(24,9),wraplength=1360,style='Muted.TLabel');connection.pack(fill='x')
  workspace=ttk.Frame(root);workspace.pack(fill='both',expand=True,padx=16,pady=(8,16))
  rail=ttk.Frame(workspace,style='Card.TFrame',padding=(12,18));rail.pack(side='left',fill='y',padx=(0,16))

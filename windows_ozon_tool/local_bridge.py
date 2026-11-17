@@ -205,7 +205,9 @@ class Store:
   return {'resumed':count}
  def blockers(self):
   if hasattr(self,'image_jobs'):self.image_jobs.tick()
-  tasks=self.tasks+([j for j in self.image_jobs.jobs if j['state'] not in ('saved','cancelled','queued')] if hasattr(self,'image_jobs') else [])
+  from queue_completion import completed_skus
+  completed=completed_skus(self) if hasattr(self,'image_jobs') else set()
+  tasks=[t for t in self.tasks if t['sku'] not in completed]+([j for j in self.image_jobs.jobs if j['state'] not in ('saved','cancelled','queued')] if hasattr(self,'image_jobs') else [])
   return [{'id':t['id'],'sku':t['sku'],'state':t['state'],'copy_state':t.get('copy_state'),'message':t.get('message',''),'resume_mode':t.get('resume_mode'),'recollection_requested':bool(t.get('recollection_requested')),'expected_images':t.get('expected_images',8)} for t in tasks if t['state'] in ('claimed','sending','waiting','needs_attention','review','processing','committing') or t.get('copy_state') in ('running','needs_attention')]
  def queue_reason(self):
   if self.control.get('paused'):return '制作已暂停；点击继续制作或在插件继续'
@@ -564,7 +566,9 @@ class Store:
   from pricing_service import read
   from reference_prefill import needed
   reconcile(self);self.sync_shared_copies();self.repair_unsent_copy()
-  leaders=[t for t in self.tasks if t.get('set_mode') and t['state']=='saved' and t.get('copy_leader',t['sku'])==t['sku']]
+  from queue_completion import completed_skus
+  completed=completed_skus(self)
+  leaders=[t for t in self.tasks if t['sku'] not in completed and t.get('set_mode') and t['state']=='saved' and t.get('copy_leader',t['sku'])==t['sku']]
   for task in leaders:
    group=[t['sku'] for t in self.tasks if t.get('copy_leader',t['sku'])==task['sku'] and t['state']!='cancelled']
    if self.image_jobs.active(group):continue
@@ -639,7 +643,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.47','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.48','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
