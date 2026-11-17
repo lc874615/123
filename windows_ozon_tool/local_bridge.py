@@ -495,7 +495,7 @@ class Store:
      task['copy_source']=source
      if task.get('copy_mode')!='attributes' or task.get('copy_state') not in ('running','needs_attention'):task['copy_state']='done'
      if not task.get('recollection_requested') or task['state']=='saved':task.pop('resume_mode',None)
-     if task['state']=='saved' and task.get('video'):task['message']='8图、视频、共用俄语文案及草稿已完成；文案来源：'+source+'；待上架审核'
+     if task['state']=='saved' and task.get('video') and task.get('copy_state')=='done':task['message']='8图、视频、共用俄语文案及草稿已完成；文案来源：'+source+'；待上架审核'
     except (ValueError,OSError,KeyError) as error:
      task.update(copy_state='needs_attention',message='共用文案同步失败：'+str(error)[:160])
   self.save()
@@ -639,7 +639,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.46','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.47','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)

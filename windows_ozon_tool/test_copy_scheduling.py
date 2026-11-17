@@ -23,6 +23,22 @@ class CopySchedulingTests(unittest.TestCase):
  def test_uncertain_sent_copy_and_user_pause_never_regenerate(self):
   with tempfile.TemporaryDirectory() as tmp,patch('image_regeneration.threading.Thread'):
    store,leader=self.setup(tmp);leader.update(copy_state='needs_attention',copy_phase='generating',message='文案请求结果未知',resume_mode='copy_inspect_only');self.assertIsNone(store.poll_state()['copy_sku']);self.assertEqual(leader['copy_phase'],'generating');leader.pop('copy_state');store.set_paused(True);q=store.poll_state();self.assertIsNone(q['copy_sku']);self.assertFalse(q['ready'])
+ def test_shared_copy_sync_preserves_unsent_attribute_failure_for_repair(self):
+  with tempfile.TemporaryDirectory() as tmp,patch('image_regeneration.threading.Thread'):
+   store=fixtures.ImageRegenerationTests().setup(tmp);leader=store.tasks[0]
+   leader.update(copy_mode='attributes',copy_state='needs_attention',copy_phase='inspecting',message='未找到可用发送按钮',resume_mode='copy_inspect_only')
+   store.sync_shared_copies()
+   self.assertEqual(leader['message'],'未找到可用发送按钮')
+   store.repair_unsent_copy()
+   self.assertNotIn('copy_state',leader);self.assertFalse(store.blockers())
+ def test_shared_copy_sync_keeps_running_and_uncertain_attribute_reason(self):
+  with tempfile.TemporaryDirectory() as tmp,patch('image_regeneration.threading.Thread'):
+   store=fixtures.ImageRegenerationTests().setup(tmp);leader=store.tasks[0]
+   for state in ('running','needs_attention'):
+    leader.update(copy_mode='attributes',copy_state=state,copy_phase='generating',message='属性请求结果未知')
+    store.sync_shared_copies();store.repair_unsent_copy()
+    self.assertEqual(leader['message'],'属性请求结果未知');self.assertEqual(leader['copy_state'],state)
+    self.assertTrue(store.blockers())
  def test_missing_new_group_copy_precedes_old_group_optional_attribute_read(self):
   with tempfile.TemporaryDirectory() as tmp,patch('image_regeneration.threading.Thread'):
    store=fixtures.ImageRegenerationTests().setup(tmp);new=store.tasks[1];new['copy_leader']=new['sku'];new['base_article']='SECOND';new.pop('copy_state',None);path=store.folder/'products'/new['sku']/'listing_bundle.json';b=read(path);b['copy']={};write(path,b);self.assertEqual(store.next_copy()['sku'],new['sku']);self.assertEqual(new['copy_mode'],'copy')

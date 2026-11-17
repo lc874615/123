@@ -2,6 +2,8 @@
 (()=>{
  function phase(message){
   const s=String(message||'');
+  if(/队列暂停|前序任务.*尚未完成/.test(s))return {key:'paused',label:'等待前序任务',title:'前序任务尚未结束',next:'下方显示阻塞原因。在本地任务中心查看对应货号；已发送的请求先核对结果，避免重复提交。'};
+  if(/待上架审核|待预览提交/.test(s))return {key:'done',label:'等待审核',title:'制作完成，等待审核',next:'在本地工具预览并审核商品；待审核本身不会阻止其他商品制作。'};
   if(/失败|异常|超时|不确定|尚未确认|未找到|不匹配|需处理|未连接/.test(s))return {key:'error',label:'需要核对',title:'查看当前提示',next:'先核对下方原因；需要读取已有结果时，展开“异常与恢复”。'};
   if(/已暂停|制作已暂停|保持暂停/.test(s))return {key:'paused',label:'已暂停',title:'任务已暂停',next:'当前素材会保留。确认页面状态后，点击“开始 / 继续”。'};
   if(/全部.*完成|整组.*已完成|已保存并同步|整组.*已上架/.test(s))return {key:'done',label:'本阶段完成',title:'结果已保存',next:'前往本地工具查看素材与文案，核对当前任务的后续操作。'};
