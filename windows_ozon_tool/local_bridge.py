@@ -639,7 +639,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.43','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.44','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
@@ -741,11 +741,12 @@ def main(test_mode=False,on_ready=None):
   return messagebox.showerror(title,render([issue('本地工具',title,error)]),**({'parent':root}|options))
  from ui_layout import build
  notebook,pages,connection=build(root);win=pages['product_body'];settings_page=pages['settings_body'];tasks_page=pages['tasks']
- ttk.Label(settings_page,text='连接与来源设置',font=('TkDefaultFont',13,'bold')).pack(anchor='w',pady=8)
- ttk.Label(settings_page,text='插件配对信息仅保存在本机；首次安装或重置后复制到插件，重启后无需重复配对。',wraplength=1050).pack(anchor='w',pady=6)
- code=ttk.Entry(settings_page,width=65,show='*');code.insert(0,token);code.pack(anchor='w')
+ account_panel=ttk.LabelFrame(settings_page,text='账户与配对',padding=16);account_panel.pack(fill='x',pady=(0,16))
+ ttk.Label(account_panel,text='连接与来源设置',font=('TkDefaultFont',13,'bold')).pack(anchor='w',pady=8)
+ ttk.Label(account_panel,text='插件配对信息仅保存在本机；首次安装或重置后复制到插件，重启后无需重复配对。',wraplength=1050).pack(anchor='w',pady=6)
+ code=ttk.Entry(account_panel,width=65,show='*');code.insert(0,token);code.pack(anchor='w')
  def copy_pair():root.clipboard_clear();root.clipboard_append(token);messagebox.showinfo('已复制','请在插件连接设置中保存配对码。',parent=root)
- ttk.Button(settings_page,text='复制配对码',command=copy_pair).pack(anchor='w',pady=6)
+ ttk.Button(account_panel,text='复制配对码',command=copy_pair).pack(anchor='w',pady=6)
  def restore_records():
   selected_file=filedialog.askopenfilename(title='恢复已删除记录',initialdir=DATA/'deleted_tasks',filetypes=[('本地任务备份','*.json')])
   if not selected_file:return
@@ -753,7 +754,7 @@ def main(test_mode=False,on_ready=None):
    with store.lock:count=store.restore_deleted(selected_file)
    messagebox.showinfo('记录已恢复',str(count)+' 个变体记录已恢复；素材保留，不重复生成。')
   except Exception as exc:show_task_error('恢复未完成',str(exc))
- ttk.Button(settings_page,text='恢复已删除的本地记录',command=restore_records).pack(anchor='w',pady=6)
+ ttk.Button(account_panel,text='恢复已删除的本地记录',command=restore_records).pack(anchor='w',pady=6)
 
  ttk.Label(win,text='基础货号（上架货号按变体自动加(1)、(2)…）').pack()
  base=tk.StringVar();ttk.Entry(win,textvariable=base,width=60).pack()
@@ -775,16 +776,17 @@ def main(test_mode=False,on_ready=None):
  activate_shop(DATA,os.environ.get('OZON_CLIENT_ID',''))
  pricing=PricingService(DATA,store.lock);pricing_stop=threading.Event()
  None if test_mode else threading.Thread(target=pricing.worker,args=(pricing_stop,),daemon=True).start()
- pricing_label=ttk.Label(settings_page,wraplength=850,text='自动售价：等待导入定价来源');pricing_label.pack(pady=3)
+ sources_panel=ttk.LabelFrame(settings_page,text='定价与素材托管',padding=16);sources_panel.pack(fill='x',pady=(0,16))
+ pricing_label=ttk.Label(sources_panel,wraplength=850,text='自动售价：等待导入定价来源');pricing_label.pack(pady=3)
  from hosting_service import HostingService
  def hosting_skus():
   with store.lock:return {t['sku'] for t in store.tasks if t.get('set_mode') and t['state']!='cancelled'}
  hosting=HostingService(DATA,store.lock,active_skus=hosting_skus)
  None if test_mode else threading.Thread(target=hosting.worker,args=(pricing_stop,),daemon=True).start()
- hosting_label=ttk.Label(settings_page,wraplength=850,text='图片托管：首次需连接腾讯云COS存储桶');hosting_label.pack(pady=3)
+ hosting_label=ttk.Label(sources_panel,wraplength=850,text='图片托管：首次需连接腾讯云COS存储桶');hosting_label.pack(pady=3)
  from video_hosting import VideoHostingService
  video_hosting=VideoHostingService(hosting);None if test_mode else threading.Thread(target=video_hosting.worker,args=(pricing_stop,),daemon=True).start()
- video_label=ttk.Label(settings_page,wraplength=850,text='视频托管：等待8秒MP4与图片链接');video_label.pack(pady=3)
+ video_label=ttk.Label(sources_panel,wraplength=850,text='视频托管：等待8秒MP4与图片链接');video_label.pack(pady=3)
  from attribute_service import AttributeService
  attributes=AttributeService(DATA,store.lock,active_skus=hosting_skus)
  None if test_mode else threading.Thread(target=attributes.worker,args=(pricing_stop,),daemon=True).start()
@@ -796,7 +798,9 @@ def main(test_mode=False,on_ready=None):
   import os,webbrowser
   cached=lookup(root,('cos_settings',))
   if cached is not None:return cached
-  dialog=remember(root,('cos_settings',),tk.Toplevel(root));dialog.title('腾讯云COS图片托管');dialog.geometry('780x650')
+  dialog=remember(root,('cos_settings',),tk.Toplevel(root));dialog.title('腾讯云COS图片托管')
+  from ui_layout import dialog_footer
+  hosting_footer=dialog_footer(dialog,820,760)
   ttk.Label(dialog,text='COS免费存储额度不覆盖请求和外网下载，使用时可能计费。\n托管8张生成原图和本地8秒MP4，主图固定01，共用详情图只上传一次。').pack(padx=12,pady=10)
   ttk.Button(dialog,text='打开腾讯云COS控制台',command=lambda:webbrowser.open('https://console.cloud.tencent.com/cos/bucket')).pack(pady=4)
   try:config,credentials=hosting.settings()
@@ -804,15 +808,15 @@ def main(test_mode=False,on_ready=None):
   region=tk.StringVar(value=config.get('region',''));bucket=tk.StringVar(value=config.get('bucket',''));key=tk.StringVar(value=credentials.get('secret_id',''));secret=tk.StringVar(value=credentials.get('secret_key',''))
   for label,variable,masked in [('地域 Region，例如ap-hongkong',region,False),('Bucket完整名称（包含-APPID）',bucket,False),('SecretId',key,True),('SecretKey',secret,True)]:
    ttk.Label(dialog,text=label).pack();ttk.Entry(dialog,textvariable=variable,width=65,show='*' if masked else '').pack(pady=2)
-  remember=tk.BooleanVar(value=os.name=='nt')
-  ttk.Checkbutton(dialog,text='在当前Windows账户加密记住密钥（重启后继续自动上传）',variable=remember,state='normal' if os.name=='nt' else 'disabled').pack(pady=6)
+  remember_keys=tk.BooleanVar(value=os.name=='nt')
+  ttk.Checkbutton(dialog,text='在当前Windows账户加密记住密钥（重启后继续自动上传）',variable=remember_keys,state='normal' if os.name=='nt' else 'disabled').pack(pady=6)
   ttk.Label(dialog,text='存储桶需设为公有读私有写，允许匿名、空Referer读取上架图片。\n使用拥有该目录PutObject权限的子账号密钥；程序不创建桶或修改权限。\n只上传生成图和MP4，不开CDN、全球加速或媒体处理服务。').pack(pady=6)
   state=ttk.Label(dialog,text=hosting.status,wraplength=690);state.pack(pady=6)
   def save_hosting():
    try:
-    hosting.configure(region.get(),bucket.get(),key.get(),secret.get(),remember.get());video_hosting.wake.set();state.configure(text='配置已保存，正在后台上传并校验已有及后续生成图片…')
+    hosting.configure(region.get(),bucket.get(),key.get(),secret.get(),remember_keys.get());video_hosting.wake.set();state.configure(text='配置已保存，正在后台上传并校验已有及后续生成图片…')
    except Exception as e:show_task_error('托管设置未保存',str(e),parent=dialog)
-  ttk.Button(dialog,text='保存并自动上传已有及后续生成图片',command=save_hosting).pack(pady=4)
+  ttk.Button(hosting_footer,text='保存并自动上传已有及后续生成图片',command=save_hosting).pack(pady=4)
   def switch(enabled):
    try:hosting.set_enabled(enabled);video_hosting.retry_at.clear();video_hosting.wake.set()
    except ValueError as e:show_task_error('托管状态',str(e),parent=dialog)
@@ -823,7 +827,7 @@ def main(test_mode=False,on_ready=None):
    if not dialog.winfo_exists():return
    state.configure(text=hosting.status);dialog.after(1500,update_hosting_state)
   update_hosting_state()
- ttk.Button(settings_page,text='腾讯云COS托管设置 / 自动生成链接',command=hosting_settings).pack(pady=4)
+ ttk.Button(sources_panel,text='腾讯云COS托管设置 / 自动生成链接',command=hosting_settings).pack(pady=4)
  def pricing_settings():
   cached=lookup(root,('pricing_settings',))
   if cached is not None:return cached
@@ -856,7 +860,7 @@ def main(test_mode=False,on_ready=None):
   ttk.Button(dialog,text='下载官方佣金表（2025-12-01版）',command=lambda:run(pricing.update_commissions)).pack(pady=3)
   ttk.Button(dialog,text='立即获取央行参考汇率',command=lambda:run(pricing.update_fx)).pack(pady=3)
   show()
- ttk.Button(settings_page,text='自动定价设置 / 运费表 / 央行汇率',command=pricing_settings).pack(pady=3)
+ ttk.Button(sources_panel,text='自动定价设置 / 运费表 / 央行汇率',command=pricing_settings).pack(pady=3)
  def create():
   try:
    for row in grid.rows:row['values']['stock']='1000'
@@ -908,25 +912,35 @@ def main(test_mode=False,on_ready=None):
   except Exception as e:show_task_error('未创建',str(e))
  ttk.Label(win,text='每个变体：01固定为独立主图；02—08沿用首变体的7张详情图').pack(pady=3)
  ttk.Button(win,text='创建并自动处理',style='Primary.TButton',command=create).pack(pady=6)
- task_table=ttk.Frame(tasks_page);task_table.pack(fill='both',expand=True);task_table.rowconfigure(0,weight=1);task_table.columnconfigure(0,weight=1)
+ task_table=ttk.Frame(tasks_page,style='Card.TFrame');task_table.pack(fill='both',expand=True);task_table.rowconfigure(0,weight=1);task_table.columnconfigure(0,weight=1)
  view=ttk.Treeview(task_table,columns=('sku','progress','price','hosting','status'),show='tree headings',height=15,selectmode='browse')
  view.heading('#0',text='商品组');view.column('#0',width=150,stretch=False,anchor='center')
  for key,label,width in [('sku','变体货号',165),('progress','图片',90),('price','售价（元）',110),('hosting','托管链接',130),('status','当前阶段 / 原因',360)]:view.heading(key,text=label,anchor='center');view.column(key,width=width,stretch=key=='status',anchor='center')
+ view.tag_configure('group',background='#EDF1F8',foreground='#334155');view.tag_configure('even',background='#FFFFFF');view.tag_configure('odd',background='#F8FAFE');view.tag_configure('attention',foreground='#B74347',background='#FFF4F2')
  view.grid(row=0,column=0,sticky='nsew');scroll_y=ttk.Scrollbar(task_table,orient='vertical',command=view.yview);scroll_y.grid(row=0,column=1,sticky='ns');scroll_x=ttk.Scrollbar(task_table,orient='horizontal',command=view.xview);scroll_x.grid(row=1,column=0,sticky='ew');view.configure(yscrollcommand=scroll_y.set,xscrollcommand=scroll_x.set)
- task_actions=ttk.Frame(tasks_page);task_actions.pack(fill='x',pady=10);task_more=tk.Menu(root,tearoff=False);more_button=ttk.Menubutton(task_actions,text='更多操作',menu=task_more);more_button.pack(side='right')
+ task_actions=ttk.Frame(tasks_page);task_actions.pack(side='bottom',before=task_table,fill='x',pady=10);task_more=tk.Menu(root,tearoff=False);more_button=ttk.Menubutton(task_actions,text='更多操作',menu=task_more);more_button.pack(side='right')
  from task_alerts import AlertPopup,ProgressWatch,collect as collect_alerts,issue as make_alert
  alert_popup=AlertPopup(root,DATA/'task_alert_state.json',lambda:notebook.select(pages['tasks']));alert_watch=ProgressWatch()
  task_more.add_command(label='查看当前异常及中文处理办法',command=alert_popup.reopen)
- visible=[];last_view=None
+ visible=[];last_view=None;refresh_timer=None
+ def schedule_refresh(delay=1500):
+  nonlocal refresh_timer
+  if refresh_timer is not None:root.after_cancel(refresh_timer)
+  refresh_timer=root.after(delay,refresh)
+ pages['task_search'].trace_add('write',lambda *args:schedule_refresh(100))
+ pages['task_filter'].trace_add('write',lambda *args:schedule_refresh(100))
  def selected():
   ids=view.selection()
   return next((t for t in visible if ids and (t['id']==ids[0] or ('group:'+str(t.get('base_article') or t.get('copy_leader') or t['sku']))==ids[0])),None)
  def refresh():
-  nonlocal visible,last_view
+  nonlocal visible,last_view,refresh_timer
+  if refresh_timer is not None:root.after_cancel(refresh_timer);refresh_timer=None
   if not store.lock.acquire(blocking=False):
-   connection.configure(text='后台正在保存/校验素材，界面稍后自动刷新');root.after(300,refresh);return
-  try:visible=[dict(t) for t in store.tasks];reason=store.queue_reason();plugin_online=time.time()-store.client.get('last_seen',0)<75
+   connection.configure(text='后台正在保存/校验素材，界面稍后自动刷新');schedule_refresh(300);return
+  try:visible=[dict(t) for t in store.tasks];image_snapshot=[dict(j) for j in store.image_jobs.jobs];reason=store.queue_reason();plugin_online=time.time()-store.client.get('last_seen',0)<75
   finally:store.lock.release()
+  from ui_state import task_summary,matches
+  for key,value in task_summary(visible,image_snapshot).items():pages['metrics'][key].configure(text=str(value))
   from pipeline_status import stage,group_summary
   import os
   merchant=os.environ.get('OZON_CLIENT_ID','');connection.configure(text=('店铺 '+merchant if merchant else 'Ozon未连接')+' · 插件'+('在线' if plugin_online else '待连接')+' · COS'+('已配置' if (DATA/'hosting'/'config.json').exists() else '待配置')+' · 定价来源'+('已配置' if all((DATA/'pricing'/(name+'.json')).exists() for name in ('ogl','commissions','fx')) else '待配置')+' | '+reason)
@@ -939,16 +953,20 @@ def main(test_mode=False,on_ready=None):
    except (OSError,ValueError):bundle={}
    if bundle and task['state']!='cancelled':alert_bundles.append(bundle)
    state=stage(task,bundle,jobs);row=(task['sku'],str(len(task.get('received_images') or []))+'/8',bundle.get('price_cny') or '—',str((bundle.get('hosting') or {}).get('verified_images',0))+'/8 · '+('视频✓' if (bundle.get('video_hosting') or {}).get('state')=='done' else '视频…'),state)
+   if not matches(task,pages['task_search'].get(),pages['task_filter'].get(),image_snapshot):continue
    group=str(task.get('base_article') or task.get('copy_leader') or task['sku']);groups.setdefault(group,[]).append((task,row));snapshot.append((task['id'],group,row))
+  pages['task_results'].configure(text=('显示 '+str(len(snapshot))+' 个变体 · '+str(len(groups))+' 个商品组') if snapshot else ('没有匹配的任务，可清除筛选查看全部。' if visible else '还没有制作任务，请前往“商品制作”创建第一组商品。'))
   if snapshot!=last_view:
    selection=view.selection();position=view.yview()[0];expanded={i:view.item(i,'open') for i in view.get_children()};view.delete(*view.get_children())
    for group,items in groups.items():
-    key='group:'+group;stages=[row[-1] for task,row in items];view.insert('','end',iid=key,text=group,values=(str(len(items))+' 个变体','','','',group_summary(stages)),open=expanded.get(key,True))
-    for task,row in items:view.insert(key,'end',iid=task['id'],text='',values=row)
+    key='group:'+group;stages=[row[-1] for task,row in items];view.insert('','end',iid=key,text=group,values=(str(len(items))+' 个变体','','','',group_summary(stages)),open=expanded.get(key,True),tags=('group',))
+    for n,(task,row) in enumerate(items):
+     tag='attention' if '需处理' in row[-1] or task.get('state')=='needs_attention' else 'even' if n%2==0 else 'odd'
+     view.insert(key,'end',iid=task['id'],text='',values=row,tags=(tag,))
    if selection and view.exists(selection[0]):view.selection_set(selection[0])
    view.yview_moveto(position);last_view=snapshot
   if not test_mode:
-   if not store.lock.acquire(blocking=False):root.after(300,refresh);return
+   if not store.lock.acquire(blocking=False):schedule_refresh(300);return
    try:alert_jobs=[dict(j) for j in store.image_jobs.jobs];plugin=dict(store.plugin_status);paused=bool(store.control.get('paused'));client=dict(store.client)
    finally:store.lock.release()
    live={t['sku'] for t in visible if t['state']!='cancelled'};current_jobs=[]
@@ -962,7 +980,7 @@ def main(test_mode=False,on_ready=None):
    alerts=collect_alerts(visible,alert_bundles,current_jobs,alert_jobs,plugin)+alert_watch.update(visible,client,paused)
    if any(word in pricing.status for word in ('更新失败','补查失败')):alerts.append(make_alert('自动定价','定价来源',pricing.status))
    alert_popup.update(alerts)
-  root.after(1500,refresh)
+  schedule_refresh(1500)
  def delete():
   task=selected()
   if not task:return
@@ -1049,7 +1067,7 @@ def main(test_mode=False,on_ready=None):
   update_details()
   ttk.Button(dialog,text='佣金无法匹配时，选择官方商品类型',command=select_type).pack(pady=4)
  task_more.add_command(label='查看所选变体售价明细 / 佣金类型',command=pricing_details)
- ttk.Button(task_actions,text='删除本地记录',command=delete).pack(side='left',padx=4)
+ task_more.add_command(label='删除选中本地记录（保留平台商品）',command=delete)
  def recollect():
   task=selected()
   if not task:return
@@ -1228,7 +1246,7 @@ def main(test_mode=False,on_ready=None):
     finally:root.after(0,lambda:button.configure(state='normal'))
    threading.Thread(target=work,daemon=True).start()
   button=ttk.Button(dialog,text='连接并补查未匹配商品',command=connect);button.pack(pady=8)
- ttk.Button(settings_page,text='连接Ozon API / 店铺设置',command=connect_category).pack(pady=4)
+ ttk.Button(account_panel,text='连接Ozon API / 店铺设置',command=connect_category).pack(pady=4)
  def category_editor(task=None):
   task=task or selected()
   if not task:return
@@ -1268,10 +1286,10 @@ def main(test_mode=False,on_ready=None):
 
 
 
- ttk.Label(tasks_page,text='素材更新需手动启动；删除本地记录不会删除平台商品。结果未知的请求不会自动重发。',wraplength=1150).pack(fill='x',pady=4)
+ ttk.Label(tasks_page,text='素材更新需手动启动；删除本地记录不会删除平台商品。结果未知的请求不会自动重发。',wraplength=1000,style='Muted.TLabel').pack(side='bottom',before=task_table,fill='x',pady=4)
  refresh()
  def close():pricing_stop.set();hosting.wake.set();video_hosting.wake.set();attributes.wake.set();publication.wake.set();(http.shutdown() if http else None);root.destroy();instance.release()
  root.protocol('WM_DELETE_WINDOW',close)
- if on_ready:on_ready(root,{'store':store,'notebook':notebook,'pages':pages,'view':view,'open_preview':listing_editor,'close':close})
+ if on_ready:on_ready(root,{'store':store,'notebook':notebook,'pages':pages,'view':view,'open_preview':listing_editor,'creation_grid':grid,'close':close})
  root.mainloop()
 if __name__=='__main__':main()

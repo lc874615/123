@@ -20,13 +20,18 @@ def main():
   original_begin=publication_service.PublicationService.begin;submission_calls=[]
   def unexpected_submission(*args,**kwargs):submission_calls.append(True);raise AssertionError('local preview update attempted platform submission')
   publication_service.PublicationService.begin=unexpected_submission
-  def ready(root,ui):
+  def exercise(root,ui):
    root.report_callback_exception=lambda a,b,c:errors.append(str(b))
-   root.geometry('1100x760+15+15');root.update()
+   root.geometry('1100x760+15+15');root.update_idletasks()
    try:
     assert [ui['notebook'].tab(t,'text') for t in ui['notebook'].tabs()]==['商品制作','任务中心','设置']
     assert len(ui['view'].get_children())==1
-    ui['view'].selection_set(ui['view'].get_children()[0]);preview=ui['open_preview']();preview.geometry('1000x700+20+20');preview.update();widgets=preview._ozon_ui
+    ui['view'].selection_set(ui['view'].get_children()[0]);preview=ui['open_preview']();preview.geometry('1000x700+20+20');widgets=preview._ozon_ui
+   except Exception:
+    errors.append(__import__('traceback').format_exc());ui['close']();return
+   root.after(800,lambda:inspect_preview(root,ui,preview,widgets))
+  def inspect_preview(root,ui,preview,widgets):
+   try:
     assert len(widgets['notebook'].tabs())==4
     assert widgets['submit'].cget('text')=='提交上架'
     assert widgets['update_preview'].cget('text')=='更新整组预览'
@@ -72,6 +77,7 @@ def main():
      root.after(1000,shared_queued)
     root.after(2500,updated)
    root.after(3500,check)
+  def ready(root,ui):root.after(500,lambda:exercise(root,ui))
   try:local_bridge.main(test_mode=True,on_ready=ready)
   finally:publication_service.PublicationService.begin=original_begin
   if errors:raise AssertionError(errors)

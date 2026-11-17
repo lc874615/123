@@ -18,7 +18,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  coordinator=GroupService(paths,service,pricing,store)
  cached=lookup(root,('group_preview',tuple(sorted(str(p.resolve()) for p in paths))))
  if cached is not None:return cached
- dialog=remember(root,('group_preview',tuple(sorted(str(p.resolve()) for p in paths))),tk.Toplevel(root));dialog.title('整组预览 · Ozon 商品自动化 1.0.43');dialog.geometry('1280x850');dialog.minsize(950,650)
+ dialog=remember(root,('group_preview',tuple(sorted(str(p.resolve()) for p in paths))),tk.Toplevel(root));dialog.title('整组预览 · Ozon 商品自动化 1.0.44');dialog.geometry('1280x850');dialog.minsize(950,650)
  busy=False;selected=set(range(len(paths)));focus=['',''];bundles=[];token=None;rendered=None;warehouses={};photos=[];rows={};last_job=None;copy_dirty=False;displayed_copy=None;copy_timer=None;busy_since=0;operation_error='';operation_name=''
  ttk.Label(dialog,text='每列一个变体；双击单格修改，点击参数名选中整行后批量修改。仓库显示当前店铺全部类型和状态。',wraplength=900).pack(pady=6)
  status=ttk.Label(dialog,text='正在加载整组预览',wraplength=1200);status.pack(pady=3)

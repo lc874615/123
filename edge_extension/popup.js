@@ -80,6 +80,6 @@ async function health(){
  catch(e){badge.textContent='本地工具未连接';badge.className='badge error';status.textContent=e.message;document.querySelector('#connection-settings').open=true;}
  await updateButtons();
 }
-async function updateButtons(){const x=await chrome.storage.local.get(['activeTask','autoEnabled','lastSku']);document.querySelector('#run').disabled=!!x.activeTask&&!!x.autoEnabled;document.querySelector('#stop').disabled=!x.autoEnabled&&!x.activeTask;document.querySelector('#current-sku').textContent=x.activeTask?.sku||x.lastSku||'暂无任务';document.querySelector('#copy').disabled=!!x.activeTask;}
+async function updateButtons(){const x=await chrome.storage.local.get(['activeTask','autoEnabled','lastSku']);document.querySelector('#run').disabled=!!x.activeTask&&!!x.autoEnabled;document.querySelector('#stop').disabled=!x.autoEnabled&&!x.activeTask;document.querySelector('#current-sku').textContent=x.activeTask?.sku||x.lastSku||'暂无任务';document.querySelector('#copy').disabled=!!x.activeTask;document.querySelector('#recover').disabled=!!x.activeTask;document.querySelector('#run').textContent=x.activeTask&&x.autoEnabled?'自动制作中':'开始 / 继续';const heading=document.querySelector('#task-heading'),skuLabel=document.querySelector('#sku-label');if(heading)heading.textContent=x.activeTask?'当前制作任务':'工作状态';if(skuLabel)skuLabel.textContent=x.activeTask?'变体货号':'最近变体';globalThis.OzonPopupUI?.render();}
 health();
 
