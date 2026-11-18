@@ -92,10 +92,16 @@ def import_commissions(path):
  finally:book.close()
 
 def select_commission(config,type_name,record_index=None):
- records=config['records'];matched=[r for r in records if r['type_ru'].casefold()==type_name.strip().casefold() and r['brand'].casefold()=='all']
- if record_index is not None:
-  matched=[r for r in matched if r['source_row']==int(record_index)]
+ records=config['records'];names=[type_name.strip().casefold()]
+ # The live tree merges these two historical tariff types. Never fuzzy-match fees.
+ aliases={'держатель для костылей, трости':['держатель для костылей','держатель для трости']}
+ matched=[r for r in records if r['type_ru'].casefold() in names and r['brand'].casefold()=='all']
+ if not matched and record_index is None and names[0] in aliases:
+  groups=[[r for r in records if r['type_ru'].casefold()==n and r['brand'].casefold()=='all'] for n in aliases[names[0]]]
+  if all(groups):matched=[r for group in groups for r in group]
+ if record_index is not None:matched=[r for r in matched if r['source_row']==int(record_index)]
  schedules={tuple(r['rates']) for r in matched}
- if len(schedules)!=1:raise ValueError('rFBS佣金无法唯一匹配，请核对商品类型并选择对应佣金行')
+ if not matched:raise ValueError('佣金表未找到该商品类型：'+type_name+'；请更新佣金表或设置佣金对应关系，无需更换上架类目')
+ if len(schedules)!=1:raise ValueError('匹配到多条不同佣金规则，请确认对应佣金行；不能以较低费率代替实际费率')
  rates=next(iter(schedules));source=config['filename']+' / Full ChinaHK rows '+','.join(str(r['source_row']) for r in matched)
  return [CommissionBand(a,b,r,source,'RFBS') for a,b,r in zip((0,1500,5000),(1500,5000,1000000000),rates)]

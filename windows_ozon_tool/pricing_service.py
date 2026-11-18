@@ -34,7 +34,7 @@ def parse_fx(raw,today=None):
 
 def fetch(url,limit):
  from secure_http import read as verified_read
- req=urllib.request.Request(url,headers={'User-Agent':'OzonLocalPricing/1.0.57'})
+ req=urllib.request.Request(url,headers={'User-Agent':'OzonLocalPricing/1.0.58'})
  return verified_read(req,limit,timeout=12)
 
 def adopt_price(bundle):
@@ -49,7 +49,7 @@ def adopt_price(bundle):
 class PricingService:
  def __init__(self,data,store_lock=None):
   self.data=Path(data);self.root=self.data/'pricing';self.root.mkdir(parents=True,exist_ok=True)
-  self.lock=store_lock or threading.Lock();self.source_lock=threading.Lock();self.calculation_lock=threading.Lock();self.status='等待定价配置'
+  self.lock=store_lock or threading.Lock();self.source_lock=threading.Lock();self.calculation_lock=threading.Lock();self.status='等待定价配置';self.commission_sync_lock=threading.Lock();self.commission_attempts={};self.commission_status='店铺佣金待同步'
  def import_ogl(self,path):
   config=import_ogl(path)
   config['boundary_policy']='uploaded_labels'
@@ -75,9 +75,48 @@ class PricingService:
   with self.source_lock:
    configs={name:read(self.root/(name+'.json')) for name in ('ogl','commissions','fx')}
    overrides=read(self.root/'type_mapping.json') if (self.root/'type_mapping.json').exists() else {}
+  from account_context import credentials
+  from commission_sync import location
+  merchant=credentials()[0];live=location(self.root,merchant)
+  if merchant and live.exists():configs['shop_commissions']=read(live)
   date=dt.date.fromisoformat(configs['fx']['date'])
   if not 0<=(dt.datetime.now(dt.timezone.utc).date()-date).days<=7:raise ValueError('央行汇率超过7天，请更新后定价')
   return configs,overrides
+ def sync_commissions(self,force=False,caller=None):
+  import time
+  from account_context import credentials,LOCK
+  from commission_sync import location,collect,compare,post,INTERVAL,preserve_uncovered
+  if not self.commission_sync_lock.acquire(blocking=False):
+   if force:raise ValueError('店铺佣金正在同步，请等待本轮完成后再下载')
+   return
+  try:
+   creds=credentials();merchant=creds[0]
+   if not all(creds):
+    if force:raise ValueError('请先连接Ozon API')
+    return
+   target=location(self.root,merchant);now=time.time();previous=read(target) if target.exists() else {}
+   if not force and (now-previous.get('fetched_at',0)<INTERVAL or now-self.commission_attempts.get(merchant,0)<600):return
+   self.commission_attempts[merchant]=now
+   with self.source_lock:
+    config=read(self.root/'commissions.json');fxpath=self.root/'fx.json';fx=read(fxpath) if fxpath.exists() else None
+   snapshot=compare(preserve_uncovered(collect(caller or (lambda p,b:post(p,b,creds)),merchant,fx),previous),config)
+   with LOCK,self.source_lock:
+    if credentials()!=creds:raise ValueError('同步期间店铺已切换，已丢弃本次结果')
+    if read(self.root/'commissions.json')['sha256']!=config['sha256']:raise ValueError('同步期间佣金基准已更新，请重新同步')
+    if target.exists():
+     write(target.with_suffix('.previous.json'),previous)
+     write(self.root/'commission_history'/target.stem/(str(time.time_ns())+'.json'),previous)
+    write(target,snapshot)
+   self.commission_status='店铺API佣金已同步：'+str(snapshot['products'])+'个商品，'+str(len(snapshot['cells']))+'个有效类目价格档，'+str(sum(c['changed'] for c in snapshot['cells']))+'处差异，'+str(len(snapshot['conflicts']))+'组冲突未采用'
+   return snapshot
+  finally:self.commission_sync_lock.release()
+ def export_commissions(self,dest):
+  from account_context import credentials
+  from commission_sync import location,export_table
+  merchant=credentials()[0]
+  with self.source_lock:
+   config=read(self.root/'commissions.json');path=location(self.root,merchant);snapshot=read(path) if path.exists() else None
+  export_table(config,snapshot,dest)
  def map_type(self,type_id,type_name,source_row=None,commission_sha256=None):
   with self.source_lock:
    path=self.root/'type_mapping.json';value=read(path) if path.exists() else {};value[str(type_id)]={'type_name':type_name,'source_row':source_row,'commission_sha256':commission_sha256} if source_row is not None else type_name;write(path,value)
@@ -90,6 +129,16 @@ class PricingService:
    name=selected['type_name'];record=selected['source_row']
   else:name=selected or category.get('name','');record=None
   bands=select_commission(configs['commissions'],name,record)
+  from account_context import credentials
+  from commission_sync import bands_for
+  snapshot=configs.get('shop_commissions')
+  if snapshot and snapshot.get('account_id')==credentials()[0]:
+   import time
+   from commission_sync import MAX_AGE
+   relevant=lambda c:c.get('type_id')==category.get('type_id') and c.get('description_category_id')==category.get('description_category_id')
+   if any(relevant(c) and not 0<=time.time()-c.get('fetched_at',snapshot.get('fetched_at',0))<=MAX_AGE for c in snapshot.get('cells',[])):raise ValueError('店铺佣金校准超过24小时，请在定价设置中立即比对店铺API佣金')
+   if any(any(relevant(c) for c in conflict['samples']) for conflict in snapshot.get('conflicts',[])):raise ValueError('店铺API返回同类目同价格档多个不同rFBS费率，请核对商品条件后重试')
+   bands=bands_for(snapshot,category,bands)
   required=('cost','margin','pack_weight','pack_length','pack_width','pack_height')
   if any(not str(params.get(k,'')).strip() for k in required):raise ValueError('请完整填写每套成本、目标利润率、包装重量及三边')
   package=Package(*(params[k] for k in ('pack_weight','pack_length','pack_width','pack_height')))
@@ -130,7 +179,10 @@ class PricingService:
        bundle['manual_price']=True;write(path,bundle)
     if not isinstance(bundle,dict):raise ValueError('商品草稿必须是JSON对象')
     inputs={k:bundle.get(k) for k in ('variant_parameters','category','category_match_status','manual_price')}
-    fingerprint_inputs={**inputs,'selected_manual_price':str(bundle.get('price_cny')) if bundle.get('manual_price') else None,'category':{k:v for k,v in (bundle.get('category') or {}).items() if k!='attributes_revalidation_required'}}
+    from commission_sync import MAX_AGE
+    import time
+    live=configs.get('shop_commissions') if configs else None
+    fingerprint_inputs={'commission_observation_fresh':[(c['description_category_id'],c['type_id'],c['band'],0<=time.time()-c.get('fetched_at',live.get('fetched_at',0))<=MAX_AGE) for c in (live or {}).get('cells',[])],**inputs,'selected_manual_price':str(bundle.get('price_cny')) if bundle.get('manual_price') else None,'category':{k:v for k,v in (bundle.get('category') or {}).items() if k!='attributes_revalidation_required'}}
     fingerprint=hashlib.sha256(json.dumps([fingerprint_inputs,configs,mapping,source_error],sort_keys=True,default=str).encode()).hexdigest()
     if bundle.get('pricing_fingerprint')==fingerprint:
      with self.lock:
@@ -179,6 +231,8 @@ class PricingService:
     path=self.root/'fx.json';old=read(path) if path.exists() else {}
     if old.get('fetched_at','')[:10]!=dt.datetime.now(dt.timezone.utc).date().isoformat():self.update_fx()
    except Exception as exc:self.status='央行汇率更新失败：'+str(exc)[:120]
+   try:self.sync_commissions()
+   except Exception as exc:self.commission_status='店铺佣金同步未完成：'+str(exc)[:120]
    self.calculate_all()
    # Network retries are bounded to once every ten minutes; local inputs checked every 15s.
    for _ in range(40):

@@ -659,7 +659,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.57','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.58','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
@@ -869,7 +869,9 @@ def main(test_mode=False,on_ready=None):
  def pricing_settings():
   cached=lookup(root,('pricing_settings',))
   if cached is not None:return cached
-  dialog=remember(root,('pricing_settings',),tk.Toplevel(root));dialog.title('自动定价设置与来源');dialog.geometry('760x470')
+  dialog=remember(root,('pricing_settings',),tk.Toplevel(root));dialog.title('自动定价设置与来源');dialog.geometry('820x620')
+  actions=ttk.Frame(dialog,padding=10);actions.pack(side='bottom',fill='x')
+  for col in range(2):actions.columnconfigure(col,weight=1)
   info=tk.Text(dialog,height=13,wrap='word');info.pack(fill='both',expand=True,padx=10,pady=8)
   def show():
    info.delete('1.0','end')
@@ -879,7 +881,8 @@ def main(test_mode=False,on_ready=None):
     value=read_pricing(path)
     text=(value.get('filename','')+' '+value.get('effective_note','')) if name!='fx' else value['rub_per_cny']+' RUB/CNY，日期 '+value['date']+'\n'+value['source']+' '+value['url']
     info.insert('end',label+'：'+text+'\n')
-   info.insert('end','\nOGL边界已确认按表中文字：重量及货值按文字，三边之和含上限。\n售价单位人民币；利润率=净利润/售价。每套成本不乘套装件数。\n计入rFBS佣金、OGL运输、贴单1元、尾程2.2%、提现1.2%、收单2%。\n央行汇率仅作参考；显示的售价为估算，提交上架前确认。\n内置佣金下载为2025-12-01版本；如有更新，请导入新的官方表。')
+   info.insert('end',pricing.commission_status+'\n')
+   info.insert('end','\nOGL边界已确认按表中文字：重量及货值按文字，三边之和含上限。\n售价单位人民币；利润率=净利润/售价。每套成本不乘套装件数。\n计入rFBS佣金、OGL运输、贴单1元、尾程2.2%、提现1.2%、收单2%。\n央行汇率仅作参考；显示的售价为估算，提交上架前确认。\n基准为2025-12-01表；工具运行时每6小时核对店铺商品rFBS费率。仅校准已有商品覆盖价格档，冲突不采用，观察值24小时过期；不代表全平台最新官方费率。')
   def run(action):
    def work():
     try:action()
@@ -893,10 +896,15 @@ def main(test_mode=False,on_ready=None):
   def choose(kind):
    path=filedialog.askopenfilename(parent=dialog,title='导入'+kind,filetypes=[('Excel','*.xlsx')])
    if path:run(lambda:pricing.import_ogl(path) if kind=='OGL' else pricing.import_commissions(path))
-  ttk.Button(dialog,text='导入本地OGL计算表（一次配置）',command=lambda:choose('OGL')).pack(pady=3)
-  ttk.Button(dialog,text='导入官方rFBS佣金表',command=lambda:choose('佣金')).pack(pady=3)
-  ttk.Button(dialog,text='下载官方佣金表（2025-12-01版）',command=lambda:run(pricing.update_commissions)).pack(pady=3)
-  ttk.Button(dialog,text='立即获取央行参考汇率',command=lambda:run(pricing.update_fx)).pack(pady=3)
+  ttk.Button(actions,text='导入本地OGL计算表（一次配置）',command=lambda:choose('OGL')).grid(row=0,column=0,sticky='ew',padx=4,pady=4)
+  ttk.Button(actions,text='导入官方rFBS佣金表',command=lambda:choose('佣金')).grid(row=0,column=1,sticky='ew',padx=4,pady=4)
+  ttk.Button(actions,text='下载官方佣金表（2025-12-01版）',command=lambda:run(pricing.update_commissions)).grid(row=1,column=0,sticky='ew',padx=4,pady=4)
+  def export_commissions():
+   path=filedialog.asksaveasfilename(parent=dialog,title='下载当前最新版佣金表（店铺校准版）',defaultextension='.xlsx',initialfile='Ozon_店铺佣金校准表.xlsx',filetypes=[('Excel','*.xlsx')])
+   if path:run(lambda:(pricing.sync_commissions(force=True),pricing.export_commissions(path)))
+  ttk.Button(actions,text='立即比对店铺API佣金',command=lambda:run(lambda:pricing.sync_commissions(force=True))).grid(row=1,column=1,sticky='ew',padx=4,pady=4)
+  ttk.Button(actions,text='下载最新版佣金表（店铺校准版）',command=export_commissions).grid(row=2,column=0,sticky='ew',padx=4,pady=4)
+  ttk.Button(actions,text='立即获取央行参考汇率',command=lambda:run(pricing.update_fx)).grid(row=2,column=1,sticky='ew',padx=4,pady=4)
   show()
  ttk.Button(sources_panel,text='自动定价设置 / 运费表 / 央行汇率',command=pricing_settings).pack(pady=3)
  def create():
