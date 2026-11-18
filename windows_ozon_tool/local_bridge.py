@@ -45,7 +45,10 @@ class Store:
   from image_regeneration import ImageJobs
   self.image_jobs=ImageJobs(self)
   from asset_reconcile import reconcile
-  with self.lock:reconcile(self)
+  with self.lock:
+   reconcile(self)
+   from queue_completion import retire_legacy_attribute_save_error
+   retire_legacy_attribute_save_error(self)
  def repair_recollection_queue(self):
   # Older backups may have removed the leader's files before setting its recovery flag.
   groups={t.get('copy_leader',t['sku']) for t in self.tasks if t.get('recollection_requested')}
@@ -569,6 +572,8 @@ class Store:
   if extension_idle is True:
    from queue_completion import reconcile_idle_attributes
    reconcile_idle_attributes(self)
+  from queue_completion import retire_legacy_attribute_save_error
+  retire_legacy_attribute_save_error(self)
   from reference_prefill import repair_failed_save
   repair_failed_save(self)
   reconcile(self);self.sync_shared_copies();self.repair_unsent_copy();self.resume_unsent_upload();self.repair_uncertain_send_collection()
@@ -661,7 +666,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.59','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.60','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)

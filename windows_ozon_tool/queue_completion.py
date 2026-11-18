@@ -61,3 +61,37 @@ def reconcile_idle_attributes(store):
    task['attribute_deferred_reason']='插件当前没有执行任务，已保留属性读取上下文；可选属性读取暂缓，不重新发送'
    changed=True
  if changed:store.save()
+
+def retire_legacy_attribute_save_error(store):
+ """Retire this known optional save bug only after actual required assets pass audit."""
+ import copy,time
+ from asset_audit import inspect
+ from listing_bundle import copy_complete
+ from prefill_rules import VERSION,basis
+ from reference_prefill import parameters,category_context
+ changed=False
+ for task in store.tasks:
+  if task.get('state')!='saved' or task.get('copy_mode')!='attributes' or task.get('copy_state')!='needs_attention':continue
+  if not any(e in str(task.get('message','')) for e in ("'list' object has no attribute 'get'","'str' object has no attribute 'get'")):continue
+  if task.get('recollection_requested') or task.get('pause_requested') or len(task.get('received_images') or [])!=8:continue
+  members=[t['sku'] for t in store.tasks if t.get('copy_leader',t['sku'])==task.get('copy_leader',task['sku'])]
+  if store.image_jobs.active(members):continue
+  folder=store.folder/'products'/task['sku']
+  try:
+   bundle=json.loads((folder/'listing_bundle.json').read_text(encoding='utf-8-sig'))
+   if not inspect(folder)['verified'] or not copy_complete(bundle.get('copy')) or pending(bundle) or bundle.get('recollection_pending'):continue
+   history=folder/'attribute_failure_history.json';rows=json.loads(history.read_text()) if history.exists() else []
+   if not isinstance(rows,list):continue
+   rows.append({'retired_at':time.time(),'reason':'legacy_optional_save_bug','task':{k:copy.deepcopy(task.get(k)) for k in ('id','copy_state','copy_mode','copy_phase','message','copy_request_marker','attribute_context','resume_mode')}})
+   from pricing_service import write
+   write(history,rows)
+   # This only marks mandatory copy ready; attribute enrichment stays explicitly deferred.
+   task.update(copy_state='done',copy_phase='done',attribute_extract_state='deferred',attribute_deferred_reason='旧版属性保存异常已归档，已有图片和文案已核验，可继续预览上架',message='图片和共用文案已核验；可选属性补充暂缓，待预览提交')
+   task.pop('copy_mode',None);task.pop('resume_mode',None)
+   for member in store.tasks:
+    if member['sku'] in members:
+     fields,digest=category_context(store,member);member['attribute_attempt']={'version':VERSION,'basis':basis(parameters(store,member)),'schema_basis':digest}
+   changed=True
+  except (OSError,ValueError,TypeError,KeyError):continue
+ if changed:store.save()
+ return changed

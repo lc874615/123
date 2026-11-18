@@ -60,3 +60,16 @@ class Tests(unittest.TestCase):
    job=store.image_jobs.jobs[0];job.update(state='needs_attention',message='发送结果尚未确认，已保留当前任务；请核对页面回执，不会启动下一任务或重复生成')
    store.poll_state();self.assertEqual(job['resume_mode'],'inspect_only');self.assertEqual(job['state'],'needs_attention');self.assertIsNone(store.image_jobs.next())
    store.set_paused(True);job.pop('resume_mode');store.poll_state();self.assertNotIn('resume_mode',job)
+
+ def test_legacy_optional_bug_retires_while_paused_after_real_asset_audit(self):
+  from queue_completion import retire_legacy_attribute_save_error
+  with tempfile.TemporaryDirectory() as tmp,patch('image_regeneration.threading.Thread'):
+   store,t=self.setup(tmp);t.update(state='saved',copy_mode='attributes',copy_state='needs_attention',copy_phase='generating',message="'list' object has no attribute 'get'",copy_request_marker='OLD')
+   store.set_paused(True);before=read(store.folder/'products'/t['sku']/'listing_bundle.json')
+   self.assertTrue(retire_legacy_attribute_save_error(store));self.assertTrue(store.control['paused']);self.assertEqual(t['copy_state'],'done');self.assertEqual(t['attribute_extract_state'],'deferred');self.assertFalse(store.blockers())
+   self.assertEqual(read(store.folder/'products'/t['sku']/'listing_bundle.json'),before);self.assertTrue((store.folder/'products'/t['sku']/'attribute_failure_history.json').exists());self.assertFalse(retire_legacy_attribute_save_error(store))
+ def test_legacy_error_is_not_retired_when_required_copy_or_image_is_missing(self):
+  from queue_completion import retire_legacy_attribute_save_error
+  with tempfile.TemporaryDirectory() as tmp,patch('image_regeneration.threading.Thread'):
+   store,t=self.setup(tmp);t.update(state='saved',copy_mode='attributes',copy_state='needs_attention',message="'list' object has no attribute 'get'")
+   path=store.folder/'products'/t['sku']/'listing_bundle.json';b=read(path);b['copy']={};write(path,b);self.assertFalse(retire_legacy_attribute_save_error(store));self.assertEqual(t['copy_state'],'needs_attention')
