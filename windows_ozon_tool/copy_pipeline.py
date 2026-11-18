@@ -52,11 +52,11 @@ def save(store,body):
   if not manual and owner.get('copy_context_basis') and owner['copy_context_basis']!=fingerprint:raise ValueError('文案处理期间商品参数已变化，未保存旧文案，请重新读取当前资料')
   if not manual and value.get('facts_fingerprint') and value['facts_fingerprint']!=fingerprint:raise ValueError('已有文案对应的商品参数已变化，需按最新资料生成')
   if refresh and not manual and (body.get('existing') or owner.get('copy_phase')=='inspecting') and value.get('facts_fingerprint')!=fingerprint:raise ValueError('已有文案缺少当前整组参数依据，不沿用旧文案')
-  normalized={k:v for k,v in value.items() if k not in ('variant_attributes','facts_fingerprint')}
+  normalized={k:v for k,v in value.items() if k not in ('variant_attributes','category_attributes','facts_fingerprint')}
   result=save_copy(path.parent,normalized,replace=refresh or manual);current=read(path);current['copy_basis']=fingerprint
   if current.get('asset_review'):current['asset_review']['copy']=False
   write(path,current)
- if 'variant_attributes' in value and owner.get('attribute_context'):
+ if ('variant_attributes' in value or 'category_attributes' in value) and owner.get('attribute_context'):
   from reference_prefill import save as save_attributes
   save_attributes(store,sku,value)
  owner.pop('copy_mode',None);owner.pop('resume_mode',None);owner['copy_phase']='done';store.sync_shared_copies();owner.update(copy_state='done',message='整组文案已自动保存并同步全部变体；视频与托管继续处理');store.save();return result

@@ -20,7 +20,7 @@
    for(let j=start;j<clean.length;j++){
     const c=clean[j];if(quoted){if(escaped)escaped=false;else if(c==='\\')escaped=true;else if(c==='"')quoted=false;continue;}
     if(c==='"'){quoted=true;continue;}if(c==='{')depth++;if(c==='}'&&--depth===0){
-     try{const v=readObject(clean.slice(start,j+1));if((typeof v.title_ru==='string'&&typeof v.description_ru==='string'&&Array.isArray(v.tags_ru)&&Array.isArray(v.missing_facts))||(typeof v.sku==='string'&&v.variant_attributes&&typeof v.variant_attributes==='object'&&!Array.isArray(v.variant_attributes)))values.push(v);}catch{}
+     try{const v=readObject(clean.slice(start,j+1));if((typeof v.title_ru==='string'&&typeof v.description_ru==='string'&&Array.isArray(v.tags_ru)&&Array.isArray(v.missing_facts))||(typeof v.sku==='string'&&((v.variant_attributes&&typeof v.variant_attributes==='object'&&!Array.isArray(v.variant_attributes))||(v.category_attributes&&typeof v.category_attributes==='object'&&!Array.isArray(v.category_attributes)))))values.push(v);}catch{}
      break;
     }
    }

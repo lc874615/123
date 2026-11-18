@@ -15,10 +15,10 @@ def source_fingerprint(bundle):
  values={k:v for k,v in (bundle.get('variant_parameters') or {}).items() if k not in ('cost','margin','stock')}
  copy=bundle.get('copy') or {}
  evidence=bundle.get('reference_attributes') or {};stats=[]
- for ref in evidence.get('references') or []:
+ for ref in (evidence.get('references') or [])+((bundle.get('reference_category_attributes') or {}).get('references') or []):
   try:stat=Path(ref['path']).stat();stats.append([stat.st_size,stat.st_mtime_ns])
   except OSError:stats.append(None)
- return hashlib.sha256(json.dumps([values,{k:copy.get(k) for k in ('title_ru','description_ru','tags_ru')},evidence,stats,bundle.get('model'),bundle.get('brand'),[{k:r.get(k) for k in ('order','role','https_url','sha256')} for r in bundle.get('images') or []]],sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+ return hashlib.sha256(json.dumps([values,{k:copy.get(k) for k in ('title_ru','description_ru','tags_ru')},evidence,bundle.get('reference_category_attributes'),stats,bundle.get('model'),bundle.get('brand'),[{k:r.get(k) for k in ('order','role','https_url','sha256')} for r in bundle.get('images') or []]],sort_keys=True,ensure_ascii=False).encode()).hexdigest()
 def review_hash(state):
  return hashlib.sha256(json.dumps([state.get('schema_hash'),state.get('source_fingerprint'),state.get('values')],sort_keys=True,ensure_ascii=False).encode()).hexdigest()
 def api(path,body):
@@ -31,7 +31,7 @@ def api(path,body):
  if not isinstance(value,dict) or not isinstance(value.get('result'),list):raise ValueError('Ozon属性响应格式异常')
  return value
 
-AUTOFILL_VERSION=7
+AUTOFILL_VERSION=8
 def normalized_name(field):
  return re.sub(r'\s+',' ',(field.get('name_ru') or field.get('name','')).casefold().replace('ё','е').replace('#','')).strip()
 def audience(bundle):
@@ -42,6 +42,9 @@ def audience(bundle):
 def suggested_value(field,bundle):
  """Only declared facts; dictionary values still require an exact official match."""
  name=normalized_name(field);identifier=int(field['id']);p=bundle.get('variant_parameters') or {};copy=bundle.get('copy') or {}
+ from category_prefill import value_for as category_value
+ category_fact=category_value(field,bundle)
+ if category_fact is not None:return category_fact
  from prefill_rules import value_for,field_kind
  value=value_for(field,bundle)
  if value is not None:return value
@@ -283,7 +286,9 @@ class AttributeService:
     values[key]=proposed;auto_references[key]={k:reference[k] for k in ('suggested','evidence','confidence','note','kind')}
    from prefill_rules import annotation
    for field in fields:
-    key=field_key(field);reference=annotation(field,bundle)
+    key=field_key(field)
+    from category_prefill import annotation as category_annotation
+    reference=category_annotation(field,bundle) or annotation(field,bundle)
     if reference and key in values and key not in manual:auto_references[key]=reference
    for k in values:pending.pop(k,None)
    state={'autofill_version':AUTOFILL_VERSION,'prefill_notes':prefill_notes,'auto_reference_keys':sorted(auto_references),'auto_references':auto_references,'category_key':[category,type_id],'schema_hash':digest,'fields':fields,'values':values,'suggestions':suggestions,'fetched_at':schema_time,'confirmed':bool(same and unchanged and old.get('autofill_version')==AUTOFILL_VERSION and old.get('confirmed')),'source_fingerprint':source,'manual_keys':sorted(manual) if same else [k for k in values if k in manual],'migration_pending':pending}

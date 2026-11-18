@@ -23,6 +23,8 @@ FINAL_DETAIL_MATCH='【最终成品验收，以本任务设计要求和真实资
 
 def role_layout(name,brief):return brief+('；'+LAYOUTS[name] if name in LAYOUTS else '')
 
+MAIN_DIMENSIONS='尺寸信息与商品真实性优先于装饰和卖点数量，有尺寸时预留清晰的尺寸模块。\n【各变体主图尺寸保留，适用于首次制作和重新生成的01主图】逐一读取当前变体所有主图原始参考中的清晰尺寸文字、数字、单位、尺寸线对应部位及展开/折叠状态。只要原图有明确商品尺寸，生成的本变体01主图必须保留这些尺寸信息；不能以“详情图已有尺寸”、减少文字、简洁排版或只保留卖点为由省略，也不能只搬到尺寸详情图。保留全部不重复的有效商品尺寸，清晰对应原测量位置；可重排尺寸线和俄语说明，不能改变数字含义或商品比例。长、宽、高、直径、厚度、座高等按原图实际标注，不互换、不混用商品尺寸与包装尺寸；准确换算单位时须数值等价。多尺寸或多状态在本变体主图中分别标清。不得挪用其他变体、共用索引页其他格子或风格样例的数字。原图数字看不清不猜，不通过像素比例估算；原图尺寸与明确已填参数冲突时必须明确报告，不能静默覆盖、删除或自行取舍。主图交付前对照当前变体所有原始参考核对尺寸，无明确尺寸则不编造。'
+
 def generation_prompt(facts,group_facts='',expected=8):
  if expected not in (1,8):raise ValueError('图片交付数量只能为1或8')
  common='每张3:4竖版，自然俄语排版，风格统一。严格保持参考图对应变体的外形、颜色、比例和结构。不得虚构参数、认证、承重、防水或功能；卖点不足时减少文字，不编造补足。涉及人物时，人手、姿势、商品使用方式和尺寸比例应合理，人物与商品实际接触自然；允许真实坐姿等必要局部遮挡，但商品仍清楚可辨，关键轮廓、底座或支撑结构可见，不把主体大面积藏住。'
@@ -30,7 +32,7 @@ def generation_prompt(facts,group_facts='',expected=8):
   contract='本任务只能生成和交付1张最终主图，不生成其他图片；文件名固定01_main.jpg。主图要求：'+ROLES[0][1]+'。后7张详情图由本地沿用首变体，不要重复生成。'
  else:
   contract='本任务只能交付8张最终独立图片，必须严格按01到08逐张生成并按该顺序交付；不要多出第9张，不提供额外封面、试稿、备选图或重复版本，不把整套海报拼成一张交付。需要修改时只将最终定稿纳入交付，不把过程图混入成品列表。固定顺序与用途：'+'；'.join(name+'.jpg：'+role_layout(name,brief) for name,brief in ROLES)+'。02—08为全组共用详情，涉及颜色或尺寸差异必须标注选项；无法兼容的细节不写成全组通用。'
- return SEQUENTIAL_DELIVERY+(DETAIL_STYLE if expected==8 else '')+contract+common+(VISUAL_STYLE if expected==1 else '')+EVIDENCE_STYLE+POSTER_RULE+MAIN_STYLE+MAIN_DETAIL_INFO+FIDELITY+'最终只列出本次'+str(expected)+'张对应编号的独立文件及逐张下载入口，文件数量必须与编号一一对应，不要打包，不提供ZIP。当前变体商品事实：'+facts+('。当前主图只依据本变体资料，其他变体不得作为外观依据：'+facts if expected==1 else '。同组全部变体资料：'+(group_facts or facts))+(FINAL_DETAIL_MATCH if expected==8 else '')
+ return SEQUENTIAL_DELIVERY+(DETAIL_STYLE if expected==8 else '')+contract+common+(VISUAL_STYLE if expected==1 else '')+EVIDENCE_STYLE+POSTER_RULE+MAIN_STYLE+MAIN_DETAIL_INFO+MAIN_DIMENSIONS+FIDELITY+'最终只列出本次'+str(expected)+'张对应编号的独立文件及逐张下载入口，文件数量必须与编号一一对应，不要打包，不提供ZIP。当前变体商品事实：'+facts+('。当前主图只依据本变体资料，其他变体不得作为外观依据：'+facts if expected==1 else '。同组全部变体资料：'+(group_facts or facts))+(FINAL_DETAIL_MATCH if expected==8 else '')
 
 FIDELITY='商品一致性优先于设计美化：只能使用本次附件中该变体的原始商品参考图作为外观依据，禁止将历史对话、其他变体或AI生成图中的商品作为新增外观事实。生成过程中的预览不提供新增事实，也不是必须沿用的设计标准；最终商品本体、材质、参数及花色必须核对原始资料。优先保留原商品并抠图合成，只改背景和排版，不重新设计或替换成相似款。逐项保持真实轮廓、比例、表面纹理/缝线、靠背与座面形状、腿脚/支架数量和造型、扶手有无、连接结构及颜色分区；原图没有的扶手、脚轮、配件不得增加。参考图看不到的角度沿用可确认视角，不凭空补画隐藏结构。每套件数必须与当前变体参数一致。俄语标题与真实卖点放在留白区，不能为排版压缩或改变商品。'
 
@@ -43,6 +45,7 @@ def reference_contract(task):
  for i,r in enumerate(refs):
   usage=('对应变体在共用详情中的真实商品外观' if r.get('purpose','variant_main')=='variant_main' else '全组共用细节依据，差异不可写成通用') if task.get('kind')=='shared_details' or task.get('expected_images')==8 else ('仅用于本变体主图外观' if r.get('purpose','variant_main')=='variant_main' else '用于主图筛选并核对可用卖点/材质/重要参数，不作为本变体外观依据')
   if r.get('purpose') in ('shared_variant','shared_reference_sheet'):usage='仅供7张共用详情核对全组选项；不得作为当前变体主图外观依据'
+  if r.get('purpose','variant_main')=='variant_main' and (r.get('sku') or task.get('sku'))==task.get('sku') and task.get('kind')!='shared_details':usage+='；本变体原图内清晰商品尺寸必须保留到01主图，不能省略或仅移到详情图'
   if r.get('cells'):usage+='；按从左到右、从上到下格号对应：'+str(r['cells'])
   lines.append(str(i+1)+'：'+str(r.get('name','原图'))+'；货号 '+str(r.get('sku') or task.get('sku',''))+'；用途 '+usage)
  return FIDELITY+'\n本次附件对应关系：\n'+'\n'.join(lines)
@@ -63,7 +66,7 @@ def sheet_prompt(facts,group_facts='',expected=8,shared=False):
  if shared:
   roles=ROLES[1:];style=DETAIL_STYLE
  else:
-  roles=ROLES if expected==8 else ROLES[:1];style=DETAIL_STYLE+MAIN_STYLE+MAIN_DETAIL_INFO
+  roles=ROLES if expected==8 else ROLES[:1];style=DETAIL_STYLE+MAIN_STYLE+MAIN_DETAIL_INFO+MAIN_DIMENSIONS
  if expected==1:return generation_prompt(facts,group_facts,1)
  # Assemble only the sheet contract; never append conflicting independent-file rules.
  return contract(expected)+style+EVIDENCE_STYLE+FIDELITY+'各格用途顺序：'+'；'.join(str(i+1)+'：'+role_layout(n,b) for i,(n,b) in enumerate(roles))+'。当前变体事实：'+facts+'。全组选项事实：'+(group_facts or facts)

@@ -6,7 +6,7 @@ from attribute_service import AttributeService
 from reference_prefill import build,save,needed
 from pricing_service import read,write
 class PrefillRulesTests(unittest.TestCase):
- def chair(self):return {'sku':'1688-1(1)','variant_parameters':{'name':'椅子','color':'灰色, 黑色','material':'金属','accessory_material':'绒面','assembly':'拆卸','quantity':'1','length':'40'},'category':{'name':'Стул'}}
+ def chair(self):return {'sku':'1688-1(1)','variant_parameters':{'name':'椅子','color':'灰色, 黑色','material':'金属','accessory_material':'绒面','assembly':'拆卸','quantity':'1','length':'40'},'category':{'name':'Стул','description_category_id':10,'type_id':20}}
  def field(self,name,**kw):return {'id':1,'name_ru':name,**kw}
  def test_chair_defaults_and_explicit_override(self):
   b=self.chair();f=self.field('Макс. нагрузка, кг')
@@ -49,7 +49,8 @@ class PrefillRulesTests(unittest.TestCase):
 
 class ReferenceBridgeTests(unittest.TestCase):
  def test_existing_common_copy_is_preserved_during_attributes_only_roundtrip(self):
-  import json,socket,threading,urllib.request
+  import json,socket,threading
+  from http.client import HTTPConnection
   from unittest.mock import patch
   from local_bridge import Store,server
   with tempfile.TemporaryDirectory() as tmp:
@@ -62,8 +63,11 @@ class ReferenceBridgeTests(unittest.TestCase):
    with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
    http=server(store,'fixture-token',port);thread=threading.Thread(target=http.serve_forever,daemon=True);thread.start()
    def post(route,body):
-    req=urllib.request.Request('http://127.0.0.1:'+str(port)+route,json.dumps(body).encode(),headers={'Origin':'chrome-extension://fixture','Authorization':'Bearer fixture-token','Content-Type':'application/json'})
-    with urllib.request.urlopen(req) as response:return json.load(response)
+    conn=HTTPConnection('127.0.0.1',port,timeout=3)
+    conn.request('POST',route,json.dumps(body).encode(),headers={'Origin':'chrome-extension://fixture','Authorization':'Bearer fixture-token','Content-Type':'application/json'})
+    response=conn.getresponse();result=json.loads(response.read());conn.close()
+    if response.status!=200:raise AssertionError(result)
+    return result
    try:
     data=post('/copy-task',{'sku':sku});self.assertEqual(len(data['references']),1);self.assertIn('不改写已有文案',data['prompt']);self.assertEqual(task['copy_state'],'running')
     snapshot=task['attribute_context'].copy();recovery=post('/copy-task',{'sku':sku,'inspect_only':True});self.assertEqual(recovery['references'],[]);self.assertEqual(task['attribute_context'],snapshot)

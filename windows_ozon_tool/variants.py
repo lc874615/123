@@ -12,7 +12,7 @@ SECTIONS={
  '定价其他':('cost','margin','stock','origin'),
  '全部参数':tuple(k for k,_,_ in FIELDS),
 }
-SHORT_LABELS={'name':'商品名称 / 用途','color':'颜色 · 多选','size':'规格 / 型号','quantity':'件数','material':'主体材质','accessory_material':'配件 / 内衬','assembly':'组装方式','extra':'真实卖点 / 补充','length':'长 (cm)','width':'宽 (cm)','height':'高 (cm)','net_weight':'净重 (g)','pack_length':'包装长 (cm)','pack_width':'包装宽 (cm)','pack_height':'包装高 (cm)','pack_weight':'总重 (g)','cost':'每套成本 (元)','margin':'净利率 (%)','stock':'初始库存','origin':'产地'}
+SHORT_LABELS={'name':'商品名称 / 用途','color':'颜色 · 多选','size':'规格 / 型号','quantity':'件数','material':'主体材质','accessory_material':'配件 / 内衬','assembly':'组装方式','extra':'更多参数 / 卖点','length':'长 (cm)','width':'宽 (cm)','height':'高 (cm)','net_weight':'净重 (g)','pack_length':'包装长 (cm)','pack_width':'包装宽 (cm)','pack_height':'包装高 (cm)','pack_weight':'总重 (g)','cost':'每套成本 (元)','margin':'净利率 (%)','stock':'初始库存','origin':'产地'}
 
 def paste_fields(section,start,width):
  """Compact paste follows visible fields; wide Excel tables keep full-schema order."""

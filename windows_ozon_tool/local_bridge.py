@@ -409,7 +409,8 @@ class Store:
     from group_references import collect,INFO
     shared,variants=collect(self,t,limit=7);own=t.get('main_references') or [r for r in t.get('references',[]) if r.get('purpose','variant_main')=='variant_main']
     # Preserve the leader hero's own appearance references, all variant information accompanies details.
-    t['references']=own[:1]+shared
+    own_paths={r.get('path') for r in own}
+    t['references']=[{**r,'name':t['sku']+'_'+str(r.get('name','original'))} for r in own]+[r for r in shared if r.get('path') not in own_paths]
     t['group_variants']=variants;t['generation_variants']=copy.deepcopy(variants)
     t['group_facts']=INFO+'\n'+'\n'.join(v['sku']+'：'+str(v['facts'])+'；参数：'+json.dumps(v['variant_parameters'],ensure_ascii=False) for v in variants)
    else:t['references']=main_detail_references(t,self.tasks)
@@ -658,7 +659,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.53','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.54','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)

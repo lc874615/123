@@ -45,3 +45,5 @@ assert.equal(auto(doc([node({...v,sku:'TARGET'})]),{...task,needsRefresh:true}),
 assert.equal(auto(doc([node(attrs)]),{...task,sku:'CHAIR(1)'}),null);
 assert.deepEqual(auto(doc([node({...v,sku:'TARGET',facts_fingerprint:'current'})]),{...task,needsRefresh:true}),{...v,sku:'TARGET',facts_fingerprint:'current'});
 console.log('6 automatic whole-group copy ownership and freshness cases passed');
+
+const schemaOnly=globalThis.OzonCopy.parseAll(JSON.stringify({sku:'A',category_attributes:{A:[{field_key:'0:123',value:'60 W'}]}}));assert.equal(schemaOnly.length,1);assert.equal(schemaOnly[0].category_attributes.A[0].field_key,'0:123');

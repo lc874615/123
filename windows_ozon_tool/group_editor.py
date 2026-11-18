@@ -18,7 +18,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  coordinator=GroupService(paths,service,pricing,store)
  cached=lookup(root,('group_preview',tuple(sorted(str(p.resolve()) for p in paths))))
  if cached is not None:return cached
- dialog=remember(root,('group_preview',tuple(sorted(str(p.resolve()) for p in paths))),tk.Toplevel(root));dialog.title('整组预览 · Ozon 商品自动化 1.0.53');dialog.geometry('1280x850');dialog.minsize(950,650)
+ dialog=remember(root,('group_preview',tuple(sorted(str(p.resolve()) for p in paths))),tk.Toplevel(root));dialog.title('整组预览 · Ozon 商品自动化 1.0.54');dialog.geometry('1280x850');dialog.minsize(950,650)
  busy=False;selected=set(range(len(paths)));focus=['',''];bundles=[];token=None;rendered=None;warehouses={};photos=[];rows={};last_job=None;copy_dirty=False;displayed_copy=None;copy_timer=None;busy_since=0;operation_error='';operation_name=''
  from ui_components import section_header
  section_header(dialog,'预览与上架审核','参数、文案与素材集中核对；确认后再提交。')

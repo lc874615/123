@@ -54,3 +54,21 @@ class PromptStyleTests(unittest.TestCase):
    self.assertIn('不要浅景深',text);self.assertIn('中后景家具陈设均清晰可辨',text)
    self.assertIn('不编造链接',text)
 if __name__=='__main__':unittest.main()
+
+class MainDimensionPreservationTests(unittest.TestCase):
+ def test_initial_and_regenerated_mains_must_keep_original_dimension_labels(self):
+  from image_prompts import generation_prompt,MAIN_DIMENSIONS
+  for expected in (1,8):
+   prompt=generation_prompt('当前变体真实尺寸',expected=expected)
+   self.assertIn(MAIN_DIMENSIONS,prompt);self.assertIn('不能以“详情图已有尺寸”',prompt);self.assertIn('不得挪用其他变体',prompt)
+ def test_leader_keeps_secondary_original_dimension_reference(self):
+  import tempfile
+  from pathlib import Path
+  from local_bridge import Store
+  from PIL import Image
+  with tempfile.TemporaryDirectory() as tmp:
+   refs=[]
+   for n in range(2):
+    p=Path(tmp)/('original'+str(n)+'.png');Image.new('RGB',(600,800),(n*120,60,80)).save(p);refs.append(str(p))
+   store=Store(tmp);store.create_set('DIM(1)','真实商品',refs);store.tasks[0]['main_references']=list(store.tasks[0]['references']);task=store.claim()
+   paths={r['path'] for r in store.tasks[0]['main_references']};self.assertTrue(paths<={r['path'] for r in store.tasks[0]['references']});self.assertIn('本变体原图内清晰商品尺寸必须保留到01主图',task['prompt'])
