@@ -25,7 +25,11 @@ def role_layout(name,brief):return brief+('；'+LAYOUTS[name] if name in LAYOUTS
 
 MAIN_DIMENSIONS='【01主图尺寸保留】首次及重做都逐一核对本变体全部主图原始参考。原图内清晰商品尺寸必须保留到01主图，保留全部不重复的有效尺寸、单位、测量部位及展开/折叠状态；不能以“详情图已有尺寸”、简洁排版或卖点数量为由省略。预留清晰尺寸模块，可重排测量线但不能改变数字含义、商品比例或混用包装尺寸。不得挪用其他变体、风格样例数字，不从像素比例估算。原图与已填尺寸冲突须明确报告，不静默覆盖；无法确认的数字不猜。'
 
-def generation_prompt(facts,group_facts='',expected=8):
+def generation_prompt(facts,group_facts='',expected=8,visual_plan=None):
+ if visual_plan is not None:
+  if expected not in (1,8):raise ValueError('图片交付数量只能为1或8')
+  from visual_plans import render
+  return render(visual_plan,facts,group_facts,'main' if expected==1 else 'full')
  if expected not in (1,8):raise ValueError('图片交付数量只能为1或8')
  common='每张3:4竖版，自然俄语排版，风格统一。严格保持参考图对应变体的外形、颜色、比例和结构。不得虚构参数、认证、承重、防水或功能；卖点不足时减少文字，不编造补足。涉及人物时，人手、姿势、商品使用方式和尺寸比例应合理，人物与商品实际接触自然；允许真实坐姿等必要局部遮挡，但商品仍清楚可辨，关键轮廓、底座或支撑结构可见，不把主体大面积藏住。'
  if expected==1:
@@ -37,7 +41,10 @@ def generation_prompt(facts,group_facts='',expected=8):
 
 FIDELITY='【商品锁定】商品一致性优先于设计美化：仅以当前变体原始商品参考作外观依据，优先抠图合成，保持轮廓、比例、纹理、部件数量、连接结构和颜色分区；不借用历史对话、其他变体或AI成图的外观。看不到的角度沿用可确认视角，不凭空补画隐藏结构，不新增配件；每套件数与参数一致。'
 
-def shared_prompt(group_facts):
+def shared_prompt(group_facts,visual_plan=None):
+ if visual_plan is not None:
+  from visual_plans import render
+  return render(visual_plan,'当前主图不在本次重做范围',group_facts,'shared')
  roles=ROLES[1:]
  group_facts=visual_facts(group_facts)
  return SEQUENTIAL_DELIVERY+'\n'+DETAIL_STYLE+'\n'+'本任务只重做全组共用的7张详情图，不生成主图、不改任何变体主图。严格交付7张独立3:4竖版JPG，文件按本任务01—07编号，分别对应商品详情位置02—08，不混入第8张或过程图，不把整套海报合成一张，不提供ZIP。用途顺序：'+'；'.join('%02d_%s.jpg：%s'%(i+1,name.split('_',1)[1],role_layout(name,brief)) for i,(name,brief) in enumerate(roles))+'。7张图各自的用途和顺序固定，视觉参考不能改变这些用途。统一自然俄语排版；人物互动重点用于原定的两张使用场景图，不把每一张都变成人物广告。涉及不同颜色、规格、材质或件数必须分别标注选项，不能混装或将不同结构写成全组通用。'+EVIDENCE_STYLE+POSTER_RULE+FIDELITY+'未附对应原图的变体只作已知参数的文字说明，不凭空绘制该选项的商品外观。最终仅提供这7个编号文件的逐张下载入口。全组事实：'+group_facts+FINAL_DETAIL_MATCH

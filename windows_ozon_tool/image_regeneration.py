@@ -79,6 +79,9 @@ class ImageJobs:
    if len(result)>=8:break
   if not result:raise ValueError('缺少原始商品参考图，请先补充原图；不会用AI生成图替代原图')
   return result
+ def visual_plan(self,sku):
+  from visual_plans import context
+  return context(self.store,self.product(sku))
  def prompt(self,sku,kind,addition=''):
   task=self.product(sku);leader=task.get('copy_leader',sku);group=[t for t in self.store.tasks if t.get('copy_leader',t['sku'])==leader and t['state']!='cancelled']
   variants=[]
@@ -88,10 +91,14 @@ class ImageJobs:
   if kind=='shared_details':
    from group_references import INFO
    facts=INFO+'\n'+facts
-  return (shared_prompt(facts) if kind=='shared_details' else generation_prompt(own,facts,1))+'\n用户补充要求（不得改变参考商品款式、颜色、结构、参数与件数）：\n'+(addition.strip() or '无额外要求')
+  plan=self.visual_plan(sku)
+  return (shared_prompt(facts,visual_plan=plan) if kind=='shared_details' else generation_prompt(own,facts,1,visual_plan=plan))+'\n用户补充要求（不得改变参考商品款式、颜色、结构、参数与件数）：\n'+(addition.strip() or '无额外要求')
  def create(self,sku,kind,selected,addition):
   if kind not in ('shared_details','variant_main') or len(addition)>10000:raise ValueError('图片重做设置无效或补充要求过长')
   task=self.product(sku);leader=task.get('copy_leader',sku);group=[t for t in self.store.tasks if t.get('copy_leader',t['sku'])==leader and t['state']!='cancelled'];allowed={t['sku'] for t in group}
+  if kind=='shared_details':
+   from visual_plans import shared_compatible
+   shared_compatible(self.store,task)
   selected=list(dict.fromkeys(selected))
   if kind=='variant_main' and (not selected or not set(selected)<=allowed):raise ValueError('请选择本组一个或多个变体')
   specs=[(leader,[{'sku':t['sku'],'orders':list(range(2,9)),'indices':list(range(7))} for t in group])] if kind=='shared_details' else [(s,[{'sku':s,'orders':[1],'indices':[0]}]) for s in selected]
@@ -101,7 +108,7 @@ class ImageJobs:
     for old in self.active([target['sku']]):
      if any(t['sku']==target['sku'] and set(t['orders'])&set(target['orders']) for t in old['targets']):raise ValueError(target['sku']+'：对应图片已有重做任务，请等候完成或停止本组重做')
    refs=self.refs(group if kind=='shared_details' else [self.product(owner)],kind);identity='image-'+secrets.token_hex(12)
-   job={'id':identity,'sku':owner,'image_job':True,'set_mode':True,'auto_batch':True,'delivery_policy':'generated_originals','kind':kind,'state':'queued','targets':targets,'expected_images':7 if kind=='shared_details' else 1,'received_images':[],'references':refs,'prompt':self.prompt(owner,kind,addition),'addition':addition,'parameters':{t['sku']:copy.deepcopy(read(self.folder(t['sku'])/'listing_bundle.json').get('variant_parameters') or {}) for t in targets},'variants':[{'sku':t['sku'],'variant_parameters':copy.deepcopy(read(self.folder(t['sku'])/'listing_bundle.json').get('variant_parameters') or {})} for t in group],'basis':self.basis(targets),'created_at':time.time(),'message':'已备份，等待自动生成7张共用详情图' if kind=='shared_details' else '已备份，等待自动生成本变体主图'}
+   job={'id':identity,'sku':owner,'image_job':True,'set_mode':True,'auto_batch':True,'delivery_policy':'generated_originals','kind':kind,'state':'queued','targets':targets,'expected_images':7 if kind=='shared_details' else 1,'received_images':[],'references':refs,'visual_plan':self.visual_plan(owner),'prompt':self.prompt(owner,kind,addition),'addition':addition,'parameters':{t['sku']:copy.deepcopy(read(self.folder(t['sku'])/'listing_bundle.json').get('variant_parameters') or {}) for t in targets},'variants':[{'sku':t['sku'],'variant_parameters':copy.deepcopy(read(self.folder(t['sku'])/'listing_bundle.json').get('variant_parameters') or {})} for t in group],'basis':self.basis(targets),'created_at':time.time(),'message':'已备份，等待自动生成7张共用详情图' if kind=='shared_details' else '已备份，等待自动生成本变体主图'}
    from image_retry import configure
    configure(job)
    planned.append(job)
@@ -124,7 +131,7 @@ class ImageJobs:
   if not job:raise ValueError('没有图片重做任务')
   if job.get('kind') in ('shared_details','variant_main'):
    from image_retry import configure
-   configure(job);job['prompt']=self.prompt(job['sku'],job['kind'],job.get('addition',''));self.save()
+   configure(job);job['visual_plan']=self.visual_plan(job['sku']);job['prompt']=self.prompt(job['sku'],job['kind'],job.get('addition',''));self.save()
   for ref in job['references']:
    if ref.get('reference_sha256') and (not Path(ref['path']).is_file() or hashlib.sha256(Path(ref['path']).read_bytes()).hexdigest()!=ref['reference_sha256']):job.update(state='needs_attention',message='排队期间原始参考图已变化，未发送；请停止任务后重新启动');self.save();raise ValueError(job['message'])
   try:references=[{'name':r['name'],'mime':r['mime'],'purpose':r.get('purpose'),'base64':base64.b64encode(Path(r['path']).read_bytes()).decode()} for r in job['references']]
@@ -224,6 +231,8 @@ class ImageJobs:
      b['asset_basis']=copy.deepcopy(basis);review['main']=differs(basis,b.get('variant_parameters') or {},VISUAL)
     if any(order>1 for order in target['orders']):
      b['gallery_basis']=copy.deepcopy(job.get('variants') or []);review['gallery']=any(differs(r.get('variant_parameters') or {},read(self.folder(r['sku'])/'listing_bundle.json').get('variant_parameters') or {},VISUAL) for r in b['gallery_basis'])
+   if job.get('visual_plan'):
+    b.setdefault('image_design_receipts',{})[job['kind']]={'request_id':job['id'],'plan':copy.deepcopy(job['visual_plan'])}
    b['asset_review']=review;write(folder/'listing_bundle.json',b);completed.append((sku,not b['image_regeneration_jobs']))
   job.update(state='saved',message='共用7张详情图已替换并同步全组；视频与托管自动更新' if job['kind']=='shared_details' else '本变体主图已替换，7张详情保留；视频与托管自动更新' if job['kind']=='variant_main' else '已有图片已按来源更新到对应变体；视频与托管自动更新');self.store.save()
   for sku,ready in completed:

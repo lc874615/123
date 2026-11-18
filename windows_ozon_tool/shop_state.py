@@ -2,7 +2,7 @@
 import copy,hashlib
 from pathlib import Path
 from pricing_service import read,write
-FIELDS=('category','category_match_status','attribute_draft','attribute_history','attribute_archives','export_settings','fulfillment','price_cny','manual_price','auto_pricing','manual_pricing','pricing_fingerprint','pricing_confirmed_fingerprint','pricing_confirmed_price','pricing_status','stock_revision')
+FIELDS=('visual_style_override','visual_plan','category','category_match_status','attribute_draft','attribute_history','attribute_archives','export_settings','fulfillment','price_cny','manual_price','auto_pricing','manual_pricing','pricing_fingerprint','pricing_confirmed_fingerprint','pricing_confirmed_price','pricing_status','stock_revision')
 def switch(data,old,new):
  if old==new:
   write(Path(data)/'active_shop.json',{'account_id':new});return
@@ -22,6 +22,7 @@ def switch(data,old,new):
    for key in FIELDS:b.pop(key,None)
    b.update(copy.deepcopy(saved[path.parent.name]))
   else:
+   b.pop('visual_style_override',None);b.pop('visual_plan',None)
    b.pop('fulfillment',None);b['export_settings']={'currency_code':'CNY','currency_confirmed':False};b['price_cny']=None
    for key in ('pricing_fingerprint','pricing_confirmed_fingerprint','manual_price','manual_pricing','attribute_draft'):b.pop(key,None)
    if b.get('category'):b['category']={**b['category'],'confirmed':False,'attributes_revalidation_required':True}

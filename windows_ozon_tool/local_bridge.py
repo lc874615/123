@@ -419,7 +419,9 @@ class Store:
    else:t['references']=main_detail_references(t,self.tasks)
    from image_retry import configure
    configure(t)
-   t['prompt']=generation_prompt(photo_facts(t.get('variant_parameters'),t['facts']),t.get('group_facts',''),t.get('expected_images',8))+'\n'+reference_contract(t)
+   from visual_plans import context as visual_context
+   t['visual_plan']=visual_context(self,t)
+   t['prompt']=generation_prompt(photo_facts(t.get('variant_parameters'),t['facts']),t.get('group_facts',''),t.get('expected_images',8),visual_plan=t['visual_plan'])+'\n'+reference_contract(t)
   t['prompt']=t['prompt'].replace('。如以文件或ZIP交付，8张文件须按01_至08_编号，01_为主图，ZIP不得包含原始参考图。','。仅交付8张独立图片，按01_至08_编号。');t['prompt']+=('\n只交付一张原始拼图，不提供ZIP。' if t.get('sheet_layout') else '\n交付要求：仅输出独立图片及逐张下载入口，不要打包，不提供ZIP或其他压缩包。');self.save();result=dict(t);result['references']=[{'name':r['name'],'mime':r['mime'],'purpose':r.get('purpose','variant_main'),'base64':base64.b64encode(Path(r['path']).read_bytes()).decode()} for r in t.get('references',[])];return result
  def find(self,tid):
   t=next((t for t in self.tasks if t['id']==tid),None)
@@ -669,7 +671,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.62','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.63','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
@@ -796,10 +798,10 @@ def main(test_mode=False,on_ready=None):
   from creation_category import choose
   from account_context import credentials
   def saved(value):
-   category_selection.clear();category_selection.update(value);label=(value['category'].get('zh_path') or value['category'].get('name','')).split(' / ')[-1];category_button.configure(text=label[:30]+' · 已选定')
+   category_selection.clear();category_selection.update(value);label=(value['category'].get('zh_path') or value['category'].get('name','')).split(' / ')[-1];category_button.configure(text=label[:30]+' · 已选定');refresh_visual_label()
   return choose(root,attributes,lambda:credentials()[0],saved)
  category_button=ttk.Button(category_row,text='选择官方类目（可选）',style='Compact.TButton',command=choose_creation_category);category_button.pack(side='left',fill='x',expand=True)
- def clear_creation_category():category_selection.clear();category_button.configure(text='选择官方类目（可选）')
+ def clear_creation_category():category_selection.clear();category_button.configure(text='选择官方类目（可选）');refresh_visual_label()
  ttk.Button(category_row,text='清除',style='Compact.TButton',command=clear_creation_category).pack(side='left',padx=(6,0))
  from variants import VariantGrid
  shared_refs=[]
@@ -813,6 +815,23 @@ def main(test_mode=False,on_ready=None):
   if selected:shared_refs=selected;shared_label.configure(text='已选 '+str(len(selected))+' 张 · 点击查看')
  ttk.Button(reference_row,text='选择共用参考图',style='Compact.TButton',command=choose_shared).pack(side='left')
  shared_label=ttk.Label(reference_row,text='未选择共用参考图',style='CardMuted.TLabel',cursor='hand2');shared_label.pack(side='left',padx=12);shared_label.bind('<Button-1>',lambda e:preview_shared())
+
+ def creation_visual_plan():
+  from visual_plans import build
+  params=grid.rows[0]['values'] if grid.rows else {}
+  return build(category_selection.get('category'),params,len(grid.rows),category_selection.get('visual_style_override'))
+ def refresh_visual_label():
+  visual_button.configure(text='方案：'+creation_visual_plan()['style_name']+' · 查看')
+ def choose_visual_plan():
+  from visual_plan_ui import open_plan
+  def save(value):
+   if value is None:category_selection.pop('visual_style_override',None)
+   else:
+    if not category_selection.get('category'):raise ValueError('请先选择官方类目，再设置该组风格')
+    category_selection['visual_style_override']=value
+   refresh_visual_label()
+  return open_plan(root,creation_visual_plan,save,key='creation')
+ visual_button=ttk.Button(reference_row,text='方案：简洁实物 · 查看',style='Compact.TButton',command=choose_visual_plan);visual_button.pack(side='right')
 
  variant_card=ttk.LabelFrame(win,text='变体与参数',padding=2);variant_card.pack(fill='both',expand=True,pady=(0,12))
  grid=VariantGrid(variant_card,base)
@@ -1382,6 +1401,6 @@ def main(test_mode=False,on_ready=None):
  refresh()
  def close():pricing_stop.set();hosting.wake.set();video_hosting.wake.set();attributes.wake.set();publication.wake.set();(http.shutdown() if http else None);root.destroy();instance.release()
  root.protocol('WM_DELETE_WINDOW',close)
- if on_ready:on_ready(root,{'store':store,'notebook':notebook,'pages':pages,'view':view,'open_preview':listing_editor,'creation_grid':grid,'close':close,'creation_category':choose_creation_category,'category_selection':category_selection,'shared_preview':preview_shared,'shared_choose':choose_shared,'create':create})
+ if on_ready:on_ready(root,{'store':store,'notebook':notebook,'pages':pages,'view':view,'open_preview':listing_editor,'creation_grid':grid,'close':close,'visual_plan':choose_visual_plan,'creation_category':choose_creation_category,'category_selection':category_selection,'shared_preview':preview_shared,'shared_choose':choose_shared,'create':create})
  root.mainloop()
 if __name__=='__main__':main()

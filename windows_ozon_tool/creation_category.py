@@ -11,6 +11,12 @@ def apply_task(task,chosen,merchant):
  if not chosen:return
  if not isinstance(chosen,dict) or chosen.get('account_id')!=str(merchant):raise ValueError('店铺已切换，请重新选择创建类目')
  checked=selection(chosen.get('category'),merchant);checked['selected_at']=chosen.get('selected_at',checked['selected_at']);task['category_selection']=checked
+ if chosen.get('visual_style_override'):
+  from visual_plans import STYLES
+  if chosen['visual_style_override'] not in STYLES:raise ValueError('未知作图风格，请重新选择')
+  task['visual_style_override']=chosen['visual_style_override'];task['visual_style_account']=str(merchant)
+ from visual_plans import build
+ task['visual_plan']=build(checked['category'],task.get('variant_parameters'),override=task.get('visual_style_override'))
 
 def category_for_task(task,merchant=None):
  chosen=task.get('category_selection')

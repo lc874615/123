@@ -6,6 +6,14 @@ def build(parent,bundles,store,start,stop,accept=None,current_sku=None):
  style=ttk.Style(parent);style.configure('Compact.TButton',padding=(10,6));style.configure('Compact.Primary.TButton',padding=(12,7))
  panel=ttk.Frame(parent,padding=(12,8));panel.pack(fill='both',expand=True)
  selected={};initialized=[False]
+ def plan_window():
+  from visual_plan_ui import open_plan
+  from visual_plans import context,save_group_override
+  def owner():
+   rows=bundles();sku=current_sku() if current_sku else (rows[0]['sku'] if rows else '')
+   return next(t for t in store.tasks if t['sku']==sku)
+  return open_plan(panel,lambda:context(store,owner()),lambda v:save_group_override(store,owner()['sku'],v),key='group:'+str(id(panel)))
+ plan_button=ttk.Button(panel,text='查看类目方案与8图计划',style='Compact.TButton',command=plan_window);plan_button.pack(fill='x',pady=(0,6))
  shared=ttk.Frame(panel,style='Card.TFrame',padding=(12,10));shared.pack(fill='x',pady=(0,8))
  ttk.Label(shared,text='共用详情',style='CardTitle.TLabel').pack(anchor='w',pady=(0,4))
  ttk.Label(shared,text='重做 7 张 · 自动同步全组',style='CardMuted.TLabel').pack(anchor='w')
@@ -81,4 +89,4 @@ def build(parent,bundles,store,start,stop,accept=None,current_sku=None):
    else:accept_button.pack_forget()
   panel.after(1500,poll)
  update_ui();poll()
- return {'frame':panel,'shared_start':shared_button,'main_start':main_button,'shared_add':shared_add,'main_add':main_add,'selected':selected,'refresh':update_ui,'status':state,'select_current':select_current,'picker':picker,'choice':choice_button}
+ return {'frame':panel,'shared_start':shared_button,'main_start':main_button,'shared_add':shared_add,'main_add':main_add,'selected':selected,'refresh':update_ui,'status':state,'select_current':select_current,'picker':picker,'choice':choice_button,'plan':plan_window,'plan_button':plan_button}
