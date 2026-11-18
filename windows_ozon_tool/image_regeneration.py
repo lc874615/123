@@ -4,7 +4,7 @@ from pathlib import Path
 from PIL import Image
 from pricing_service import read,write
 from asset_state import VISUAL,canonical
-from image_prompts import generation_prompt,shared_prompt,reference_contract
+from image_prompts import generation_prompt,shared_prompt,reference_contract,photo_facts,photo_group
 
 DONE={'saved','cancelled'}
 class ImageJobs:
@@ -81,11 +81,13 @@ class ImageJobs:
   return result
  def prompt(self,sku,kind,addition=''):
   task=self.product(sku);leader=task.get('copy_leader',sku);group=[t for t in self.store.tasks if t.get('copy_leader',t['sku'])==leader and t['state']!='cancelled']
-  facts='\n'.join(t['sku']+'：'+str(read(self.folder(t['sku'])/'listing_bundle.json').get('facts') or t['facts']) for t in group)
-  own=read(self.folder(sku)/'listing_bundle.json').get('facts') or task['facts']
+  variants=[]
+  for t in group:
+   b=read(self.folder(t['sku'])/'listing_bundle.json');variants.append({'sku':t['sku'],'variant_parameters':b.get('variant_parameters') or t.get('variant_parameters') or {},'facts':b.get('facts') or t['facts']})
+  own_record=next(v for v in variants if v['sku']==sku);own=photo_facts(own_record['variant_parameters'],own_record['facts']);facts=photo_group(variants)
   if kind=='shared_details':
    from group_references import INFO
-   facts=INFO+'\n'+facts+'\n各变体最新参数：'+json.dumps([{'sku':t['sku'],'parameters':read(self.folder(t['sku'])/'listing_bundle.json').get('variant_parameters') or t.get('variant_parameters') or {}} for t in group],ensure_ascii=False)
+   facts=INFO+'\n'+facts
   return (shared_prompt(facts) if kind=='shared_details' else generation_prompt(own,facts,1))+'\n用户补充要求（不得改变参考商品款式、颜色、结构、参数与件数）：\n'+(addition.strip() or '无额外要求')
  def create(self,sku,kind,selected,addition):
   if kind not in ('shared_details','variant_main') or len(addition)>10000:raise ValueError('图片重做设置无效或补充要求过长')

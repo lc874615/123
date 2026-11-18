@@ -15,5 +15,16 @@
   if(now-task._failedReply.since<3000)return null;
   return {marker,message:text.slice(0,1800),reply_finished:true,no_images:true};
  }
- globalThis.OzonGenerationFailure={inspect};
+ function incomplete(doc,task,{marker}={}){
+  const c=globalThis.OzonConversation;if(c.generating(doc))return null;
+  const replies=c.requestReplies(doc,marker)||[];
+  const last=[...replies].reverse().find(r=>(r.innerText||r.textContent||'').trim());if(!last)return null;
+  const text=(last.innerText||last.textContent||'').trim();
+  const missing=/(?:\d{1,2}\s*[—–至到-]\s*\d{1,2}|其余(?:图片|详情图)?|剩余(?:图片|详情图)?)[\s\S]{0,30}(?:未能|无法|尚未|未)[\s\S]{0,22}(?:生成|完成|交付)|(?:未能|无法|尚未)[\s\S]{0,20}(?:完成|生成|交付)[\s\S]{0,25}(?:全部|整套|其余|剩余)[\s\S]{0,12}(?:图片|成品|详情)|(?:本次|目前|最终)[，,\s]*(?:仅|只)(?:成功)?(?:生成|完成|交付)[\s\S]{0,12}(?:1|一)张/i.test(text);
+  if(!missing)return null;
+  const expected=Number(task.collection_expected||task.expected_images||8);
+  if(expected===1&&!/拼图|联系表|不合格/.test(text))return null;
+  return {message:'生成回复明确声明交付不完整：'+text.slice(0,900)+'；未把文件名或候选图数量当成整套合格，不自动补图或重发。',partial:true};
+ }
+ globalThis.OzonGenerationFailure={inspect,incomplete};
 })();

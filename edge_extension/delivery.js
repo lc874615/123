@@ -16,6 +16,8 @@
    region=globalThis.OzonConversation.region(doc,scoped);
   }
   if(scoped.allowPartial&&scoped.marker&&!region.anchor)return waiting('等待本任务原始作图标记加载；不采集其他商品');
+  const incomplete=globalThis.OzonGenerationFailure?.incomplete?.(doc,task,{marker:scoped.marker});
+  if(incomplete){globalThis.__ozonDeliveryInfo={state:'incomplete',expected,reason:'explicit_partial_delivery'};const error=Error(incomplete.message);error.code='DELIVERY_INCOMPLETE';throw error;}
   const foundImages=globalThis.OzonImages.inspect(doc,scoped);
   globalThis.__ozonDeliveryInfo={state:'waiting_final',expected,candidateCount:foundImages.count,generating:globalThis.OzonConversation.generating(doc)};
   if(globalThis.OzonConversation.generating(doc)){

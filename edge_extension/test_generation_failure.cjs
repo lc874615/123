@@ -33,3 +33,15 @@ test('failed full set reply saying unable to finish or provide real downloads re
 test('download problem without explicit image generation failure never resends',()=>{
  const x=f();x.text('暂时无法提供下载链接，已生成图片仍在保存中');assert.equal(x.check(0),null);assert.equal(x.check(3100),null);
 });
+test('explicit incomplete set is detected despite images and a partial numbered file',()=>{
+ const x=f();x.images([{complete:true,naturalWidth:1086,naturalHeight:1448}]);x.text('01_main.jpg（1086×1448）\n02—08 未能生成符合要求的独立高清成品。已排除拼版图，未将这些结果冒充最终交付。');
+ const result=x.ctx.OzonGenerationFailure.incomplete({}, {expected_images:8},{marker:'own'});assert.equal(result.partial,true);assert.match(result.message,/交付不完整/);assert.equal(x.check(4000),null);
+});
+test('incomplete detection respects request generation and single main scope',()=>{
+ const x=f();x.text('本次仅交付1张主图');assert.equal(x.ctx.OzonGenerationFailure.incomplete({}, {expected_images:1},{marker:'own'}),null);x.generating(true);assert.equal(x.ctx.OzonGenerationFailure.incomplete({}, {expected_images:8},{marker:'own'}),null);
+ x.generating(false);x.text('8张独立图片已完成，以下提供01—08下载入口。');assert.equal(x.ctx.OzonGenerationFailure.incomplete({}, {expected_images:8},{marker:'own'}),null);
+});
+test('delivery rejects an explicitly incomplete reply before examining or saving gallery candidates',async()=>{
+ let saved=0;const ctx={OzonConversation:{region:()=>({anchor:{}})},OzonGenerationFailure:{incomplete:()=>({message:'生成回复明确声明交付不完整'})},OzonImages:{inspect:()=>{throw Error('must not select gallery');}}};
+ vm.runInNewContext(fs.readFileSync(__dirname+'/delivery.js','utf8'),ctx);await assert.rejects(ctx.OzonDelivery.collect({}, {task:{id:'OWN',expected_images:8},marker:'own',onImage:()=>saved++}),e=>e.code==='DELIVERY_INCOMPLETE');assert.equal(saved,0);
+});
