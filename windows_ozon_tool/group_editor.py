@@ -18,7 +18,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  coordinator=GroupService(paths,service,pricing,store)
  cached=lookup(root,('group_preview',tuple(sorted(str(p.resolve()) for p in paths))))
  if cached is not None:return cached
- dialog=remember(root,('group_preview',tuple(sorted(str(p.resolve()) for p in paths))),tk.Toplevel(root));dialog.title('整组预览 · Ozon 商品自动化 1.0.60');dialog.geometry('1280x850');dialog.minsize(950,650)
+ dialog=remember(root,('group_preview',tuple(sorted(str(p.resolve()) for p in paths))),tk.Toplevel(root));dialog.title('整组预览 · Ozon 商品自动化 1.0.61');dialog.geometry('1280x850');dialog.minsize(950,650)
  busy=False;selected=set(range(len(paths)));focus=['',''];bundles=[];token=None;rendered=None;warehouses={};photos=[];rows={};last_job=None;copy_dirty=False;displayed_copy=None;copy_timer=None;busy_since=0;operation_error='';operation_name=''
  header=ttk.Frame(dialog,padding=(16,10));header.pack(fill='x')
  ttk.Label(header,text='整组预览',style='Heading.TLabel').pack(side='left')

@@ -73,3 +73,10 @@ class Tests(unittest.TestCase):
   with tempfile.TemporaryDirectory() as tmp,patch('image_regeneration.threading.Thread'):
    store,t=self.setup(tmp);t.update(state='saved',copy_mode='attributes',copy_state='needs_attention',message="'list' object has no attribute 'get'")
    path=store.folder/'products'/t['sku']/'listing_bundle.json';b=read(path);b['copy']={};write(path,b);self.assertFalse(retire_legacy_attribute_save_error(store));self.assertEqual(t['copy_state'],'needs_attention')
+
+ def test_download_timeout_recovers_existing_request_without_reset_or_generation(self):
+  with tempfile.TemporaryDirectory() as tmp,patch('image_regeneration.threading.Thread'):
+   store,t=self.setup(tmp);t.update(state='needs_attention',copy_state=None,message='文件链接读取失败：等待浏览器下载超时；直接读取：文件由网页按钮提供',received_images=[])
+   store.set_paused(True);store.repair_uncertain_send_collection();self.assertNotEqual(t.get('resume_mode'),'inspect_only')
+   store.set_paused(False);old=t['id'];store.repair_uncertain_send_collection();self.assertEqual(t['id'],old);self.assertEqual(t['state'],'needs_attention');self.assertEqual(t['resume_mode'],'inspect_only');self.assertEqual(t['download_recovery_attempts'],1)
+   store.repair_uncertain_send_collection();self.assertEqual(t['download_recovery_attempts'],1)

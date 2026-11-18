@@ -562,6 +562,9 @@ class Store:
   # Recover matching existing results only; never enqueue a generation request.
   if self.control.get('paused'):return
   known=('发送结果尚未确认','Enter发送结果不确定')
+  for task in self.tasks+self.image_jobs.jobs:
+   if task.get('state')=='needs_attention' and not task.get('pause_requested') and str(task.get('message','')).startswith('文件链接读取失败：') and any(text in task['message'] for text in ('等待浏览器下载超时','浏览器未启动下载','未识别到对应原图')) and task.get('download_recovery_attempts',0)<2 and task.get('resume_mode')!='inspect_only':
+    task['resume_mode']='inspect_only';task['download_recovery_attempts']=task.get('download_recovery_attempts',0)+1;self.save()
   changed=False
   for task in self.tasks+self.image_jobs.jobs:
    if task.get('state')=='needs_attention' and not task.get('pause_requested') and any(str(task.get('message','')).startswith(m) for m in known):
@@ -666,7 +669,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.60','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.61','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)

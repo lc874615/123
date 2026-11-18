@@ -87,12 +87,12 @@
    return [await blob64(blob)];
   }catch(error){originalError=error;}
   const row=resourceRow(link.element);if(row){row.dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));await new Promise(r=>setTimeout(r,150));const target=directTarget(link.element);if(target){link.element=target;link.direct=true;}}
-  const token=crypto.randomUUID();if(link.direct)link.element.setAttribute('data-ozon-direct-download','true');link.element.setAttribute('data-ozon-download',token);
+  const token=crypto.randomUUID();if(link.direct)link.element.setAttribute('data-ozon-direct-download','true');link.element.setAttribute('data-ozon-download',token);link.element.setAttribute('data-ozon-filename',link.name);
   try{
    const result=await chrome.runtime.sendMessage({kind:'download-asset',task_id:task.id,token,extension:link.extension});
    if(result?.error)throw Error(result.error);return result.images;
   }catch(error){throw Error('文件链接读取失败：'+error.message+'；直接读取：'+originalError.message);}
-  finally{link.element.removeAttribute('data-ozon-download');link.element.removeAttribute('data-ozon-direct-download');}
+  finally{link.element.removeAttribute('data-ozon-filename');link.element.removeAttribute('data-ozon-download');link.element.removeAttribute('data-ozon-direct-download');}
  }
  async function collect(doc,options={}){
   if(globalThis.OzonConversation.generating(doc))return null;
