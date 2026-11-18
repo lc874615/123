@@ -3,6 +3,27 @@ from window_registry import lookup,remember
 from decimal import Decimal,InvalidOperation
 import re
 FIELDS=[('name','商品名称/用途',''),('color','颜色',''),('size','规格/型号',''),('quantity','每套件数','1'),('material','主体材质',''),('accessory_material','配件/内衬材质',''),('length','商品长(cm)',''),('width','商品宽(cm)',''),('height','商品高(cm)',''),('net_weight','商品净重(g)',''),('pack_length','包装长(cm)',''),('pack_width','包装宽(cm)',''),('pack_height','包装高(cm)',''),('pack_weight','包装总重(g)',''),('cost','每套成本含国内运费(元)',''),('margin','目标净利润率(%)','25'),('stock','初始库存（固定1000）','1000'),('origin','产地','中国'),('assembly','组装方式(未知留空)',''),('extra','其他真实参数/卖点','')]
+# Compact views cover every business field without changing the stored schema.
+SECTIONS={
+ '基础信息':('name','color','size','quantity'),
+ '材质功能':('material','accessory_material','assembly','extra'),
+ '商品尺寸':('length','width','height','net_weight'),
+ '包装物流':('pack_length','pack_width','pack_height','pack_weight'),
+ '定价其他':('cost','margin','stock','origin'),
+ '全部参数':tuple(k for k,_,_ in FIELDS),
+}
+SHORT_LABELS={'name':'商品名称 / 用途','color':'颜色 · 多选','size':'规格 / 型号','quantity':'件数','material':'主体材质','accessory_material':'配件 / 内衬','assembly':'组装方式','extra':'真实卖点 / 补充','length':'长 (cm)','width':'宽 (cm)','height':'高 (cm)','net_weight':'净重 (g)','pack_length':'包装长 (cm)','pack_width':'包装宽 (cm)','pack_height':'包装高 (cm)','pack_weight':'总重 (g)','cost':'每套成本 (元)','margin':'净利率 (%)','stock':'初始库存','origin':'产地'}
+
+def paste_fields(section,start,width):
+ """Compact paste follows visible fields; wide Excel tables keep full-schema order."""
+ fields=SECTIONS.get(section,SECTIONS['全部参数']);all_fields=SECTIONS['全部参数']
+ if start not in fields:start=fields[0]
+ offset=fields.index(start)
+ if width<=len(fields)-offset:return fields[offset:offset+width]
+ offset=all_fields.index(start)
+ if width>len(all_fields)-offset:raise ValueError('超过参数列数；请勿包含序号、货号、主图列')
+ return all_fields[offset:offset+width]
+
 def valid_article(value):return bool(re.fullmatch(r'[\w-]+(?:\([1-9][0-9]*\))?',value)) and len(value)<=80
 
 def article(base,index):
@@ -52,14 +73,18 @@ class VariantGrid:
   import tkinter as tk
   from tkinter import ttk
   self.tk=tk;self.ttk=ttk;self.base=base;self.rows=[];self.next_index=1;self.focus=(1,0);self.editor=None;self.photos={}
-  self.frame=ttk.Frame(parent);self.frame.pack(fill='both',padx=12,pady=8)
+  self.frame=ttk.Frame(parent);self.frame.pack(fill='both',expand=True,padx=12,pady=8)
   from ui_components import responsive_actions
   bar,self.action_buttons=responsive_actions(self.frame,[('＋ 增加变体',self.add),('删除选中变体',self.remove),('添加主图参考',self.choose),('管理主图参考',self.manage_selected),('当前参数同首行',self.fill_row),('粘贴Excel表格',self.paste)])
-  self.hint=ttk.Label(self.frame,text='每行一个变体；双击编辑。点击参数列标题“同首行”，将首行该参数复制到其余全部变体。');self.hint.pack(anchor='w')
+  self.section='基础信息';self.section_buttons={}
+  sections=ttk.Frame(self.frame);sections.pack(fill='x',pady=(4,8))
+  for i,name in enumerate(SECTIONS):
+   sections.columnconfigure(i,weight=1);button=ttk.Button(sections,text=name,style='Segment.TButton',command=lambda n=name:self.set_section(n));button.grid(row=0,column=i,sticky='ew',padx=2);self.section_buttons[name]=button
+  self.hint=ttk.Label(self.frame,text='按分类填写，双击编辑；点击参数列标题可同首行。主图、序号始终固定。',style='Muted.TLabel',wraplength=950);self.hint.pack(anchor='w',pady=(0,8))
   holder=ttk.Frame(self.frame);holder.pack(fill='both',expand=True);holder.rowconfigure(0,weight=1);holder.columnconfigure(1,weight=1)
   self.frozen=ttk.Treeview(holder,columns=('index',),show='tree headings',height=6,selectmode='extended')
-  self.frozen.heading('#0',text='主图 · 点击查看');self.frozen.column('#0',width=110,stretch=False,anchor='center')
-  self.frozen.heading('index',text='序号');self.frozen.column('index',width=60,stretch=False,anchor='center')
+  self.frozen.heading('#0',text='主图参考');self.frozen.column('#0',width=98,stretch=False,anchor='center')
+  self.frozen.heading('index',text='序号');self.frozen.column('index',width=48,stretch=False,anchor='center')
   self.frozen.grid(row=0,column=0,sticky='ns')
   self.tree=ttk.Treeview(holder,columns=('index','article','refs')+tuple(k for k,_,_ in FIELDS),displaycolumns=('article','refs')+tuple(k for k,_,_ in FIELDS),show='headings',height=6,selectmode='extended')
   self.tree.heading('#0',text='主图');self.tree.column('#0',width=85,stretch=False,anchor='center')
@@ -71,7 +96,7 @@ class VariantGrid:
    self.tree.heading(key,text=heading,anchor='center',command=(lambda k=key:self.bulk_column(k)) if key in copy_keys else (lambda:None));self.tree.column(key,width=max(width,heading_font.measure(heading)+24),stretch=False,anchor='center')
   self.tree.grid(row=0,column=1,sticky='nsew')
   def horizontal(*args):self.commit();self.tree.xview(*args)
-  sx=ttk.Scrollbar(holder,orient='horizontal',command=horizontal);sx.grid(row=1,column=1,sticky='ew')
+  sx=ttk.Scrollbar(holder,orient='horizontal',command=horizontal);sx.grid(row=1,column=1,sticky='ew');self.horizontal_scroll=sx
   def vertical(*args):self.frozen.yview(*args);self.tree.yview(*args)
   sy=ttk.Scrollbar(holder,orient='vertical',command=vertical);sy.grid(row=0,column=2,sticky='ns')
   def report(source,other,first,last):
@@ -84,12 +109,39 @@ class VariantGrid:
    if ids:
     focused=source.focus();self.focus=(int(focused if focused in ids else ids[0]),self.focus[1])
    if set(ids)!=set(other.selection()):other.selection_set([i for i in ids if other.exists(i)])
+   self.update_summary()
+  for widget in (self.tree,self.frozen):
+   widget.tag_configure('row_even',background='#FFFFFF');widget.tag_configure('row_odd',background='#F6F8FD')
   self.tree.bind('<<TreeviewSelect>>',lambda e:selection(self.tree,self.frozen))
   self.frozen.bind('<<TreeviewSelect>>',lambda e:selection(self.frozen,self.tree))
   self.frozen.bind('<Button-1>',self.image_click)
   self.frozen.bind('<Control-v>',lambda e:self.paste())
-  ttk.Style().configure('Variants.Treeview',rowheight=58);self.tree.configure(style='Variants.Treeview');self.frozen.configure(style='Variants.Treeview')
-  self.tree.bind('<Double-1>',self.edit);self.tree.bind('<ButtonRelease-1>',self.track);self.tree.bind('<Control-v>',lambda e:self.paste());self.base.trace_add('write',lambda *_:self.refresh());self.add()
+  ttk.Style().configure('Variants.Treeview',rowheight=58);self.tree.configure(style='Variants.Treeview',height=8);self.frozen.configure(style='Variants.Treeview',height=8)
+  self.summary=ttk.Label(self.frame,style='Muted.TLabel');self.summary.pack(anchor='w',pady=(6,0))
+  self.tree.bind('<Double-1>',self.edit);self.tree.bind('<ButtonRelease-1>',self.track);self.tree.bind('<Control-v>',lambda e:self.paste());self.base.trace_add('write',lambda *_:self.refresh());self.tree.bind('<Configure>',lambda e:self.fit_columns(e.width));self.set_section('基础信息');self.add()
+ def set_section(self,name):
+  if name not in SECTIONS:return
+  self.commit();self.section=name
+  self.hint.configure(text=name+' · 双击编辑，点击列标题同首行；点击主图查看 / 更换。')
+  if name=='全部参数':self.horizontal_scroll.grid()
+  else:self.horizontal_scroll.grid_remove()
+  fields=SECTIONS[name];self.tree.configure(displaycolumns=('article','refs')+fields if name=='全部参数' else ('article',)+fields)
+  for key in fields:
+   self.tree.heading(key,text=SHORT_LABELS.get(key,key),command=(lambda k=key:self.bulk_column(k)) if key!='stock' else (lambda:None))
+  for label,button in self.section_buttons.items():button.configure(style='SegmentActive.TButton' if label==name else 'Segment.TButton')
+  if self.focus[1]>=len(FIELDS) or FIELDS[self.focus[1]][0] not in fields:self.focus=(self.focus[0],next(i for i,f in enumerate(FIELDS) if f[0]==fields[0]))
+  self.tree.xview_moveto(0);self.fit_columns(self.tree.winfo_width());self.update_summary()
+ def update_summary(self):
+  if hasattr(self,'summary'):self.summary.configure(text='共 '+str(len(self.rows))+' 个变体 · 已选 '+str(len(self.tree.selection()))+' 个 · '+self.section+' · 主图与序号固定')
+ def fit_columns(self,width):
+  if self.section=='全部参数':
+   for key in ('article','refs')+SECTIONS[self.section]:self.tree.column(key,width=150,minwidth=100,stretch=False)
+   return
+  if width<100:return
+  fields=('article',)+SECTIONS[self.section]
+  weights=[1.25]+[1.7 if k in ('name','extra','accessory_material') else 1 for k in fields[1:]]
+  available=max(260,width-4);total=sum(weights)
+  for key,weight in zip(fields,weights):self.tree.column(key,width=int(available*weight/total),minwidth=40,stretch=True)
  def commit(self):
   if self.editor:
    widget,row,key=self.editor;row['values'][key]=widget.get().strip();self.editor=None;widget.destroy();self.refresh()
@@ -97,17 +149,18 @@ class VariantGrid:
   selected=self.tree.selection();xpos=self.tree.xview()[0];ypos=self.tree.yview()[0]
   for widget in (self.tree,self.frozen):
    for item in widget.get_children():widget.delete(item)
-  for row in self.rows:
+  for n,row in enumerate(self.rows):
+   tags=('row_even' if n%2==0 else 'row_odd',)
    row['values']['stock']='1000'
    try:code=article(self.base.get().strip(),row['index'])
    except ValueError:code='待填基础货号'
-   self.frozen.insert('','end',iid=str(row['index']),values=(row['index'],),image=self.photos.get(row['index'],''))
-   self.tree.insert('', 'end',iid=str(row['index']),image=self.photos.get(row['index'],''),values=(row['index'],code,f"{len(row['refs'])} 张")+tuple(row['values'][k] for k,_,_ in FIELDS))
+   self.frozen.insert('','end',iid=str(row['index']),text=str(len(row['refs']))+' 图' if row['refs'] else '未选图',values=(row['index'],),image=self.photos.get(row['index'],''),tags=tags)
+   self.tree.insert('', 'end',iid=str(row['index']),image=self.photos.get(row['index'],''),values=(row['index'],code,f"{len(row['refs'])} 张")+tuple(row['values'][k] for k,_,_ in FIELDS),tags=tags)
   selected=[i for i in selected if self.tree.exists(i)]
   if selected:self.tree.selection_set(selected);self.frozen.selection_set(selected)
-  self.tree.xview_moveto(xpos);self.tree.yview_moveto(ypos);self.frozen.yview_moveto(ypos)
+  self.tree.xview_moveto(xpos);self.tree.yview_moveto(ypos);self.frozen.yview_moveto(ypos);self.update_summary()
  def add(self):
-  self.commit();self.rows.append({'index':self.next_index,'refs':[],'values':{k:d for k,_,d in FIELDS}});self.next_index+=1;self.refresh()
+  self.commit();self.rows.append({'index':self.next_index,'refs':[],'values':{k:d for k,_,d in FIELDS}});self.next_index+=1;self.refresh();item=str(self.rows[-1]['index']);self.tree.selection_set(item);self.frozen.selection_set(item);self.tree.see(item);self.frozen.see(item)
  def selected(self):
   return [r for r in self.rows if str(r['index']) in self.tree.selection()]
  def remove(self):
@@ -215,10 +268,10 @@ class VariantGrid:
    matrix=[line.split('\t') for line in self.frame.clipboard_get().rstrip('\r\n').splitlines()]
    if not matrix:return
    index,col=self.focus;start=next((i for i,r in enumerate(self.rows) if r['index']==index),0)
-   if col+max(map(len,matrix))>len(FIELDS):raise ValueError('超过参数列数；请勿包含序号、货号、主图列')
+   keys=paste_fields(getattr(self,'section','全部参数'),FIELDS[col][0],max(map(len,matrix)))
    while len(self.rows)<start+len(matrix):self.add()
    for y,line in enumerate(matrix):
-    for x,value in enumerate(line):self.rows[start+y]['values'][FIELDS[col+x][0]]=value
+    for x,value in enumerate(line):self.rows[start+y]['values'][keys[x]]=value
    self.refresh()
   except Exception as e:messagebox.showerror('无法粘贴',str(e))
  def records(self):

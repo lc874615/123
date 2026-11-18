@@ -23,7 +23,7 @@ def responsive_actions(parent,actions):
 
 class RoundedCard(tk.Canvas):
  def __init__(self,parent,accent='#5865F2',**kwargs):
-  super().__init__(parent,height=112,highlightthickness=0,borderwidth=0,cursor='hand2',background='#F2F5FC',**kwargs)
+  super().__init__(parent,height=kwargs.pop('height',112),highlightthickness=0,borderwidth=0,cursor='hand2',background='#F2F5FC',**kwargs)
   self.accent=accent;self.content=ttk.Frame(self,style='Card.TFrame',padding=(18,12));self.item=self.create_window(1,1,anchor='nw',window=self.content)
   self.bind('<Configure>',self._draw)
  def _draw(self,event):

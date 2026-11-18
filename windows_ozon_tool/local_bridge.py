@@ -658,7 +658,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.52','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.53','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
@@ -939,9 +939,20 @@ def main(test_mode=False,on_ready=None):
  view=ttk.Treeview(task_table,columns=('sku','progress','price','hosting','status'),show='tree headings',height=15,selectmode='browse')
  view.heading('#0',text='商品组');view.column('#0',width=150,stretch=False,anchor='center')
  for key,label,width in [('sku','变体货号',165),('progress','图片',90),('price','售价（元）',110),('hosting','托管链接',130),('status','当前阶段 / 原因',360)]:view.heading(key,text=label,anchor='center');view.column(key,width=width,stretch=key=='status',anchor='w' if key in ('sku','status') else 'center')
- view.tag_configure('published',foreground='#16785B',background='#F1FAF5')
+ view.tag_configure('published',foreground='#16785B',background='#F1FAF5');view.tag_configure('archive',foreground='#687C9D',background='#EAF0F9')
  view.tag_configure('group',background='#EDF1F8',foreground='#334155');view.tag_configure('even',background='#FFFFFF');view.tag_configure('odd',background='#F8FAFE');view.tag_configure('attention',foreground='#B74347',background='#FFF4F2')
- view.grid(row=0,column=0,sticky='nsew');scroll_y=ttk.Scrollbar(task_table,orient='vertical',command=view.yview);scroll_y.grid(row=0,column=1,sticky='ns');scroll_x=ttk.Scrollbar(task_table,orient='horizontal',command=view.xview);scroll_x.grid(row=1,column=0,sticky='ew');view.configure(yscrollcommand=scroll_y.set,xscrollcommand=scroll_x.set)
+ view.grid(row=0,column=0,sticky='nsew');scroll_y=ttk.Scrollbar(task_table,orient='vertical',command=view.yview);scroll_y.grid(row=0,column=1,sticky='ns');scroll_x=ttk.Scrollbar(task_table,orient='horizontal',command=view.xview);scroll_x.grid(row=1,column=0,sticky='ew');view.configure(yscrollcommand=scroll_y.set)
+ def task_horizontal(first,last):
+  scroll_x.set(first,last)
+  if float(first)<=.001 and float(last)>=.999:scroll_x.grid_remove()
+  else:scroll_x.grid()
+ view.configure(xscrollcommand=task_horizontal)
+ def fit_task_columns(event):
+  if event.width<200:return
+  fixed={'#0':.16,'sku':.19,'progress':.075,'price':.10,'hosting':.14,'status':.235}
+  for key,ratio in fixed.items():view.column(key,width=int((event.width-6)*ratio),minwidth=35,stretch=True)
+ view.bind('<Configure>',fit_task_columns)
+
  task_actions=ttk.Frame(tasks_page);task_actions.pack(side='bottom',before=task_table,fill='x',pady=10);task_more=tk.Menu(root,tearoff=False);more_button=ttk.Menubutton(task_actions,text='更多操作',menu=task_more);more_button.pack(side='right')
  task_note=ttk.Label(tasks_page,text='选中具体变体后，在这里查看完整的当前阶段与原因。',style='Status.TLabel',wraplength=1000)
  task_note.pack(side='bottom',before=task_table,fill='x',pady=4)
@@ -951,7 +962,7 @@ def main(test_mode=False,on_ready=None):
  from task_alerts import AlertPopup,ProgressWatch,collect as collect_alerts,issue as make_alert
  alert_popup=AlertPopup(root,DATA/'task_alert_state.json',lambda:notebook.select(pages['tasks']));alert_watch=ProgressWatch()
  task_more.add_command(label='查看当前异常及中文处理办法',command=alert_popup.reopen)
- visible=[];last_view=None;refresh_timer=None;row_notes={}
+ visible=[];last_view=None;refresh_timer=None;row_notes={};group_members={}
  def schedule_refresh(delay=1500):
   nonlocal refresh_timer
   if refresh_timer is not None:root.after_cancel(refresh_timer)
@@ -960,15 +971,15 @@ def main(test_mode=False,on_ready=None):
  pages['task_filter'].trace_add('write',lambda *args:schedule_refresh(100))
  def selected():
   ids=view.selection()
-  return next((t for t in visible if ids and (t['id']==ids[0] or ('group:'+str(t.get('base_article') or t.get('copy_leader') or t['sku']))==ids[0])),None)
+  return next((t for t in visible if ids and (t['id']==ids[0] or t['id'] in group_members.get(ids[0],()))),None)
  def refresh():
-  nonlocal visible,last_view,refresh_timer,row_notes
+  nonlocal visible,last_view,refresh_timer,row_notes,group_members
   if refresh_timer is not None:root.after_cancel(refresh_timer);refresh_timer=None
   if not store.lock.acquire(blocking=False):
    connection.configure(text='后台正在保存/校验素材，界面稍后自动刷新');schedule_refresh(300);return
   try:visible=[dict(t) for t in store.tasks];image_snapshot=[dict(j) for j in store.image_jobs.jobs];reason=store.queue_reason();plugin_online=time.time()-store.client.get('last_seen',0)<75
   finally:store.lock.release()
-  from ui_state import task_summary,matches,task_bucket
+  from ui_state import task_summary,matches,task_bucket,partition_task_rows
   from pipeline_status import stage,group_summary
   import os
   merchant=os.environ.get('OZON_CLIENT_ID','');connection.configure(text=('店铺 '+merchant if merchant else 'Ozon未连接')+' · 插件'+('在线' if plugin_online else '待连接')+' · COS'+('已配置' if (DATA/'hosting'/'config.json').exists() else '待配置')+' · 定价来源'+('已配置' if all((DATA/'pricing'/(name+'.json')).exists() for name in ('ogl','commissions','fx')) else '待配置')+' | '+reason)
@@ -985,15 +996,26 @@ def main(test_mode=False,on_ready=None):
    group=str(task.get('base_article') or task.get('copy_leader') or task['sku']);groups.setdefault(group,[]).append((task,row));snapshot.append((task['id'],group,row))
   for key,value in task_summary(visible,image_snapshot,stage_map).items():pages['metrics'][key].configure(text=str(value))
   pages['task_results'].configure(text=('显示 '+str(len(snapshot))+' 个变体 · '+str(len(groups))+' 个商品组') if snapshot else ('当前没有需要人工核对或修正的任务。' if pages['task_filter'].get()=='需处理' else '没有匹配的任务，可清除筛选查看全部。' if visible else '还没有制作任务，请前往“商品制作”创建第一组商品。'))
-  row_notes=stage_map
+  row_notes=dict(stage_map)
+  active_groups,published=partition_task_rows(groups)
+  group_members={'group:'+group:[t['id'] for t,row in items] for group,items in active_groups.items()}
+  for group,items in active_groups.items():row_notes['group:'+group]=group_summary([row[-1] for t,row in items])+'；展开后查看本组当前任务。'
+  if published:row_notes['archive:published']='已上架 '+str(len(published))+' 个变体；展开可查看商品、预览与原有素材。当前重做或待处理任务会显示在上方。'
+  if snapshot:pages['task_results'].configure(text='显示 '+str(len(snapshot))+' 个变体 · 当前任务 '+str(len(snapshot)-len(published))+' · 已上架 '+str(len(published))+'（归档栏目）')
   view_key=(pages['task_filter'].get(),pages['task_search'].get(),snapshot)
   if view_key!=last_view:
    selection=view.selection();position=view.yview()[0];expanded={i:view.item(i,'open') for i in view.get_children()};view.delete(*view.get_children())
-   for group,items in groups.items():
-    key='group:'+group;stages=[row[-1] for task,row in items];row_notes[key]=group_summary(stages)+'；展开商品组可查看每个变体的具体状态。';view.insert('','end',iid=key,text=group,values=(str(len(items))+' 个变体','','','',group_summary(stages)),open=True if pages['task_filter'].get()!='全部任务' else expanded.get(key,True),tags=('group',))
+   for group,items in active_groups.items():
+    key='group:'+group;group_members[key]=[t['id'] for t,row in items]
+    stages=[row[-1] for task,row in items];row_notes[key]=group_summary(stages)+'；展开后查看本组当前任务。'
+    view.insert('','end',iid=key,text=group,values=(str(len(items))+' 个变体','','','',group_summary(stages)),open=True if pages['task_filter'].get()!='全部任务' else expanded.get(key,True),tags=('group',))
     for n,(task,row) in enumerate(items):
-     tag='attention' if task_bucket(task,image_snapshot,stage_map)=='需处理' else 'published' if row[-1]=='已上架' else 'even' if n%2==0 else 'odd'
+     tag='attention' if task_bucket(task,image_snapshot,stage_map)=='需处理' else 'even' if n%2==0 else 'odd'
      view.insert(key,'end',iid=task['id'],text='',values=row,tags=(tag,))
+   if published:
+    archive='archive:published';row_notes[archive]='已上架 '+str(len(published))+' 个变体；展开可查看商品、预览与原有素材。当前重做或待处理任务会显示在上方。'
+    view.insert('','end',iid=archive,text='已上架',values=(str(len(published))+' 个变体','','','','展开查看历史商品'),open=bool(pages['task_search'].get().strip()) or pages['task_filter'].get()=='已上架' or expanded.get(archive,False),tags=('archive',))
+    for group,task,row in published:view.insert(archive,'end',iid=task['id'],text=group,values=row,tags=('published',))
    if selection and view.exists(selection[0]):view.selection_set(selection[0])
    view.yview_moveto(position);last_view=view_key
   if not test_mode:
@@ -1016,7 +1038,7 @@ def main(test_mode=False,on_ready=None):
   task=selected()
   if not task:return
   try:
-   ids=view.selection();group=str(task.get('base_article') or task.get('copy_leader') or task['sku']);targets=[t for t in visible if ('group:'+group)==(ids[0] if ids else '') and str(t.get('base_article') or t.get('copy_leader') or t['sku'])==group] if ids and ids[0].startswith('group:') else [task]
+   ids=view.selection();targets=[t for t in visible if t['id'] in group_members.get(ids[0],())] if ids and ids[0] in group_members else [task]
    job=publication.active([t['sku'] for t in targets])
    if job:publication.cancel_followup(job['id'])
    with store.lock:store.delete_tasks([t['id'] for t in targets])
@@ -1317,7 +1339,7 @@ def main(test_mode=False,on_ready=None):
 
 
 
- ttk.Label(tasks_page,text='素材更新需手动启动；删除本地记录不会删除平台商品。结果未知的请求不会自动重发。',wraplength=1000,style='Muted.TLabel').pack(side='bottom',before=task_table,fill='x',pady=4)
+
  refresh()
  def close():pricing_stop.set();hosting.wake.set();video_hosting.wake.set();attributes.wake.set();publication.wake.set();(http.shutdown() if http else None);root.destroy();instance.release()
  root.protocol('WM_DELETE_WINDOW',close)

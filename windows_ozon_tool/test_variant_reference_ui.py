@@ -18,3 +18,14 @@ class ReferenceUiTests(unittest.TestCase):
   with patch('tkinter.filedialog.askopenfilename',return_value='/does-not-exist.png'),patch('tkinter.messagebox.showerror'):self.assertIsNone(grid.replace_reference(row))
   self.assertEqual(row['refs'],['original.png']);grid.thumbnail.assert_not_called()
 if __name__=='__main__':unittest.main()
+
+class SectionTests(unittest.TestCase):
+ def test_compact_sections_cover_every_field_once(self):
+  from variants import SECTIONS
+  values=[key for name,keys in SECTIONS.items() if name!='全部参数' for key in keys]
+  self.assertEqual(len(values),len(set(values)));self.assertEqual(set(values),{key for key,_,_ in FIELDS})
+ def test_paste_maps_noncontiguous_material_fields_and_retains_full_excel_import(self):
+  from variants import paste_fields
+  self.assertEqual(paste_fields('材质功能','material',4),('material','accessory_material','assembly','extra'))
+  self.assertEqual(paste_fields('基础信息','name',len(FIELDS)),tuple(k for k,_,_ in FIELDS))
+  with self.assertRaises(ValueError):paste_fields('基础信息','name',len(FIELDS)+1)

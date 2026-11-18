@@ -30,3 +30,10 @@ class AttentionConsistencyTests(unittest.TestCase):
   self.assertIn('需要核对JSON',stage(task,{},[]))
 
 if __name__=='__main__':unittest.main()
+
+class ArchiveTests(unittest.TestCase):
+ def test_only_final_on_sale_rows_are_archived_including_mixed_groups(self):
+  from ui_state import partition_task_rows
+  a={'id':'A'};b={'id':'B'};c={'id':'C'};groups={'ONE':[(a,('sku-a','已上架')),(b,('sku-b','图片重做排队中'))],'TWO':[(c,('sku-c','已上架'))]}
+  active,published=partition_task_rows(groups)
+  self.assertEqual(active,{'ONE':[(b,('sku-b','图片重做排队中'))]});self.assertEqual([t['id'] for g,t,row in published],['A','C']);self.assertEqual(len(groups['ONE']),2)
