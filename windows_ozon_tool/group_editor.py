@@ -18,25 +18,54 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  coordinator=GroupService(paths,service,pricing,store)
  cached=lookup(root,('group_preview',tuple(sorted(str(p.resolve()) for p in paths))))
  if cached is not None:return cached
- dialog=remember(root,('group_preview',tuple(sorted(str(p.resolve()) for p in paths))),tk.Toplevel(root));dialog.title('整组预览 · Ozon 商品自动化 1.0.54');dialog.geometry('1280x850');dialog.minsize(950,650)
+ dialog=remember(root,('group_preview',tuple(sorted(str(p.resolve()) for p in paths))),tk.Toplevel(root));dialog.title('整组预览 · Ozon 商品自动化 1.0.55');dialog.geometry('1280x850');dialog.minsize(950,650)
  busy=False;selected=set(range(len(paths)));focus=['',''];bundles=[];token=None;rendered=None;warehouses={};photos=[];rows={};last_job=None;copy_dirty=False;displayed_copy=None;copy_timer=None;busy_since=0;operation_error='';operation_name=''
- from ui_components import section_header
- section_header(dialog,'预览与上架审核','参数、文案与素材集中核对；确认后再提交。')
- ttk.Label(dialog,text='每列一个变体；双击单格修改，点击参数名选中整行后批量修改。仓库显示当前店铺全部类型和状态。',wraplength=900).pack(pady=6)
- status=ttk.Label(dialog,text='正在加载整组预览',wraplength=1200);status.pack(pady=3)
- bar=ttk.Frame(dialog);bar.pack(fill='x',padx=8,pady=3);more_menu=tk.Menu(dialog,tearoff=False);ttk.Menubutton(bar,text='更多',menu=more_menu).pack(side='right',padx=4)
+ header=ttk.Frame(dialog,padding=(16,10));header.pack(fill='x')
+ ttk.Label(header,text='整组预览',style='Heading.TLabel').pack(side='left')
+ ttk.Label(header,text=str(len(paths))+' 个变体 · 统一审核',style='Chip.TLabel').pack(side='left',padx=14)
+ more_menu=tk.Menu(dialog,tearoff=False);ttk.Menubutton(header,text='更多操作',menu=more_menu).pack(side='right')
+ preview_nav=ttk.Frame(dialog,padding=(16,0));preview_nav.pack(fill='x',pady=(0,8))
+ status=ttk.Label(dialog,text='正在加载整组预览',style='Muted.TLabel',wraplength=1200);status.pack(fill='x',padx=18,pady=(0,6))
+ bar=ttk.Frame(dialog);bar.pack(fill='x',padx=16,pady=(0,4))
  footer=ttk.Frame(dialog,padding=(16,10));footer.pack(side='bottom',fill='x');blocker=ttk.Label(footer,text='',wraplength=900,foreground='#b00020');blocker.pack(fill='x');asset_actions=ttk.Frame(footer);asset_actions.pack(fill='x');bottom=ttk.Frame(footer);bottom.pack(fill='x',pady=4)
- notebook=ttk.Notebook(dialog);notebook.pack(fill='both',expand=True,padx=8,pady=4)
+ ttk.Style(dialog).layout('Preview.TNotebook.Tab',[]);ttk.Style(dialog).configure('Preview.TNotebook',borderwidth=0,bordercolor='#F2F5FC',lightcolor='#F2F5FC',darkcolor='#F2F5FC')
+ notebook=ttk.Notebook(dialog,style='Preview.TNotebook');notebook.pack(fill='both',expand=True,padx=16,pady=(0,6))
  parameter_tab=ttk.Frame(notebook);copy_tab=ttk.Frame(notebook);media_tab=ttk.Frame(notebook);progress_tab=ttk.Frame(notebook)
- for widget,label in [(parameter_tab,'参数'),(copy_tab,'共用文案'),(media_tab,'图片视频'),(progress_tab,'上架进度')]:notebook.add(widget,text=label)
+ for widget,label in [(parameter_tab,'参数核对'),(copy_tab,'共用文案'),(media_tab,'图片视频'),(progress_tab,'上架进度')]:notebook.add(widget,text=label)
+ page_buttons={}
+ for i,(widget,label) in enumerate([(parameter_tab,'参数核对'),(copy_tab,'共用文案'),(media_tab,'图片视频'),(progress_tab,'上架进度')]):
+  preview_nav.columnconfigure(i,weight=1);button=ttk.Button(preview_nav,text=label,style='Segment.TButton',command=lambda w=widget:notebook.select(w));button.grid(row=0,column=i,sticky='ew',padx=(0,6 if i<3 else 0));page_buttons[str(widget)]=button
  search=tk.StringVar();missing=tk.BooleanVar(value=False);filterbar=ttk.Frame(parameter_tab);filterbar.pack(fill='x',pady=4)
- ttk.Label(filterbar,text='参数关键词').pack(side='left');ttk.Entry(filterbar,textvariable=search,width=35).pack(side='left',padx=5);ttk.Checkbutton(filterbar,text='只看缺失必填项',variable=missing).pack(side='left')
+ ttk.Label(filterbar,text='参数关键词').pack(side='left');ttk.Entry(filterbar,textvariable=search,width=22).pack(side='left',fill='x',expand=True,padx=5);ttk.Checkbutton(filterbar,text='只看缺失必填项',variable=missing).pack(side='left')
  target_label=ttk.Label(filterbar);target_label.pack(side='right',padx=6)
+ parameter_pager=ttk.Frame(parameter_tab,padding=(0,4));parameter_pager.pack(fill='x')
  holder=ttk.Frame(parameter_tab);holder.pack(fill='both',expand=True);holder.rowconfigure(0,weight=1);holder.columnconfigure(0,weight=1)
  columns=[f'v{i}' for i in range(len(paths))];tree=ttk.Treeview(holder,columns=columns,show='tree headings',selectmode='browse')
- tree.heading('#0',text='参数 / 官方必填项 *');tree.column('#0',width=310,minwidth=240,stretch=False,anchor='center')
+ tree.heading('#0',text='参数 / 官方必填项 *');tree.column('#0',width=260,minwidth=210,stretch=False,anchor='center')
  for i,col in enumerate(columns):tree.column(col,width=240,minwidth=160,stretch=False,anchor='center')
  tree.grid(row=0,column=0,sticky='nsew');sx=ttk.Scrollbar(holder,orient='horizontal',command=tree.xview);sx.grid(row=1,column=0,sticky='ew');sy=ttk.Scrollbar(holder,orient='vertical',command=tree.yview);sy.grid(row=0,column=1,sticky='ns');tree.configure(xscrollcommand=sx.set,yscrollcommand=sy.set)
+ page_start=[0];page_size=[3]
+ page_label=ttk.Label(parameter_pager,style='Muted.TLabel');page_label.pack(side='left',padx=8)
+ def fit_parameters(event=None):
+  width=event.width if event else max(900,tree.winfo_width());size=max(1,min(4,(width-260)//220));page_size[0]=size
+  page_start[0]=min(page_start[0],max(0,len(columns)-size));shown=columns[page_start[0]:page_start[0]+size]
+  if not isinstance(focus[1],int) or 'v'+str(focus[1]) not in shown:focus[1]=int(shown[0][1:])
+  tree.configure(displaycolumns=shown);tree.column('#0',width=250,minwidth=210,stretch=False)
+  for col in shown:tree.column(col,width=max(100,(width-256)//len(shown)),minwidth=80,stretch=True)
+  page_label.configure(text='变体 '+str(page_start[0]+1)+'–'+str(page_start[0]+len(shown))+' / '+str(len(columns)))
+  previous_page.configure(state='normal' if page_start[0]>0 else 'disabled');next_page.configure(state='normal' if page_start[0]+size<len(columns) else 'disabled');tree.xview_moveto(0);sx.grid_remove()
+  try:badges.schedule()
+  except NameError:pass
+ def move_page(direction):page_start[0]=max(0,min(max(0,len(columns)-page_size[0]),page_start[0]+direction*page_size[0]));fit_parameters()
+ previous_page=ttk.Button(parameter_pager,text='上一页',command=lambda:move_page(-1));previous_page.pack(side='left',padx=3)
+ next_page=ttk.Button(parameter_pager,text='下一页',command=lambda:move_page(1));next_page.pack(side='left',padx=3)
+ def select_variants(all_items):
+  selected.clear()
+  if all_items:selected.update(range(len(paths)))
+  headings()
+ ttk.Button(parameter_pager,text='全选变体',command=lambda:select_variants(True)).pack(side='right',padx=3)
+ ttk.Button(parameter_pager,text='清空选择',command=lambda:select_variants(False)).pack(side='right',padx=3)
+ tree.bind('<Configure>',fit_parameters);tree.after_idle(fit_parameters)
  tree.tag_configure('missing',foreground='#a40000');tree.tag_configure('pending',foreground='#9b5e00')
  detail=ttk.Label(parameter_tab,text='选择参数查看填写说明',wraplength=1180);detail.pack(fill='x',pady=5)
  selected_var=tk.StringVar();warehouse_choice=ttk.Combobox(bar,textvariable=selected_var,state='readonly',width=35);warehouse_choice.pack(side='right',padx=4)
@@ -67,7 +96,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  def chosen():return sorted(selected)
  def headings():
   for n,col in enumerate(columns):tree.heading(col,text=('☑ ' if n in selected else '☐ ')+paths[n].parent.name,command=lambda n=n:toggle(n))
-  target_label.configure(text=f'批量对象 {len(chosen())}/{len(paths)} 个变体；点击列标题切换')
+  target_label.configure(text=f'已选 {len(chosen())}/{len(paths)} 个变体')
  def toggle(n):
   if n in selected:selected.remove(n)
   else:selected.add(n)
@@ -155,6 +184,10 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    copy_save_button.configure(state='disabled' if busy or job else 'normal')
    submit_button.configure(state='disabled' if busy else 'normal',text='查看当前提交进度' if job else '提交上架');update_button.configure(state='disabled' if busy or job else 'normal');progress_refresh()
    blocker.configure(text=('当前按钮暂不可用：'+coordinator.status+'，已用'+str(int(time.monotonic()-busy_since))+'秒' if busy else '共用文案尚未保存' if copy_dirty else '已有上架任务：点击右侧按钮查看进度，系统不会重复提交' if job else operation_error or ''))
+   if busy:blocker.configure(text='')
+   if blocker.cget('text'):
+    if not blocker.winfo_manager():blocker.pack(fill='x',before=asset_actions)
+   else:blocker.pack_forget()
   except (OSError,ValueError):status.configure(text='正在等待草稿保存完成')
  def refilter(*args):
   nonlocal rendered
@@ -240,7 +273,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  def double_click(event):
   iid=tree.identify_row(event.y);col=tree.identify_column(event.x)
   if iid in rows and col!='#0':
-   index=int(col[1:])-1;focus[:]=[iid,index];edit_row([index],iid)
+   index=int(tree.column(col,'id')[1:]);focus[:]=[iid,index];edit_row([index],iid)
  def track(event=None):
   if tree.selection() and tree.selection()[0] in rows:
    iid=tree.selection()[0];focus[0]=iid;row,field=rows[iid];detail.configure(text=(field.get('description','') if field else '基础参数以填写单位为准；包装与商品尺寸分别处理。')+' | 当前参数可对选中变体批量修改')
@@ -310,7 +343,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   if not rows:messagebox.showinfo('未找到原始参考图','当前草稿未记录参考图片位置，请用你保留的原图或实物核对。生成图不能作为隔层结构的可靠依据。',parent=dialog);return
   open_viewer(dialog,paths[index].parent,rows,0,b['sku']+' · 原始参考图')
  refbar=ttk.Frame(parameter_tab);refbar.pack(fill='x',pady=3)
- ttk.Label(refbar,text='红色=已自动采用的参考值；售价也自动采用，无需另行确认。有问题直接双击修改。',foreground='#b00020').pack(side='left',padx=5)
+ ttk.Label(refbar,text='红色为自动预填，可双击修改。',foreground='#b00020').pack(side='left',padx=5)
  if price_callback:more_menu.add_command(label='查看当前变体售价明细',command=lambda:price_callback(focus[1] if isinstance(focus[1],int) else 0))
  more_menu.add_command(label='查看当前变体原始参考图',command=lambda:open_reference(focus[1] if isinstance(focus[1],int) else 0))
  def reference_cells():
@@ -431,8 +464,15 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   ttk.Button(window,text='应用选中类目、迁移参数并重新定价',command=apply).pack(pady=7)
  # Common copy has a separate readable editor, shared by every variant.
  copy_widgets={}
- for key,label,height in [('title_ru','共用俄语标题',2),('description_ru','共用俄语简介',8),('tags_ru','共用标签（每行一个）',4)]:
-  ttk.Label(copy_tab,text=label).pack(anchor='w',padx=8,pady=3);widget=ScrolledText(copy_tab,height=height,wrap='word');widget.pack(fill='both',expand=key=='description_ru',padx=8);copy_widgets[key]=widget
+ copy_actions=ttk.Frame(copy_tab,padding=(8,6));copy_actions.pack(side='bottom',fill='x')
+ copy_body=ttk.Frame(copy_tab,padding=8);copy_body.pack(fill='both',expand=True);copy_body.columnconfigure(0,weight=3);copy_body.columnconfigure(1,weight=1);copy_body.rowconfigure(3,weight=1)
+ for row,key,label,height in [(0,'title_ru','俄语标题',2),(2,'description_ru','商品介绍',6)]:
+  ttk.Label(copy_body,text=label,style='SectionTitle.TLabel').grid(row=row,column=0,sticky='w',pady=(4,5))
+  widget=ScrolledText(copy_body,height=height,wrap='word');widget.grid(row=row+1,column=0,sticky='nsew',padx=(0,14),pady=(0,6));copy_widgets[key]=widget
+ tags_panel=ttk.Frame(copy_body,style='Card.TFrame',padding=12);tags_panel.grid(row=0,column=1,rowspan=4,sticky='nsew');tags_panel.rowconfigure(2,weight=1);tags_panel.columnconfigure(0,weight=1)
+ ttk.Label(tags_panel,text='标签',style='CardTitle.TLabel').grid(row=0,column=0,sticky='w')
+ ttk.Label(tags_panel,text='每行一个，自动规范',style='CardMuted.TLabel').grid(row=1,column=0,sticky='w',pady=(4,10))
+ copy_widgets['tags_ru']=ScrolledText(tags_panel,height=5,width=20,wrap='word');copy_widgets['tags_ru'].grid(row=2,column=0,sticky='nsew')
  initial=(coordinator.load()[0].get('copy') or {})
  for key,widget in copy_widgets.items():widget.insert('1.0','\n'.join(initial.get(key,[])) if key=='tags_ru' else initial.get(key,''))
  def mark_copy_dirty(event):
@@ -460,27 +500,53 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    copy_dirty=False;refresh();footer_note.configure(text='整组文案已保存并同步全部变体，未提交Ozon。')
    if after:after()
   run(lambda:coordinator.set_copy(value,expected),saved,label='自动保存整组共用文案')
- copy_save_button=ttk.Button(copy_tab,text='保存并同步全组文案',command=save_copy);copy_save_button.pack(pady=5)
- ttk.Label(copy_tab,text='编辑后自动保存；未修改也可直接点击保存，或提交时自动沿用当前完整文案。标签自动规范。').pack(pady=4)
- media_canvas=tk.Canvas(media_tab,highlightthickness=0);media_canvas.pack(side='left',fill='both',expand=True);media_scroll=ttk.Scrollbar(media_tab,orient='vertical',command=media_canvas.yview);media_scroll.pack(side='right',fill='y');media_canvas.configure(yscrollcommand=media_scroll.set);media_body=ttk.Frame(media_canvas);media_id=media_canvas.create_window((0,0),window=media_body,anchor='nw');media_body.bind('<Configure>',lambda e:media_canvas.configure(scrollregion=media_canvas.bbox('all')));media_canvas.bind('<Configure>',lambda e:media_canvas.itemconfigure(media_id,width=e.width))
- media_cards=ttk.Frame(media_body);media_cards.pack(fill='x')
- def media_wheel(event):
-  if str(event.widget).startswith(str(media_tab)) and event.widget.winfo_class()!='Text':media_canvas.yview_scroll(-int(event.delta/120),'units')
- dialog.bind_all('<MouseWheel>',media_wheel,add='+')
+ copy_save_button=ttk.Button(copy_actions,text='保存并同步全组文案',style='Primary.TButton',command=save_copy);copy_save_button.pack(side='right')
+ ttk.Label(copy_actions,text='全组共用 · 编辑后自动保存',style='Muted.TLabel').pack(side='left')
+ media_layout=ttk.Frame(media_tab);media_layout.pack(fill='both',expand=True);media_layout.columnconfigure(0,weight=1);media_layout.columnconfigure(1,weight=0);media_layout.rowconfigure(0,weight=1)
+ media_left=ttk.Frame(media_layout,style='Card.TFrame',padding=12);media_left.grid(row=0,column=0,sticky='nsew',padx=(0,10),pady=8)
+ media_right=ttk.Frame(media_layout,width=360);media_right.grid(row=0,column=1,sticky='nsew',pady=8);media_right.pack_propagate(False)
+ media_variant=tk.StringVar();media_choice=ttk.Combobox(media_left,textvariable=media_variant,state='readonly',height=12);media_choice.pack(fill='x',pady=(0,6))
+ media_meta=ttk.Label(media_left,style='CardMuted.TLabel');media_meta.pack(anchor='w',pady=(0,5))
+ media_actions=ttk.Frame(media_left,style='Card.TFrame');media_actions.pack(side='bottom',fill='x',pady=(6,0))
+ thumb_strip=ttk.Frame(media_left,style='Card.TFrame');thumb_strip.pack(side='bottom',fill='x',pady=(6,0))
+ media_preview=tk.Canvas(media_left,background='white',highlightthickness=0,height=160,cursor='hand2');media_preview.pack(fill='both',expand=True)
+ media_original=[None];hero_photo=[None];media_order=[0]
+ def media_index():return next((i for i,b in enumerate(bundles) if b['sku']==media_variant.get()),0)
+ def render_hero(event=None):
+  from PIL import Image,ImageOps,ImageTk
+  media_preview.delete('all');width=max(50,media_preview.winfo_width());height=max(50,media_preview.winfo_height())
+  if media_original[0] is None:media_preview.create_text(width//2,height//2,text='暂无可预览图片',fill='#8796B0');return
+  fitted=ImageOps.contain(media_original[0],(max(20,width-20),max(20,height-16)));hero_photo[0]=ImageTk.PhotoImage(fitted);media_preview.create_image(width//2,height//2,image=hero_photo[0])
+ def select_image(order):
+  from PIL import Image,ImageOps
+  media_order[0]=order;media_original[0]=None
+  if bundles:
+   index=media_index();images=bundles[index].get('images') or []
+   if order<len(images):
+    try:
+     with Image.open(paths[index].parent/images[order]['local_file']) as image:media_original[0]=ImageOps.exif_transpose(image).convert('RGB').copy()
+    except (OSError,ValueError,KeyError):pass
+  render_hero()
  def media_refresh():
   from PIL import Image,ImageOps,ImageTk
-  for child in media_cards.winfo_children():child.destroy()
+  if not bundles:return
+  prior=media_variant.get();media_choice.configure(values=[b['sku'] for b in bundles]);media_variant.set(prior if prior in [b['sku'] for b in bundles] else bundles[0]['sku']);index=media_index();bundle=bundles[index]
+  media_meta.configure(text=str(len(bundle.get('images') or []))+' 张图片 · 01 主图 / 02–08 详情 · 点击大图放大')
+  for child in thumb_strip.winfo_children():child.destroy()
   photos.clear()
-  for n,b in enumerate(bundles):
-   frame=ttk.LabelFrame(media_cards,text=b['sku']);frame.grid(row=n//4,column=n%4,padx=8,pady=8,sticky='n')
-   if b.get('images'):
-    path=paths[n].parent/b['images'][0]['local_file']
-    try:
-     with Image.open(path) as image:photo=ImageTk.PhotoImage(ImageOps.contain(image.convert('RGB'),(140,180)))
-     photos.append(photo);thumbnail=ttk.Label(frame,image=photo,cursor='hand2');thumbnail.pack(padx=6,pady=6);thumbnail.bind('<Button-1>',lambda e,n=n:show_image(n,0))
-    except (OSError,ValueError):ttk.Label(frame,text='主图不可读').pack(pady=20)
-   ttk.Button(frame,text='查看8张图片',command=lambda n=n:gallery(n)).pack(pady=3)
-   ttk.Button(frame,text='播放本地8秒视频',command=lambda n=n:play_video(n)).pack(pady=3)
+  for order,row in enumerate((bundle.get('images') or [])[:8]):
+   cell=ttk.Frame(thumb_strip,style='Card.TFrame');cell.grid(row=0,column=order,padx=2);thumb_strip.columnconfigure(order,weight=1)
+   try:
+    with Image.open(paths[index].parent/row['local_file']) as image:photo=ImageTk.PhotoImage(ImageOps.contain(image.convert('RGB'),(44,58)))
+    photos.append(photo);thumb=ttk.Label(cell,image=photo,style='Card.TLabel',cursor='hand2');thumb.pack();thumb.bind('<Button-1>',lambda e,n=order:select_image(n))
+   except (OSError,ValueError,KeyError):ttk.Label(cell,text='—',style='CardMuted.TLabel').pack()
+   ttk.Label(cell,text=f'{order+1:02d}',style='CardMuted.TLabel').pack()
+  select_image(min(media_order[0],max(0,len(bundle.get('images') or [])-1)))
+ def variant_changed(event=None):
+  media_order[0]=0;media_refresh();regen_ui['select_current'](media_variant.get())
+ media_choice.bind('<<ComboboxSelected>>',variant_changed);media_preview.bind('<Configure>',render_hero);media_preview.bind('<Button-1>',lambda e:show_image(media_index(),media_order[0]))
+ ttk.Button(media_actions,text='查看全套图片',command=lambda:gallery(media_index())).pack(side='left',fill='x',expand=True,padx=(0,4))
+ ttk.Button(media_actions,text='播放视频',command=lambda:play_video(media_index())).pack(side='left',fill='x',expand=True,padx=(4,0))
  def show_image(index,start):
   from image_viewer import open_viewer
   return open_viewer(dialog,paths[index].parent,bundles[index].get('images') or [],start,bundles[index]['sku']+' · 图片预览')
@@ -514,7 +580,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   def action():
    with store.lock:return store.image_jobs.create(bundles[0]['sku'],kind,skus,addition)
   def queued(result):
-   footer_note.configure(text='已备份并加入 '+str(len(result))+' 个图片任务；插件自动生成、采集并替换，进度见本页下方。')
+   footer_note.configure(text='已备份并加入 '+str(len(result))+' 个图片任务；插件自动生成、采集并替换，进度见右侧操作区。')
    regen_ui['refresh']()
   run(action,queued,label='备份并创建图片重做任务')
  def stop_images():
@@ -541,11 +607,14 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
     owner=next(t for t in store.tasks if t['sku']==bundles[0]['sku']);count=reconcile(store,accept_group=owner.get('copy_leader',owner['sku']));store.set_paused(False);return count
   run(action,lambda count:footer_note.configure(text='已沿用本组校验图片，自动继续文案和素材处理；未提交上架。'),label='沿用已检查的整组图片')
  from media_regeneration_ui import build as build_regeneration
- regen_ui=build_regeneration(media_body,lambda:bundles,store,queue_images,stop_images,accept_images)
+ regen_ui=build_regeneration(media_right,lambda:bundles,store,queue_images,stop_images,accept_images,current_sku=media_variant.get)
  more_menu.add_command(label='刷新图片视频预览',command=media_refresh)
- progress=ttk.Treeview(progress_tab,columns=('offer','warehouse','quantity','state','barcodes','errors'),show='headings',height=12)
- for key,label,width in [('offer','货号',180),('warehouse','目标仓库',200),('quantity','目标库存 / 当前可用',160),('state','上架阶段',250),('barcodes','条形码',200),('errors','平台结果 / 错误',350)]:progress.heading(key,text=label);progress.column(key,width=width,anchor='center')
- progress.pack(fill='both',expand=True,padx=8,pady=8);progress_info=ScrolledText(progress_tab,height=6);progress_info.pack(fill='x',padx=8,pady=5)
+ progress_actions=ttk.Frame(progress_tab,padding=(8,4));progress_actions.pack(side='bottom',fill='x')
+ progress_info=ScrolledText(progress_tab,height=3,wrap='word');progress_info.pack(side='bottom',fill='x',padx=8,pady=(4,8))
+ progress_holder=ttk.Frame(progress_tab,padding=8);progress_holder.pack(fill='both',expand=True);progress_holder.rowconfigure(0,weight=1);progress_holder.columnconfigure(0,weight=1)
+ progress=ttk.Treeview(progress_holder,columns=('offer','warehouse','quantity','state','barcodes','errors'),show='headings',height=8)
+ for key,label,width in [('offer','变体货号',150),('warehouse','仓库',160),('quantity','目标 / 可用库存',140),('state','上架阶段',180),('barcodes','条形码',160),('errors','平台反馈',260)]:progress.heading(key,text=label);progress.column(key,width=width,minwidth=80,anchor='w')
+ progress.grid(row=0,column=0,sticky='nsew');py=ttk.Scrollbar(progress_holder,orient='vertical',command=progress.yview);py.grid(row=0,column=1,sticky='ns');px=ttk.Scrollbar(progress_holder,orient='horizontal',command=progress.xview);px.grid(row=1,column=0,sticky='ew');progress.configure(yscrollcommand=py.set,xscrollcommand=px.set)
  def progress_refresh():
   progress.delete(*progress.get_children())
   if not last_job:
@@ -554,11 +623,11 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   for offer,item in last_job.get('items',{}).items():
    setting=last_job['stocks'][offer];progress.insert('','end',values=(offer,setting['warehouse_name'],str(setting['stock'])+' / '+str(item.get('current_free_stock','待查询')),item.get('status',''),' / '.join(item.get('barcodes') or []) or item.get('barcode_status','等待商品创建'),item.get('error_summary') or json.dumps(item.get('barcode_errors') or item.get('price_errors') or item.get('stock_errors') or item.get('errors') or item.get('platform_errors') or item.get('platform_status') or {},ensure_ascii=False)))
   from pipeline_status import wait_details
-  text=json.dumps({'等待':wait_details(last_job),'需处理':bool(last_job.get('needs_attention')),'任务':last_job['id'],'导入任务ID':last_job.get('task_id'),'状态':last_job['state'],'说明':last_job.get('message'),'最近处理错误':operation_error or None},ensure_ascii=False,indent=2)
+  text=str(last_job.get('message') or '正在跟进上架状态')+'\n'+wait_details(last_job)+(' · 需要核对' if last_job.get('needs_attention') else '')+('\n需处理：'+operation_error if operation_error else '')
   if progress_info.get('1.0','end-1c')!=text:progress_info.delete('1.0','end');progress_info.insert('1.0',text)
  def query_status():
   if last_job:run(lambda:publication.step(last_job['id'],refresh=True))
- ttk.Button(progress_tab,text='立即查询导入、库存及可售状态',command=query_status).pack(pady=4)
+ ttk.Button(progress_actions,text='刷新上架状态',style='Primary.TButton',command=query_status).pack(side='left')
  def reconcile_import():
   if not last_job or last_job['state']!='import_uncertain':return
   if not messagebox.askyesno('必须先在Ozon后台核对','提交超时且没有任务ID，程序无法判断是否受理。只有你已在Ozon后台确认此次未受理，才能解除并重新提交。是否已确认未受理？',parent=dialog):return
@@ -582,7 +651,14 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    nonlocal operation_error
    operation_error='';refresh();progress_refresh();messagebox.showinfo('本地进度已清空','已清理 '+str(count)+' 条记录，素材和回执备份保留。平台商品未删除；可在后台处理后再提交。',parent=dialog)
   run(lambda:publication.clear_group(targets),done,label='清空本组本地上架进度')
- ttk.Button(progress_tab,text='清空本组上架进度（保留素材）',command=clear_progress).pack(pady=4)
+ more_menu.add_command(label='清空本组本地上架进度（保留素材）',command=clear_progress)
+ def receipt_details():
+  key=('publication_detail',tuple(str(p) for p in paths));cached=lookup(dialog,key)
+  if cached is not None:return cached
+  window=remember(dialog,key,tk.Toplevel(dialog));window.title('本组上架详细记录');window.geometry('760x500');text=ScrolledText(window,wrap='word');text.pack(fill='both',expand=True,padx=12,pady=12)
+  data={k:(last_job or {}).get(k) for k in ('id','task_id','state','message','needs_attention','items')};text.insert('1.0',json.dumps(data,ensure_ascii=False,indent=2));text.configure(state='disabled')
+  return window
+ ttk.Button(progress_actions,text='详细记录',command=receipt_details).pack(side='right')
 
 
 
@@ -634,7 +710,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    media_refresh()
    footer_note.configure(text=('部分属性未同步：请查看参数提示。' if str(message).startswith('部分属性未同步') else '整组本地预览已更新。')+'未提交至Ozon；点击“提交上架”才同步。')
   run(coordinator.refresh_preview,updated,label='更新整组本地预览（不提交）')
- footer_note=ttk.Label(bottom,text='更新整组预览只保存本地；提交上架才同步Ozon。初始库存1000，销售后不重置。',wraplength=500)
+ footer_note=ttk.Label(bottom,text='核对参数、图文和售价后，再提交上架。',wraplength=500)
  submit_button=ttk.Button(bottom,text='提交上架',style='Primary.TButton',command=submit);submit_button.pack(side='right',padx=6)
  update_button=ttk.Button(bottom,text='更新整组预览',command=update_preview);update_button.pack(side='right',padx=6);footer_note.pack(side='left',fill='x',expand=True)
  accept_button=ttk.Button(asset_actions,text='图片无误，沿用本组',command=accept_images)
@@ -652,6 +728,11 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   def show(report):messagebox.showinfo('本地预览','校验通过，已导出；未提交。' if report['ready'] else '\n'.join(r['offer_id']+'：'+'；'.join(r['missing']) for r in report['items'] if not r['ready']),parent=dialog)
   run(action,show)
  more_menu.add_command(label='校验 / 导出整组载荷',command=preview_only)
+ def page_changed(event=None):
+  for key,button in page_buttons.items():button.configure(style='SegmentActive.TButton' if notebook.select()==key else 'Segment.TButton')
+  if notebook.select()==str(parameter_tab):bar.pack(fill='x',padx=16,pady=(0,4),before=notebook)
+  else:bar.pack_forget()
+ notebook.bind('<<NotebookTabChanged>>',page_changed,add='+');page_changed()
  def poll():
   if not dialog.winfo_exists():return
   refresh();dialog.after(1500,poll)
@@ -662,5 +743,5 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  try:
   publication.account_getter();dialog.after(100,load_warehouses)
  except ValueError:status.configure(text='请先连接Ozon API，再读取店铺全部仓库')
- dialog._ozon_ui={'notebook':notebook,'copy_widgets':copy_widgets,'save_copy':copy_save_button,'tree':tree,'more':more_menu,'submit':submit_button,'update_preview':update_button,'accept_images':accept_button,'footer_note':footer_note,'regeneration':regen_ui,'refresh':refresh}
+ dialog._ozon_ui={'notebook':notebook,'copy_widgets':copy_widgets,'save_copy':copy_save_button,'tree':tree,'more':more_menu,'submit':submit_button,'update_preview':update_button,'accept_images':accept_button,'footer_note':footer_note,'regeneration':regen_ui,'refresh':refresh,'media_choice':media_choice,'media_preview':media_preview,'parameter_next':next_page,'parameter_previous':previous_page,'parameter_page':page_label}
  return dialog
