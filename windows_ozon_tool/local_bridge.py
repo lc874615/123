@@ -128,7 +128,7 @@ class Store:
    restored.append(task)
   self.tasks.extend(restored);self.rebase_paths();self.save();return len(restored)
  def set_paused(self,paused):
-  self.control={'paused':bool(paused),'serial':self.control.get('serial',0)+1}
+  self.control={'paused':bool(paused),'serial':self.control.get('serial',0)+1,'command_token':secrets.token_hex(16)}
   self.control_path.write_text(json.dumps(self.control),encoding='utf-8')
   for task in self.tasks+(self.image_jobs.jobs if hasattr(self,'image_jobs') else []):
    if paused and task.get('copy_state')=='running':task.update(copy_state='needs_attention',pause_requested=True,pause_ack=False,resume_mode='copy_inspect_only',message='文案制作已暂停，继续时只读取已有结果')
@@ -659,7 +659,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.56','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.57','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)

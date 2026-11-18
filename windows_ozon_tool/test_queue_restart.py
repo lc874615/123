@@ -6,6 +6,12 @@ from queue_restart import restart,choose,ready
 from pricing_service import read
 
 class RestartTests(unittest.TestCase):
+ def test_explicit_start_commands_have_unique_persisted_identity(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   store=Store(tmp);a=store.set_paused(False);b=store.set_paused(False)
+   self.assertNotEqual(a['command_token'],b['command_token']);self.assertFalse(b['paused'])
+   self.assertEqual(read(store.control_path)['command_token'],b['command_token'])
+
  def test_failed_task_gets_fresh_identity_backup_and_automatic_queue(self):
   with tempfile.TemporaryDirectory() as tmp:
    store=Store(tmp);store.create_set('A','椅子');store.create_set('B','桌子');a,b=store.tasks;a.update(state='needs_attention',resume_mode='inspect_only',sheet_layout={'columns':3},image_retry_attempts=[{'request_id':'stale'}]);before=copy.deepcopy(b)
