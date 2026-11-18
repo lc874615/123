@@ -18,12 +18,14 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  coordinator=GroupService(paths,service,pricing,store)
  cached=lookup(root,('group_preview',tuple(sorted(str(p.resolve()) for p in paths))))
  if cached is not None:return cached
- dialog=remember(root,('group_preview',tuple(sorted(str(p.resolve()) for p in paths))),tk.Toplevel(root));dialog.title('整组预览 · Ozon 商品自动化 1.0.51');dialog.geometry('1280x850');dialog.minsize(950,650)
+ dialog=remember(root,('group_preview',tuple(sorted(str(p.resolve()) for p in paths))),tk.Toplevel(root));dialog.title('整组预览 · Ozon 商品自动化 1.0.52');dialog.geometry('1280x850');dialog.minsize(950,650)
  busy=False;selected=set(range(len(paths)));focus=['',''];bundles=[];token=None;rendered=None;warehouses={};photos=[];rows={};last_job=None;copy_dirty=False;displayed_copy=None;copy_timer=None;busy_since=0;operation_error='';operation_name=''
+ from ui_components import section_header
+ section_header(dialog,'预览与上架审核','参数、文案与素材集中核对；确认后再提交。')
  ttk.Label(dialog,text='每列一个变体；双击单格修改，点击参数名选中整行后批量修改。仓库显示当前店铺全部类型和状态。',wraplength=900).pack(pady=6)
  status=ttk.Label(dialog,text='正在加载整组预览',wraplength=1200);status.pack(pady=3)
  bar=ttk.Frame(dialog);bar.pack(fill='x',padx=8,pady=3);more_menu=tk.Menu(dialog,tearoff=False);ttk.Menubutton(bar,text='更多',menu=more_menu).pack(side='right',padx=4)
- footer=ttk.Frame(dialog,padding=(8,5));footer.pack(side='bottom',fill='x');blocker=ttk.Label(footer,text='',wraplength=900,foreground='#b00020');blocker.pack(fill='x');asset_actions=ttk.Frame(footer);asset_actions.pack(fill='x');bottom=ttk.Frame(footer);bottom.pack(fill='x',pady=4)
+ footer=ttk.Frame(dialog,padding=(16,10));footer.pack(side='bottom',fill='x');blocker=ttk.Label(footer,text='',wraplength=900,foreground='#b00020');blocker.pack(fill='x');asset_actions=ttk.Frame(footer);asset_actions.pack(fill='x');bottom=ttk.Frame(footer);bottom.pack(fill='x',pady=4)
  notebook=ttk.Notebook(dialog);notebook.pack(fill='both',expand=True,padx=8,pady=4)
  parameter_tab=ttk.Frame(notebook);copy_tab=ttk.Frame(notebook);media_tab=ttk.Frame(notebook);progress_tab=ttk.Frame(notebook)
  for widget,label in [(parameter_tab,'参数'),(copy_tab,'共用文案'),(media_tab,'图片视频'),(progress_tab,'上架进度')]:notebook.add(widget,text=label)

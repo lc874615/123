@@ -658,7 +658,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.51','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.52','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
@@ -775,18 +775,21 @@ def main(test_mode=False,on_ready=None):
   except Exception as exc:show_task_error('恢复未完成',str(exc))
  ttk.Button(account_panel,text='恢复已删除的本地记录',command=restore_records).pack(anchor='w',pady=6)
 
- ttk.Label(win,text='基础货号（上架货号按变体自动加(1)、(2)…）').pack()
- base=tk.StringVar();ttk.Entry(win,textvariable=base,width=60).pack()
+ setup_card=ttk.LabelFrame(win,text='01 / 基础资料与全组参考',style='Surface.TLabelframe',padding=16);setup_card.pack(fill='x',pady=(0,14))
+ ttk.Label(setup_card,text='基础货号',style='CardTitle.TLabel').pack(anchor='w')
+ ttk.Label(setup_card,text='每个变体自动追加 (1)、(2)…，用于识别与上架。',style='CardMuted.TLabel').pack(anchor='w',pady=(3,8))
+ base=tk.StringVar();ttk.Entry(setup_card,textvariable=base,width=60).pack(fill='x')
  from variants import VariantGrid
  shared_refs=[]
- shared_label=ttk.Label(win,text='共用详情图参考：未选择');shared_label.pack()
+ shared_label=ttk.Label(setup_card,text='共用详情图参考：未选择',style='CardMuted.TLabel');shared_label.pack(anchor='w',pady=(12,2))
  def choose_shared():
   nonlocal shared_refs
   selected=list(filedialog.askopenfilenames(title='选择全组共用详情图参考',filetypes=[('Images','*.png *.jpg *.jpeg *.webp')]))
   if selected:shared_refs=selected;shared_label.configure(text=f'共用详情图参考：已选 {len(selected)} 张')
- ttk.Button(win,text='选择共用详情图参考（全组一次）',command=choose_shared).pack(pady=4)
+ ttk.Button(setup_card,text='＋ 添加全组共用参考图',command=choose_shared).pack(anchor='w',pady=4)
 
- grid=VariantGrid(win,base)
+ variant_card=ttk.LabelFrame(win,text='02 / 变体与参数',padding=8);variant_card.pack(fill='both',expand=True,pady=(0,12))
+ grid=VariantGrid(variant_card,base)
  from pricing_service import PricingService,read as read_pricing
  from ozon_connection import restore as restore_ozon
  restore_ozon(DATA)
@@ -929,17 +932,18 @@ def main(test_mode=False,on_ready=None):
      store.tasks=previous;store.save();raise
    notebook.select(pages['tasks'])
   except Exception as e:show_task_error('未创建',str(e))
- ttk.Label(win,text='每个变体：01固定为独立主图；02—08沿用首变体的7张详情图').pack(pady=3)
- ttk.Button(win,text='创建并自动处理',style='Primary.TButton',command=create).pack(pady=6)
+ product_footer=ttk.Frame(pages['product'],padding=(18,10));product_footer.grid(row=1,column=0,sticky='ew')
+ ttk.Label(product_footer,text='独立主图 + 7 张共用详情图',style='Muted.TLabel').pack(side='left')
+ ttk.Button(product_footer,text='创建队列 · 开始自动制作',style='Primary.TButton',command=create).pack(side='right')
  task_table=ttk.Frame(tasks_page,style='Card.TFrame');task_table.pack(fill='both',expand=True);task_table.rowconfigure(0,weight=1);task_table.columnconfigure(0,weight=1)
  view=ttk.Treeview(task_table,columns=('sku','progress','price','hosting','status'),show='tree headings',height=15,selectmode='browse')
  view.heading('#0',text='商品组');view.column('#0',width=150,stretch=False,anchor='center')
- for key,label,width in [('sku','变体货号',165),('progress','图片',90),('price','售价（元）',110),('hosting','托管链接',130),('status','当前阶段 / 原因',360)]:view.heading(key,text=label,anchor='center');view.column(key,width=width,stretch=key=='status',anchor='center')
+ for key,label,width in [('sku','变体货号',165),('progress','图片',90),('price','售价（元）',110),('hosting','托管链接',130),('status','当前阶段 / 原因',360)]:view.heading(key,text=label,anchor='center');view.column(key,width=width,stretch=key=='status',anchor='w' if key in ('sku','status') else 'center')
  view.tag_configure('published',foreground='#16785B',background='#F1FAF5')
  view.tag_configure('group',background='#EDF1F8',foreground='#334155');view.tag_configure('even',background='#FFFFFF');view.tag_configure('odd',background='#F8FAFE');view.tag_configure('attention',foreground='#B74347',background='#FFF4F2')
  view.grid(row=0,column=0,sticky='nsew');scroll_y=ttk.Scrollbar(task_table,orient='vertical',command=view.yview);scroll_y.grid(row=0,column=1,sticky='ns');scroll_x=ttk.Scrollbar(task_table,orient='horizontal',command=view.xview);scroll_x.grid(row=1,column=0,sticky='ew');view.configure(yscrollcommand=scroll_y.set,xscrollcommand=scroll_x.set)
  task_actions=ttk.Frame(tasks_page);task_actions.pack(side='bottom',before=task_table,fill='x',pady=10);task_more=tk.Menu(root,tearoff=False);more_button=ttk.Menubutton(task_actions,text='更多操作',menu=task_more);more_button.pack(side='right')
- task_note=ttk.Label(tasks_page,text='选中具体变体后，在这里查看完整的当前阶段与原因。',style='Muted.TLabel',wraplength=1000)
+ task_note=ttk.Label(tasks_page,text='选中具体变体后，在这里查看完整的当前阶段与原因。',style='Status.TLabel',wraplength=1000)
  task_note.pack(side='bottom',before=task_table,fill='x',pady=4)
  def show_task_note(event=None):
   ids=view.selection();task_note.configure(text=row_notes.get(ids[0],'请展开商品组，选择具体变体查看状态。') if ids else '选中具体变体后，在这里查看完整的当前阶段与原因。')
@@ -1190,7 +1194,7 @@ def main(test_mode=False,on_ready=None):
  def pause_making():change_pause(True)
  def resume_making():change_pause(False)
  ttk.Button(task_actions,text='暂停制作',command=pause_making).pack(side='left',padx=4)
- ttk.Button(task_actions,text='继续制作',command=resume_making).pack(side='left',padx=4)
+ ttk.Button(task_actions,text='继续制作',style='Primary.TButton',command=resume_making).pack(side='left',padx=4)
  restart_pending=False
  def restart_current_queue():
   nonlocal restart_pending

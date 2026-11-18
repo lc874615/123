@@ -1,3 +1,5 @@
+v1.0.52：231 项 Python 与 97 项 JavaScript 离线检查通过；使用合成商品实际运行 Tk 预览、文案保存、素材重做和固定底栏检查；在 Chromium 验证插件 360/400 宽度、初始窄视口、模块导航及减少动态效果。未连接真实店铺或生成对话。
+
 v1.0.49：离线回归覆盖草稿标记误判、发送回执、折叠请求定位采集、已上架旧异常和属性任务暂缓。
 可选浏览器复现：安装 Playwright 并提供 /usr/bin/chromium 后运行 `python edge_extension/verify_browser.py`；只使用本地HTML和模拟结果，不访问账户。
 

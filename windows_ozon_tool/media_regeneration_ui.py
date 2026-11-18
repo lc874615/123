@@ -6,12 +6,12 @@ def build(parent,bundles,store,start,stop,accept=None):
  from image_prompts import generation_prompt,shared_prompt,sheet_prompt
  panel=ttk.LabelFrame(parent,text='图片重做 · 原图先备份，新图采集完成后替换');panel.pack(fill='x',padx=8,pady=14)
  ttk.Label(panel,text='共用详情重做7张；变体主图每个单独生成1张。只使用原始参考图。新图替换后自动更新视频、托管链接及富内容；不会自动提交Ozon。',wraplength=850).pack(anchor='w',padx=8,pady=6)
- shared=ttk.LabelFrame(panel,text='1. 全组共用详情图（02—08）');shared.pack(fill='x',padx=8,pady=6)
+ shared=ttk.LabelFrame(panel,text='01 / 全组详情 · 统一更新 7 张');shared.pack(fill='x',padx=8,pady=6)
  ttk.Label(shared,text='基础提示词（自动带入最新全组参数）').pack(anchor='w');shared_base=ScrolledText(shared,height=4,wrap='word');shared_base.pack(fill='x')
  ttk.Label(shared,text='补充要求：可补充文字、排版、场景和人物动作；商品外观与参数仍以原图和已填资料为准。',wraplength=850).pack(anchor='w');shared_add=ScrolledText(shared,height=3,wrap='word');shared_add.pack(fill='x',pady=4)
  current=bundles();shared_add.insert('1.0',((current[0].get('image_regeneration_options') or {}).get('shared_details','')) if current else '')
  shared_button=ttk.Button(shared,text='重新生成7张共用详情图并同步全组',command=lambda:start('shared_details',[],shared_add.get('1.0','end-1c')));shared_button.pack(anchor='e',pady=5)
- main=ttk.LabelFrame(panel,text='2. 所选变体主图（只替换01，不改7张详情）');main.pack(fill='x',padx=8,pady=6);choices=ttk.Frame(main);choices.pack(fill='x');selected={}
+ main=ttk.LabelFrame(panel,text='02 / 变体主图 · 选择需要更新的款式');main.pack(fill='x',padx=8,pady=6);choices=ttk.Frame(main);choices.pack(fill='x');selected={}
  for i,b in enumerate(current):
   var=tk.BooleanVar(value=False);selected[b['sku']]=var;ttk.Checkbutton(choices,text=b['sku']+' · '+str((b.get('variant_parameters') or {}).get('color','')),variable=var).grid(row=i//3,column=i%3,sticky='w',padx=6,pady=3)
  ttk.Label(main,text='基础主图提示词（示例为第一个勾选变体；执行时每个变体分别使用自己的原图与参数）',wraplength=850).pack(anchor='w');main_base=ScrolledText(main,height=4,wrap='word');main_base.pack(fill='x')

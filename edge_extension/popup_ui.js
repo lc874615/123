@@ -18,5 +18,12 @@
   for(const [id,value] of [['task-state',state.label],['activity-title',state.title],['next-step',state.next]]){const el=document.getElementById(id);if(el)el.textContent=value;}
   document.querySelectorAll('[data-step]').forEach(el=>el.classList.toggle('active',el.dataset.step===state.key));
  }
+ document.addEventListener?.('click',event=>{
+  const button=event.target.closest?.('[data-jump]');if(!button)return;
+  const panel=document.getElementById(button.dataset.jump);if(!panel)return;
+  if(panel.tagName==='DETAILS')panel.open=true;
+  panel.scrollIntoView?.({block:'start',behavior:globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});
+  document.querySelectorAll('[data-jump]').forEach(item=>item.classList.toggle('active',item===button));
+ });
  globalThis.OzonPopupUI={phase,render};const status=document.getElementById('status');if(status)new MutationObserver(render).observe(status,{childList:true,characterData:true,subtree:true});render();
 })();

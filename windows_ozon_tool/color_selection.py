@@ -16,6 +16,8 @@ def choose(parent,initial,save,title='选择颜色（可多选）',close_on_save
  key=('color_selection',window_key if window_key is not None else (str(parent),title));cached=lookup(parent,key)
  if cached is not None:return cached
  window=remember(parent,key,tk.Toplevel(parent));window.title(title);window.transient(parent.winfo_toplevel());footer=dialog_footer(window,850,700)
+ from ui_components import section_header
+ section_header(window,'选择商品颜色','支持多选、搜索与官方类目选项；已选内容在保存前保留。')
  window.minsize(min(720,window.winfo_screenwidth()-60),min(540,window.winfo_screenheight()-100));ttk.Style(window).configure('ColorChoice.TCheckbutton',wraplength=215)
  ttk.Label(window,text='选择商品实际包含的颜色。色块仅为近似识别示意，不是商品实拍或官方标准色；“？”表示无法可靠判断。',wraplength=790).pack(fill='x',padx=14,pady=(12,6))
  source=ttk.Label(window,text='常用颜色（非完整官方字典）；选择官方类目后可读取全部分页。',wraplength=790);source.pack(fill='x',padx=14,pady=4)

@@ -53,8 +53,8 @@ class VariantGrid:
   from tkinter import ttk
   self.tk=tk;self.ttk=ttk;self.base=base;self.rows=[];self.next_index=1;self.focus=(1,0);self.editor=None;self.photos={}
   self.frame=ttk.Frame(parent);self.frame.pack(fill='both',padx=12,pady=8)
-  bar=ttk.Frame(self.frame);bar.pack(fill='x',pady=4)
-  for label,cmd in [('增加变体',self.add),('删除选中变体',self.remove),('添加主图参考',self.choose),('管理主图参考',self.manage_selected),('当前参数同首行',self.fill_row),('粘贴Excel表格',self.paste)]:ttk.Button(bar,text=label,command=cmd).pack(side='left',padx=3)
+  from ui_components import responsive_actions
+  bar,self.action_buttons=responsive_actions(self.frame,[('＋ 增加变体',self.add),('删除选中变体',self.remove),('添加主图参考',self.choose),('管理主图参考',self.manage_selected),('当前参数同首行',self.fill_row),('粘贴Excel表格',self.paste)])
   self.hint=ttk.Label(self.frame,text='每行一个变体；双击编辑。点击参数列标题“同首行”，将首行该参数复制到其余全部变体。');self.hint.pack(anchor='w')
   holder=ttk.Frame(self.frame);holder.pack(fill='both',expand=True);holder.rowconfigure(0,weight=1);holder.columnconfigure(1,weight=1)
   self.frozen=ttk.Treeview(holder,columns=('index',),show='tree headings',height=6,selectmode='extended')

@@ -19,6 +19,8 @@ def lookup(parent,key):
 
 def remember(parent,key,window):
  windows=_windows(parent);windows[key]=window
+ try:window.configure(background='#F2F5FC')
+ except Exception:pass
  def remove(event):
   if event.widget is window and windows.get(key) is window:windows.pop(key,None)
  window.bind('<Destroy>',remove,add='+')
