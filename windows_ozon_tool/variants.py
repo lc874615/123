@@ -75,12 +75,12 @@ class VariantGrid:
   self.tk=tk;self.ttk=ttk;self.base=base;self.rows=[];self.next_index=1;self.focus=(1,0);self.editor=None;self.photos={}
   self.frame=ttk.Frame(parent);self.frame.pack(fill='both',expand=True,padx=12,pady=8)
   from ui_components import responsive_actions
-  bar,self.action_buttons=responsive_actions(self.frame,[('＋ 增加变体',self.add),('删除选中变体',self.remove),('添加主图参考',self.choose),('管理主图参考',self.manage_selected),('当前参数同首行',self.fill_row),('粘贴Excel表格',self.paste)])
+  bar,self.action_buttons=responsive_actions(self.frame,[('＋ 增加变体',self.add),('删除选中变体',self.remove),('添加主图参考',self.choose),('管理主图参考',self.manage_selected),('当前参数同首行',self.fill_row),('粘贴Excel表格',self.paste)],min_width=110,button_style='Compact.TButton')
   self.section='基础信息';self.section_buttons={}
   sections=ttk.Frame(self.frame);sections.pack(fill='x',pady=(4,8))
   for i,name in enumerate(SECTIONS):
    sections.columnconfigure(i,weight=1);button=ttk.Button(sections,text=name,style='Segment.TButton',command=lambda n=name:self.set_section(n));button.grid(row=0,column=i,sticky='ew',padx=2);self.section_buttons[name]=button
-  self.hint=ttk.Label(self.frame,text='按分类填写，双击编辑；点击参数列标题可同首行。主图、序号始终固定。',style='Muted.TLabel',wraplength=950);self.hint.pack(anchor='w',pady=(0,8))
+  self.hint=ttk.Label(self.frame,text='按分类填写，双击编辑；点击参数列标题可同首行。主图、序号始终固定。',style='Muted.TLabel',wraplength=950);self.hint.pack_forget()
   holder=ttk.Frame(self.frame);holder.pack(fill='both',expand=True);holder.rowconfigure(0,weight=1);holder.columnconfigure(1,weight=1)
   self.frozen=ttk.Treeview(holder,columns=('index',),show='tree headings',height=6,selectmode='extended')
   self.frozen.heading('#0',text='主图参考');self.frozen.column('#0',width=98,stretch=False,anchor='center')
@@ -117,7 +117,7 @@ class VariantGrid:
   self.frozen.bind('<Button-1>',self.image_click)
   self.frozen.bind('<Control-v>',lambda e:self.paste())
   ttk.Style().configure('Variants.Treeview',rowheight=58);self.tree.configure(style='Variants.Treeview',height=8);self.frozen.configure(style='Variants.Treeview',height=8)
-  self.summary=ttk.Label(self.frame,style='Muted.TLabel');self.summary.pack(anchor='w',pady=(6,0))
+  self.summary=ttk.Label(self.frame,style='Muted.TLabel');self.summary.pack(side='bottom',before=holder,anchor='w',pady=(6,0))
   self.tree.bind('<Double-1>',self.edit);self.tree.bind('<ButtonRelease-1>',self.track);self.tree.bind('<Control-v>',lambda e:self.paste());self.base.trace_add('write',lambda *_:self.refresh());self.tree.bind('<Configure>',lambda e:self.fit_columns(e.width));self.set_section('基础信息');self.add()
  def set_section(self,name):
   if name not in SECTIONS:return

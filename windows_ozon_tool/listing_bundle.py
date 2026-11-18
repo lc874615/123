@@ -28,6 +28,10 @@ def prepare(folder,task):
  copy_prompt=copy_prompt_for(task)
  (folder/'copy_prompt.txt').write_text(copy_prompt,encoding='utf-8')
  bundle={'sku':task['sku'],'offer_id':task['sku'],'base_article':task.get('base_article',task['sku']),'model':task.get('model'),'asset_basis':task.get('generation_parameters') or task.get('variant_parameters',{}),'variant_index':task.get('variant_index'),'variant_parameters':task.get('variant_parameters',{}),'brand':'Нет бренда','stock':int(task.get('variant_parameters',{}).get('stock','1000')),'facts':facts,'group_facts':task.get('group_facts',facts),'group_variants':task.get('group_variants',[]),'images':checked,'video':{'local_file':'video/product_8s.mp4','exists':(folder/'video'/'product_8s.mp4').exists(),'https_url':None},'copy':{'title_ru':None,'description_ru':None,'tags_ru':[]},'category':{'description_category_id':None,'type_id':None},'price_cny':None,'status':'draft','blockers':['俄文文案待生成','类目及必填属性待匹配','实际定价待核验','图片HTTPS托管未配置']}
+ from creation_category import category_for_task
+ selected_category=category_for_task(task)
+ if selected_category:
+  bundle['category']=selected_category;bundle['category_selection']=task['category_selection'];bundle['category_match_status']='创建时已确认类目，必填参数自动匹配中' if selected_category.get('confirmed') else '店铺已变化，请核对类目'
  target=folder/'listing_bundle.json'
  if target.exists():raise ValueError('上架草稿已存在，保留已有编辑，未覆盖')
  bundle['export_settings']={'vat':'0','currency_code':'CNY','currency_confirmed':False}

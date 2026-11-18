@@ -659,7 +659,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.55','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.56','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
@@ -776,20 +776,35 @@ def main(test_mode=False,on_ready=None):
   except Exception as exc:show_task_error('恢复未完成',str(exc))
  ttk.Button(account_panel,text='恢复已删除的本地记录',command=restore_records).pack(anchor='w',pady=6)
 
- setup_card=ttk.LabelFrame(win,text='01 / 基础资料与全组参考',style='Surface.TLabelframe',padding=16);setup_card.pack(fill='x',pady=(0,14))
- ttk.Label(setup_card,text='基础货号',style='CardTitle.TLabel').pack(anchor='w')
- ttk.Label(setup_card,text='每个变体自动追加 (1)、(2)…，用于识别与上架。',style='CardMuted.TLabel').pack(anchor='w',pady=(3,8))
- base=tk.StringVar();ttk.Entry(setup_card,textvariable=base,width=60).pack(fill='x')
+ setup_card=ttk.Frame(win,style='Card.TFrame',padding=(10,6));setup_card.pack(fill='x',pady=(0,4))
+ identity=ttk.Frame(setup_card,style='Card.TFrame');identity.pack(fill='x');identity.columnconfigure(0,weight=1);identity.columnconfigure(1,weight=1)
+ ttk.Label(identity,text='基础货号',style='Card.TLabel').grid(row=0,column=0,sticky='w',pady=(0,5))
+ ttk.Label(identity,text='商品类目',style='Card.TLabel').grid(row=0,column=1,sticky='w',padx=(12,0),pady=(0,5))
+ base=tk.StringVar();ttk.Entry(identity,textvariable=base).grid(row=1,column=0,sticky='ew')
+ category_row=ttk.Frame(identity,style='Card.TFrame');category_row.grid(row=1,column=1,sticky='ew',padx=(12,0));category_selection={}
+ def choose_creation_category():
+  from creation_category import choose
+  from account_context import credentials
+  def saved(value):
+   category_selection.clear();category_selection.update(value);label=(value['category'].get('zh_path') or value['category'].get('name','')).split(' / ')[-1];category_button.configure(text=label[:30]+' · 已选定')
+  return choose(root,attributes,lambda:credentials()[0],saved)
+ category_button=ttk.Button(category_row,text='选择官方类目（可选）',style='Compact.TButton',command=choose_creation_category);category_button.pack(side='left',fill='x',expand=True)
+ def clear_creation_category():category_selection.clear();category_button.configure(text='选择官方类目（可选）')
+ ttk.Button(category_row,text='清除',style='Compact.TButton',command=clear_creation_category).pack(side='left',padx=(6,0))
  from variants import VariantGrid
  shared_refs=[]
- shared_label=ttk.Label(setup_card,text='共用详情图参考：未选择',style='CardMuted.TLabel');shared_label.pack(anchor='w',pady=(12,2))
+ reference_row=ttk.Frame(setup_card,style='Card.TFrame');reference_row.pack(fill='x',pady=(8,0))
+ def preview_shared():
+  from image_viewer import open_viewer
+  if shared_refs:return open_viewer(root,'',[{'local_file':p} for p in shared_refs],title='共用详情参考图')
  def choose_shared():
   nonlocal shared_refs
   selected=list(filedialog.askopenfilenames(title='选择全组共用详情图参考',filetypes=[('Images','*.png *.jpg *.jpeg *.webp')]))
-  if selected:shared_refs=selected;shared_label.configure(text=f'共用详情图参考：已选 {len(selected)} 张')
- ttk.Button(setup_card,text='＋ 添加全组共用参考图',command=choose_shared).pack(anchor='w',pady=4)
+  if selected:shared_refs=selected;shared_label.configure(text='已选 '+str(len(selected))+' 张 · 点击查看')
+ ttk.Button(reference_row,text='选择共用参考图',style='Compact.TButton',command=choose_shared).pack(side='left')
+ shared_label=ttk.Label(reference_row,text='未选择共用参考图',style='CardMuted.TLabel',cursor='hand2');shared_label.pack(side='left',padx=12);shared_label.bind('<Button-1>',lambda e:preview_shared())
 
- variant_card=ttk.LabelFrame(win,text='02 / 变体与参数',padding=8);variant_card.pack(fill='both',expand=True,pady=(0,12))
+ variant_card=ttk.LabelFrame(win,text='变体与参数',padding=2);variant_card.pack(fill='both',expand=True,pady=(0,12))
  grid=VariantGrid(variant_card,base)
  from pricing_service import PricingService,read as read_pricing
  from ozon_connection import restore as restore_ozon
@@ -888,6 +903,10 @@ def main(test_mode=False,on_ready=None):
   try:
    for row in grid.rows:row['values']['stock']='1000'
    records=grid.records()
+   from creation_category import apply_task
+   from account_context import credentials
+   current_account=credentials()[0]
+   if category_selection and category_selection.get('account_id')!=current_account:raise ValueError('店铺已切换，请重新选择商品类目')
    if len(records)>100:raise ValueError('每组最多100个变体，请拆分后创建')
    if not shared_refs:raise ValueError('请选择共用详情图参考')
    if len(shared_refs)>8:raise ValueError('共用详情参考最多8张')
@@ -910,6 +929,7 @@ def main(test_mode=False,on_ready=None):
       task=next(t for t in store.tasks if t['sku']==r['article'])
       task['main_references']=list(task['references'])
       task.update(base_article=r['base_article'],variant_index=r['index'],variant_parameters=r['values'])
+      apply_task(task,category_selection,current_account)
      from product_group import configure
      configure(store.tasks,records[0]['base_article'])
      leader=next(t for t in store.tasks if t['sku']==records[0]['article'])
@@ -933,8 +953,8 @@ def main(test_mode=False,on_ready=None):
      store.tasks=previous;store.save();raise
    notebook.select(pages['tasks'])
   except Exception as e:show_task_error('未创建',str(e))
- product_footer=ttk.Frame(pages['product'],padding=(18,10));product_footer.grid(row=1,column=0,sticky='ew')
- ttk.Label(product_footer,text='独立主图 + 7 张共用详情图',style='Muted.TLabel').pack(side='left')
+ product_footer=ttk.Frame(pages['product'],padding=(18,4));product_footer.grid(row=1,column=0,sticky='ew')
+
  ttk.Button(product_footer,text='创建队列 · 开始自动制作',style='Primary.TButton',command=create).pack(side='right')
  task_table=ttk.Frame(tasks_page,style='Card.TFrame');task_table.pack(fill='both',expand=True);task_table.rowconfigure(0,weight=1);task_table.columnconfigure(0,weight=1)
  view=ttk.Treeview(task_table,columns=('sku','progress','price','hosting','status'),show='tree headings',height=15,selectmode='browse')
@@ -1344,6 +1364,6 @@ def main(test_mode=False,on_ready=None):
  refresh()
  def close():pricing_stop.set();hosting.wake.set();video_hosting.wake.set();attributes.wake.set();publication.wake.set();(http.shutdown() if http else None);root.destroy();instance.release()
  root.protocol('WM_DELETE_WINDOW',close)
- if on_ready:on_ready(root,{'store':store,'notebook':notebook,'pages':pages,'view':view,'open_preview':listing_editor,'creation_grid':grid,'close':close})
+ if on_ready:on_ready(root,{'store':store,'notebook':notebook,'pages':pages,'view':view,'open_preview':listing_editor,'creation_grid':grid,'close':close,'creation_category':choose_creation_category,'category_selection':category_selection,'shared_preview':preview_shared,'shared_choose':choose_shared,'create':create})
  root.mainloop()
 if __name__=='__main__':main()

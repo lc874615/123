@@ -8,13 +8,13 @@ def section_header(parent,title,subtitle=''):
  if subtitle:ttk.Label(header,text=subtitle,style='Muted.TLabel',wraplength=900).pack(anchor='w',pady=(4,0))
  return header
 
-def responsive_actions(parent,actions):
+def responsive_actions(parent,actions,min_width=175,button_style="TButton"):
  frame=ttk.Frame(parent);frame.pack(fill='x',pady=(4,8));buttons=[];last=[None]
  for label,command in actions:
-  buttons.append(ttk.Button(frame,text=label,command=command))
+  buttons.append(ttk.Button(frame,text=label,command=command,style=button_style))
  def arrange(event=None):
   width=event.width if event else max(320,frame.winfo_width())
-  columns=max(1,min(len(buttons),width//175))
+  columns=max(1,min(len(buttons),width//min_width))
   if last[0]==columns:return
   last[0]=columns
   for i in range(len(buttons)):frame.columnconfigure(i,weight=1 if i<columns else 0)

@@ -6,7 +6,7 @@ def build(root):
  import tkinter as tk
  from tkinter import ttk
  from ui_components import RoundedCard
- c=PALETTE;root.title('Ozon 商品自动化 · 1.0.55');root.geometry('1440x900');root.minsize(1080,700);root.configure(background=c['bg'])
+ c=PALETTE;root.title('Ozon 商品自动化 · 1.0.56');root.geometry('1440x900');root.minsize(1080,700);root.configure(background=c['bg'])
  style=ttk.Style(root);style.theme_use('clam')
  font='Microsoft YaHei UI' if os.name=='nt' else 'Noto Sans CJK SC'
  style.configure('.',font=(font,10),background=c['bg'],foreground=c['ink'])
@@ -21,6 +21,7 @@ def build(root):
  style.configure('Metric.TLabel',font=(font,24,'bold'),background=c['surface']);style.configure('Caption.TLabel',foreground=c['muted'],background=c['surface'])
  style.configure('TButton',background=c['surface'],foreground=c['ink'],bordercolor=c['line'],lightcolor=c['surface'],darkcolor=c['surface'],padding=(13,9),relief='flat',focusthickness=2,focuscolor=c['blue'])
  style.map('TButton',background=[('active',c['soft']),('disabled','#EDF1F7')],foreground=[('disabled','#99A5B7')])
+ style.configure('Compact.TButton',padding=(6,4))
  style.configure('Primary.TButton',background=c['blue'],foreground='white',bordercolor=c['blue'],padding=(16,10))
  style.map('Primary.TButton',background=[('disabled','#A7BFF5'),('active','#1D4ED8')],foreground=[('disabled','#F3F6FF'),('!disabled','white')])
  for name,bg,fg in [('Nav.TButton','#121E38','#B5C4DD'),('NavActive.TButton','#2A385D','#FFFFFF')]:
@@ -50,7 +51,7 @@ def build(root):
  banner=ttk.Frame(root,padding=(24,12));banner.pack(fill='x')
  ttk.Label(banner,text='Ozon 工作台',style='Heading.TLabel').pack(side='left')
  ttk.Label(banner,text='商品与素材自动化工作空间',style='Muted.TLabel').pack(side='left',padx=22)
- ttk.Label(banner,text='DESKTOP   ·   1.0.55',style='Chip.TLabel').pack(side='right')
+ ttk.Label(banner,text='DESKTOP   ·   1.0.56',style='Chip.TLabel').pack(side='right')
  connection=ttk.Label(root,text='正在检查本地连接…',padding=(24,6),wraplength=1360,style='Status.TLabel');connection.pack(fill='x',padx=24,pady=(0,4))
  workspace=ttk.Frame(root);workspace.pack(fill='both',expand=True,padx=16,pady=(8,16))
  rail=ttk.Frame(workspace,style='Rail.TFrame',padding=(12,20));rail.pack(side='left',fill='y',padx=(0,16))
@@ -68,9 +69,9 @@ def build(root):
   def wheel(e):
    if e.widget.winfo_class() not in ('Treeview','Entry','TEntry','Text','TCombobox','Listbox') and str(e.widget).startswith(str(page)):canvas.yview_scroll(-int(e.delta/120),'units')
   root.bind_all('<MouseWheel>',wheel,add='+');return page,body
- page,body=scroll_page('商品制作');pages.update(product=page,product_body=body)
- ttk.Label(body,text='创建商品组',style='Heading.TLabel').pack(anchor='w',pady=(4,6))
- ttk.Label(body,text='① 基础信息与参考图     →     ② 编辑变体     →     ③ 加入制作队列',style='Muted.TLabel').pack(anchor='w',pady=(0,18))
+ page=ttk.Frame(notebook);notebook.add(page,text='商品制作');page.rowconfigure(0,weight=1);page.columnconfigure(0,weight=1)
+ body=ttk.Frame(page,padding=(18,12));body.grid(row=0,column=0,sticky='nsew');pages.update(product=page,product_body=body)
+ ttk.Label(body,text='创建商品组',style='SectionTitle.TLabel').pack(anchor='w',pady=(0,4))
  tasks=ttk.Frame(notebook,padding=(18,12));notebook.add(tasks,text='任务中心');pages['tasks']=tasks
  ttk.Label(tasks,text='任务中心',style='Heading.TLabel').pack(anchor='w',pady=(4,5))
 
