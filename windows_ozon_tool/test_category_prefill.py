@@ -28,6 +28,32 @@ class Tests(unittest.TestCase):
   write(ref.parent.parent/'listing_bundle.json',bundle)
   task={'id':'T','sku':sku,'state':'saved','set_mode':True,'copy_leader':sku,'variant_parameters':bundle['variant_parameters'],'main_references':[{'path':str(ref),'mime':'image/jpeg'}]}
   return SimpleNamespace(folder=folder,tasks=[task]),task,field,ref
+ def test_multi_variant_category_values_cannot_replace_the_group_attribute_map(self):
+  for first_value in (['USB-C','USB-A'],'USB-C'):
+   with self.subTest(value=first_value),tempfile.TemporaryDirectory() as tmp:
+    store,t,f,ref=self.setup(tmp);f.update(name_ru='Интерфейсы',name='接口',type='string',is_collection=isinstance(first_value,list))
+    path=ref.parent.parent/'listing_bundle.json';bundle=read(path);bundle['attribute_draft']['fields']=[f];write(path,bundle)
+    for i in (2,3):
+     sku='ITEM('+str(i)+')';newref=store.folder/'products'/sku/'references'/'original.jpg';newref.parent.mkdir(parents=True);newref.write_bytes(b'source'+str(i).encode());b=copy.deepcopy(bundle);b['sku']=sku;write(newref.parent.parent/'listing_bundle.json',b)
+     store.tasks.append({**copy.deepcopy(t),'id':'T'+str(i),'sku':sku,'main_references':[{'path':str(newref),'mime':'image/jpeg'}]})
+    context,_=build(store,t['sku']);payload={'variant_attributes':{},'category_attributes':{}}
+    for n,task in enumerate(store.tasks):
+     sku=task['sku'];rid=next(r['id'] for r in context['references'] if sku in r['skus']);value=first_value if n==0 else (['HDMI'] if isinstance(first_value,list) else 'HDMI')
+     payload['category_attributes'][sku]=[{'field_key':key(f),'value':value,'source':'reference_image_text','evidence':'USB-C USB-A HDMI','reference_ids':[rid]}]
+    before=copy.deepcopy(payload);self.assertEqual(save(store,t['sku'],payload),3);self.assertEqual(payload,before)
+    for task in store.tasks:
+     self.assertEqual(task['attribute_extract_state'],'done');b=read(store.folder/'products'/task['sku']/'listing_bundle.json');self.assertTrue(b['reference_category_attributes']['records'])
+ def test_old_attribute_save_failure_recovers_only_owned_reply_without_requeue(self):
+  from reference_prefill import repair_failed_save,recoverable_failure
+  with tempfile.TemporaryDirectory() as tmp:
+   store,t,f,ref=self.setup(tmp);build(store,t['sku']);t.update(copy_mode='attributes',copy_state='needs_attention',copy_phase='generating',copy_request_marker='OWNED',message="'list' object has no attribute 'get'")
+   store.control={'paused':True};store.save=lambda:None;repair_failed_save(store);self.assertNotIn('resume_mode',t)
+   store.control['paused']=False;before=copy.deepcopy(t);repair_failed_save(store);self.assertEqual(t['resume_mode'],'copy_inspect_only');self.assertEqual(t['copy_request_marker'],'OWNED');self.assertEqual(t['state'],before['state']);self.assertEqual(t['attribute_context'],before['attribute_context'])
+   t.pop('copy_request_marker');self.assertFalse(recoverable_failure(t))
+ def test_non_object_attribute_reply_has_actionable_error(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   store,t,f,ref=self.setup(tmp)
+   with self.assertRaisesRegex(ValueError,'JSON对象'):save(store,t['sku'],[])
  def test_schema_image_evidence_is_typed_scoped_and_invalidated(self):
   with tempfile.TemporaryDirectory() as tmp:
    store,t,f,ref=self.setup(tmp);build(store,t['sku'])

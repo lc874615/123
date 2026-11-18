@@ -68,13 +68,14 @@ def prompt(context):
  category_rules='另外按各SKU当前官方字段补充 category_attributes 对象，键为SKU，值为记录数组。每条为field_key、value、source、evidence、reference_ids；field_key必须从下面给定清单原样选择，不能添加或猜测字段ID、官方字典ID。仅填写明确已填参数或原图清晰文字能证明的值；数值保留原始数字和单位，不自行换算，不由图片比例计算尺寸、体积或重量。普通文本翻译为俄语，布尔值用true/false，多选使用数组。认证、条码、品牌、海关和保修信息不自动补写。没有本SKU依据的字段省略，不套用其他变体资料。官方字段清单：'+json.dumps(fields,ensure_ascii=False)+'。'
  return category_rules+('同时读取本次附件中的原始参考图，按R1、R2…顺序对应附件。严禁使用对话中的AI生成图片作为属性依据。参数明确提供的内容优先，图中看不清或没有的信息不填写；不能根据总高/总宽推算座高、座宽、座深、靠背尺寸，不估计承重/填充/涂层。只有原图清楚标注的数字才能读取尺寸；承重、填充和涂层只允许读取原图清晰文字，不能凭外观猜测。颜色必须沿用各SKU参数中的全部颜色，不丢弃第二个颜色。为JSON增加variant_attributes对象，键为SKU，值为记录数组；每条包含key、value（俄语字符串或房间/特点的俄语数组）、source（parameters/reference_image/reference_image_text）、evidence（简短原始依据）、reference_ids（R编号数组）。只允许这些key：'+','.join(FIELDS)+'。没有依据的key省略，找不到信息时返回空数组。不能填品牌、海关编码、标记要求或官方字典ID。仅对附件映射允许的SKU使用该图。附件映射：'+json.dumps(mapping,ensure_ascii=False)+'；各变体参数：'+json.dumps(context['variants'],ensure_ascii=False))
 def save(store,leader,value):
- owner=next(t for t in store.tasks if t['sku']==leader);context=owner.get('attribute_context') or {};raw=value.get('variant_attributes') or {};count=0
- if not isinstance(raw,dict):raise ValueError('图片属性记录应按SKU分组')
+ if not isinstance(value,dict):raise ValueError('属性结果应为按SKU分组的JSON对象')
+ owner=next(t for t in store.tasks if t['sku']==leader);context=owner.get('attribute_context') or {};raw_attributes=value.get('variant_attributes') or {};count=0
+ if not isinstance(raw_attributes,dict):raise ValueError('图片属性记录应按SKU分组')
  for task in group(store,leader):
   sku=task['sku'];snapshot=(context.get('variants') or {}).get(sku)
   if not snapshot or snapshot['basis']!=basis(parameters(store,task)):continue
   refs=[r for r in context.get('references',[]) if sku in r['skus']];allowed={r['id'] for r in refs};records={}
-  for row in (raw.get(sku) or [])[:40] if isinstance(raw.get(sku,[]),list) else []:
+  for row in (raw_attributes.get(sku) or [])[:40] if isinstance(raw_attributes.get(sku,[]),list) else []:
    if not isinstance(row,dict):continue
    key=row.get('key');source=row.get('source');evidence=str(row.get('evidence') or '')[:400];item=row.get('value');ref_ids=row.get('reference_ids') or []
    if key not in FIELDS or not evidence or source not in ('parameters','reference_image','reference_image_text'):continue
@@ -92,7 +93,7 @@ def save(store,leader,value):
    records[key]={'value':item,'evidence':evidence,'source':source,'reference_ids':ref_ids};count+=1
   data={'sku':sku,'version':VERSION,'basis':snapshot['basis'],'references':refs,'records':records}
   folder=store.folder/'products'/sku;path=folder/'listing_bundle.json'
-  if sku in raw:
+  if sku in raw_attributes:
    write(folder/'attribute_observations.json',data)
    if path.exists():bundle=read(path);bundle['reference_attributes']=data;write(path,bundle)
   from category_prefill import schema as category_schema,key as category_key,typed as category_typed,numeric_field as category_numeric
@@ -123,3 +124,16 @@ def save(store,leader,value):
    write(path,target)
   task['attribute_extract_state']='done'
  return count
+
+
+def recoverable_failure(task):
+ return (task.get('copy_mode')=='attributes' and task.get('copy_state')=='needs_attention' and task.get('copy_phase')=='generating' and bool(task.get('attribute_context')) and bool(task.get('copy_request_marker')) and not task.get('pause_requested') and any(error in str(task.get('message','')) for error in ("'list' object has no attribute 'get'","'str' object has no attribute 'get'")))
+
+def repair_failed_save(store):
+ """Resume only the owned, already-sent reply; never clear its request marker."""
+ if store.control.get('paused'):return
+ changed=False
+ for task in store.tasks:
+  if recoverable_failure(task) and task.get('resume_mode')!='copy_inspect_only':
+   task['resume_mode']='copy_inspect_only';changed=True
+ if changed:store.save()

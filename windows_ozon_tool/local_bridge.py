@@ -569,6 +569,8 @@ class Store:
   if extension_idle is True:
    from queue_completion import reconcile_idle_attributes
    reconcile_idle_attributes(self)
+  from reference_prefill import repair_failed_save
+  repair_failed_save(self)
   reconcile(self);self.sync_shared_copies();self.repair_unsent_copy();self.resume_unsent_upload();self.repair_uncertain_send_collection()
   active=bool(self.blockers()) or self.control.get('paused',False)
   # Missing shared copy has priority over queued image work; active requests still block.
@@ -659,7 +661,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.58','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.59','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
