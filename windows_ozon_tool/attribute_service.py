@@ -12,7 +12,7 @@ def category_key(bundle):
  if not category.get('description_category_id') or not category.get('type_id'):raise ValueError('请先匹配并确认上架类目')
  return (int(category['description_category_id']),int(category['type_id']))
 def source_fingerprint(bundle):
- values={k:v for k,v in (bundle.get('variant_parameters') or {}).items() if k not in ('cost','margin','stock')}
+ values={k:v for k,v in (bundle.get('variant_parameters') or {}).items() if k not in ('cost','margin','stock','competitor_url')}
  copy=bundle.get('copy') or {}
  evidence=bundle.get('reference_attributes') or {};stats=[]
  for ref in (evidence.get('references') or [])+((bundle.get('reference_category_attributes') or {}).get('references') or []):
@@ -273,7 +273,7 @@ class AttributeService:
    provisional={**bundle,'attribute_draft':{'fields':fields,'values':values,'manual_keys':list(manual)}}
    auto_references={}
    for key,reference in inline_references(provisional).items():
-    if not reference['suggested']:continue
+    if reference.get('kind')=='competitor' or not reference['suggested']:continue
     field=reference['field'];proposed=[{'value':reference['suggested']}]
     if field.get('dictionary_id'):
      try:

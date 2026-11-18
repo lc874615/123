@@ -82,4 +82,6 @@ def inline_references(bundle):
   row=dict(proposal)
   row['display']=row['suggested'] or ('待核实标记要求' if row['kind']=='marking' else '待补充依据')
   result[row['key']]=row
+ from competitor_reference import proposals as competitor_proposals
+ for key,row in competitor_proposals(bundle).items():result.setdefault(key,row)
  return result

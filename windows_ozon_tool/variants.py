@@ -2,17 +2,17 @@
 from window_registry import lookup,remember
 from decimal import Decimal,InvalidOperation
 import re
-FIELDS=[('name','商品名称/用途',''),('color','颜色',''),('size','规格/型号',''),('quantity','每套件数','1'),('material','主体材质',''),('accessory_material','配件/内衬材质',''),('length','商品长(cm)',''),('width','商品宽(cm)',''),('height','商品高(cm)',''),('net_weight','商品净重(g)',''),('pack_length','包装长(cm)',''),('pack_width','包装宽(cm)',''),('pack_height','包装高(cm)',''),('pack_weight','包装总重(g)',''),('cost','每套成本含国内运费(元)',''),('margin','目标净利润率(%)','25'),('stock','初始库存（固定1000）','1000'),('origin','产地','中国'),('assembly','组装方式(未知留空)',''),('extra','其他真实参数/卖点','')]
+FIELDS=[('name','商品名称/用途',''),('color','颜色',''),('size','规格/型号',''),('quantity','每套件数','1'),('material','主体材质',''),('accessory_material','配件/内衬材质',''),('length','商品长(cm)',''),('width','商品宽(cm)',''),('height','商品高(cm)',''),('net_weight','商品净重(g)',''),('pack_length','包装长(cm)',''),('pack_width','包装宽(cm)',''),('pack_height','包装高(cm)',''),('pack_weight','包装总重(g)',''),('cost','每套成本含国内运费(元)',''),('margin','目标净利润率(%)','25'),('stock','初始库存（固定1000）','1000'),('origin','产地','中国'),('assembly','组装方式(未知留空)',''),('extra','其他真实参数/卖点',''),('competitor_url','竞品链接','')]
 # Compact views cover every business field without changing the stored schema.
 SECTIONS={
- '基础信息':('name','color','size','quantity'),
+ '基础信息':('name','color','quantity','competitor_url'),
  '材质功能':('material','accessory_material','assembly','extra'),
- '商品尺寸':('length','width','height','net_weight'),
+ '商品尺寸':('length','width','height','net_weight','size'),
  '包装物流':('pack_length','pack_width','pack_height','pack_weight'),
  '定价其他':('cost','margin','stock','origin'),
  '全部参数':tuple(k for k,_,_ in FIELDS),
 }
-SHORT_LABELS={'name':'商品名称 / 用途','color':'颜色 · 多选','size':'规格 / 型号','quantity':'件数','material':'主体材质','accessory_material':'配件 / 内衬','assembly':'组装方式','extra':'更多参数 / 卖点','length':'长 (cm)','width':'宽 (cm)','height':'高 (cm)','net_weight':'净重 (g)','pack_length':'包装长 (cm)','pack_width':'包装宽 (cm)','pack_height':'包装高 (cm)','pack_weight':'总重 (g)','cost':'每套成本 (元)','margin':'净利率 (%)','stock':'初始库存','origin':'产地'}
+SHORT_LABELS={'competitor_url':'竞品链接 · 同首行','name':'商品名称 / 用途','color':'颜色 · 多选','size':'规格 / 型号','quantity':'件数','material':'主体材质','accessory_material':'配件 / 内衬','assembly':'组装方式','extra':'更多参数 / 卖点','length':'长 (cm)','width':'宽 (cm)','height':'高 (cm)','net_weight':'净重 (g)','pack_length':'包装长 (cm)','pack_width':'包装宽 (cm)','pack_height':'包装高 (cm)','pack_weight':'总重 (g)','cost':'每套成本 (元)','margin':'净利率 (%)','stock':'初始库存','origin':'产地'}
 
 def paste_fields(section,start,width):
  """Compact paste follows visible fields; wide Excel tables keep full-schema order."""
@@ -38,6 +38,9 @@ def facts(values):
  for key,label,default in FIELDS:
   value=str(values.get(key,'')).strip()
   if not value:continue
+  if key=='competitor_url':
+   from competitor_reference import normalize_url
+   normalize_url(value);continue
   if key in ('quantity','stock'):
    if not value.isdigit() or (key=='quantity' and int(value)<1):raise ValueError(label+'须为整数')
   if key in ('length','width','height','net_weight','pack_length','pack_width','pack_height','pack_weight','cost','margin'):
@@ -139,7 +142,7 @@ class VariantGrid:
    return
   if width<100:return
   fields=('article',)+SECTIONS[self.section]
-  weights=[1.25]+[1.7 if k in ('name','extra','accessory_material') else 1 for k in fields[1:]]
+  weights=[1.25]+[1.7 if k in ('name','extra','accessory_material','competitor_url') else 1 for k in fields[1:]]
   available=max(260,width-4);total=sum(weights)
   for key,weight in zip(fields,weights):self.tree.column(key,width=int(available*weight/total),minwidth=40,stretch=True)
  def commit(self):

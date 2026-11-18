@@ -7,7 +7,8 @@ from pricing_service import read,write
 def group(store,leader):return [t for t in store.tasks if t.get('copy_leader',t['sku'])==leader and t.get('set_mode') and t.get('state')!='cancelled']
 def parameters(store,task):
  path=store.folder/'products'/task['sku']/'listing_bundle.json'
- return (read(path).get('variant_parameters') or {}) if path.exists() else task.get('variant_parameters') or {}
+ values=(read(path).get('variant_parameters') or {}) if path.exists() else task.get('variant_parameters') or {}
+ return {k:v for k,v in values.items() if k!='competitor_url'}
 def original_references(store,task):
  result=[];root=(store.folder/'products').resolve()
  for ref in task.get('main_references') or task.get('references') or []:

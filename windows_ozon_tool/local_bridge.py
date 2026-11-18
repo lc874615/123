@@ -671,10 +671,16 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.63','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.64','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
+     elif self.path=='/competitor-task':
+      from competitor_reference import claim
+      value=claim(store)
+     elif self.path=='/competitor-result':
+      from competitor_reference import receive
+      value=receive(store,body)
      elif self.path=='/control':value=store.control
      elif self.path=='/automation-control':value=store.set_paused(bool(body.get('paused')))
      elif self.path=='/pause-ack':

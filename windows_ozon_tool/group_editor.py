@@ -5,7 +5,7 @@ from pathlib import Path
 from attribute_service import field_key,category_key
 from group_service import GroupService,revision,edit_guard,EditConflict
 from variants import FIELDS,column_updates
-from pricing_service import read
+from pricing_service import read,write
 from publication_service import TERMINAL,warehouse_label
 
 EXCLUDED={8229,21845}
@@ -18,7 +18,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  coordinator=GroupService(paths,service,pricing,store)
  cached=lookup(root,('group_preview',tuple(sorted(str(p.resolve()) for p in paths))))
  if cached is not None:return cached
- dialog=remember(root,('group_preview',tuple(sorted(str(p.resolve()) for p in paths))),tk.Toplevel(root));dialog.title('整组预览 · Ozon 商品自动化 1.0.63');dialog.geometry('1280x850');dialog.minsize(950,650)
+ dialog=remember(root,('group_preview',tuple(sorted(str(p.resolve()) for p in paths))),tk.Toplevel(root));dialog.title('整组预览 · Ozon 商品自动化 1.0.64');dialog.geometry('1280x850');dialog.minsize(950,650)
  busy=False;selected=set(range(len(paths)));focus=['',''];bundles=[];token=None;rendered=None;warehouses={};photos=[];rows={};last_job=None;copy_dirty=False;displayed_copy=None;copy_timer=None;busy_since=0;operation_error='';operation_name=''
  header=ttk.Frame(dialog,padding=(16,10));header.pack(fill='x')
  ttk.Label(header,text='整组预览',style='Heading.TLabel').pack(side='left')
@@ -144,6 +144,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   for key,label in [('category','上架类目 / 商品类型'),('price','计算售价 / 促销底价基准（人民币元）'),('price_max','最高价格（基准×2）'),('price_old','划线价（基准×4）'),('price_min','促销最低限制（基准×1）'),('price_cost','平台成本（所填成本）'),('vat','实际增值税率'),('currency','店铺币种'),('warehouse','所选店铺仓库'),('media','托管链接进度'),('status','定价状态 / 待处理原因')]:specs.append(('listing','s:'+key,('s',key),label,key in ('category','vat','warehouse'),None))
   for parent,iid,row,label,required,field in specs:
    values=[value_for(b,row,n) for n,b in enumerate(bundles)];empty=any(not v for v in values)
+   if row[0]=='a':empty=any(not ((b.get('attribute_draft') or {}).get('values') or {}).get(row[1]) for b in bundles if any(field_key(f)==row[1] for f in (b.get('attribute_draft') or {}).get('fields',[])))
    if search.get().casefold() not in label.casefold():continue
    if missing.get() and (not required or not empty):continue
    rows[iid]=(row,field);tree.insert(parent,'end',iid=iid,text=('* ' if required else '')+label,values=values,tags=('missing',) if required and empty else ('pending',) if any(str(v).startswith('待匹配') for v in values) else ())
@@ -166,6 +167,9 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
      widget.delete('1.0','end');widget.insert('1.0','\n'.join(actual_copy.get(key,[])) if key=='tags_ru' else actual_copy.get(key,''));widget.edit_modified(False)
     displayed_copy=copy.deepcopy(actual_copy)
    merchant=os.environ.get('OZON_CLIENT_ID') or '未连接';job=active_job();last_job=job or next((j for j in publication.jobs() if j.get('account_id')==os.environ.get('OZON_CLIENT_ID') and set(offers())&set(j.get('items',{}))),None)
+   from competitor_reference import status as competitor_status
+   notes=list(dict.fromkeys(competitor_status(b) for b in bundles if competitor_status(b)))
+   competitor_note.configure(text=' | '.join(notes[:2]))
    status.configure(text='店铺Client-Id：'+merchant+' | '+(coordinator.status if busy else '整组 '+str(len(paths))+' 个变体')+' | '+(last_job.get('message','') if last_job else '编辑会同步重算售价；提交前请核对图文与参数'))
    if busy:status.configure(text=status.cget('text')+' | 正在'+coordinator.status+'（已用'+str(int(time.monotonic()-busy_since))+'秒）'+(' | '+service.status if '官方属性' in coordinator.status else ''))
    if operation_error:status.configure(text='处理未完成：'+operation_error[:220]+' | 详见提交与上架进度页')
@@ -283,7 +287,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
     reference=((bundles[n].get('attribute_draft') or {}).get('auto_references') or {}).get(row[1]) or inline_references(bundles[n]).get(row[1])
     note=((bundles[n].get('attribute_draft') or {}).get('prefill_notes') or {}).get(row[1])
     if note:detail.configure(text=note+'；请手动选择符合实际的官方选项')
-    if reference:detail.configure(text='已自动采用的参考：'+reference['confidence']+'；'+reference['evidence']+'；'+reference['note'])
+    if reference:detail.configure(text=('竞品待核对：' if reference.get('kind')=='competitor' else '参考依据：')+reference['confidence']+'；'+reference['evidence']+'；'+reference['note'])
  tree.bind('<Double-1>',double_click);tree.bind('<<TreeviewSelect>>',track)
  def bulk():
   iid=tree.selection()[0] if tree.selection() else focus[0]
@@ -343,7 +347,35 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   if not rows:messagebox.showinfo('未找到原始参考图','当前草稿未记录参考图片位置，请用你保留的原图或实物核对。生成图不能作为隔层结构的可靠依据。',parent=dialog);return
   open_viewer(dialog,paths[index].parent,rows,0,b['sku']+' · 原始参考图')
  refbar=ttk.Frame(parameter_tab);refbar.pack(fill='x',pady=3)
- ttk.Label(refbar,text='红色为自动预填，可双击修改。',foreground='#b00020').pack(side='left',padx=5)
+ competitor_note=ttk.Label(parameter_tab,style='Muted.TLabel',wraplength=1100);competitor_note.pack(fill='x',padx=5)
+ ttk.Label(refbar,text='竞品值仅供核对；已填写值优先。',foreground='#b00020').pack(side='left',padx=5)
+ def use_competitor(skip=False):
+  iid=tree.selection()[0] if tree.selection() else focus[0]
+  if iid not in rows or rows[iid][0][0]!='a':return
+  key=rows[iid][0][1]
+  from competitor_reference import proposals
+  indices=[n for n in chosen() if key in proposals(bundles[n])]
+  if not indices:return
+  expected=coordinator.token();run(lambda:coordinator.confirm_references(indices,key,expected,skip=skip))
+ ttk.Button(refbar,text='采用当前行参考',command=use_competitor).pack(side='right',padx=3)
+ ttk.Button(refbar,text='忽略当前行参考',command=lambda:use_competitor(True)).pack(side='right',padx=3)
+ def retry_competitor():
+  def action():
+   with coordinator.lock:
+    for path in paths:
+     b=read(path)
+     if (b.get('variant_parameters') or {}).get('competitor_url'):
+      b.pop('competitor_reference',None);write(path,b)
+  run(action)
+ more_menu.add_command(label='重新读取竞品参考',command=retry_competitor)
+ more_menu.add_command(label='打开当前变体竞品页',command=lambda:open_competitor())
+ def open_competitor():
+  import webbrowser
+  from competitor_reference import normalize_url
+  n=focus[1] if isinstance(focus[1],int) else 0
+  url=normalize_url((bundles[n].get('variant_parameters') or {}).get('competitor_url'))
+  if url:webbrowser.open(url)
+
  if price_callback:more_menu.add_command(label='查看当前变体售价明细',command=lambda:price_callback(focus[1] if isinstance(focus[1],int) else 0))
  more_menu.add_command(label='查看当前变体原始参考图',command=lambda:open_reference(focus[1] if isinstance(focus[1],int) else 0))
  def reference_cells():
@@ -352,6 +384,8 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    for key,reference in (state.get('auto_references') or {}).items():
     text='；'.join(str(v.get('value') or '') for v in (state.get('values') or {}).get(key,[]))
     if text:yield 'a:'+key,'v'+str(n),text,n
+   from competitor_reference import proposals
+   for key,reference in proposals(b).items():yield 'a:'+key,'v'+str(n),reference['display']+'（参考）',n
    estimate=(b.get('auto_pricing') or {}).get('price_cny')
    if not b.get('manual_price') and estimate is not None and str(estimate)==str(b.get('price_cny')):yield 's:price','v'+str(n),str(b['price_cny']),n
  def select_cell(iid,index):

@@ -11,7 +11,7 @@ def revision(bundles,legacy=False):
  data=[]
  for b in bundles:
   state=b.get('attribute_draft') or {};category={k:v for k,v in (b.get('category') or {}).items() if k!='attributes_revalidation_required'}
-  data.append({'sku':b.get('sku'),'offer_id':b.get('offer_id'),'category':category,'parameters':b.get('variant_parameters'),'copy':b.get('copy'),'model':b.get('model'),'brand':b.get('brand'),'attributes':{k:state.get(k) for k in ('schema_hash','values','migration_pending','source_fingerprint')},'price':b.get('price_cny'),'manual_price':b.get('manual_price'),'pricing_fingerprint':b.get('pricing_fingerprint'),'images':[{k:r.get(k) for k in ('order','role','sha256','https_url','hosting_target')} for r in b.get('images') or []],'video':{k:(b.get('video') or {}).get(k) for k in ('sha256','https_url','image_hashes')},'export_settings':b.get('export_settings'),'fulfillment':b.get('fulfillment'),'stock_revision':b.get('stock_revision'),'reference_decisions':b.get('reference_decisions'),'asset_review':b.get('asset_review'),'regeneration_pending':True if b.get('image_regeneration_jobs') else b.get('regeneration_pending')})
+  data.append({'sku':b.get('sku'),'offer_id':b.get('offer_id'),'category':category,'parameters':b.get('variant_parameters'),'copy':b.get('copy'),'model':b.get('model'),'brand':b.get('brand'),'attributes':{k:state.get(k) for k in ('schema_hash','values','migration_pending','source_fingerprint')},'price':b.get('price_cny'),'manual_price':b.get('manual_price'),'pricing_fingerprint':b.get('pricing_fingerprint'),'images':[{k:r.get(k) for k in ('order','role','sha256','https_url','hosting_target')} for r in b.get('images') or []],'video':{k:(b.get('video') or {}).get(k) for k in ('sha256','https_url','image_hashes')},'export_settings':b.get('export_settings'),'fulfillment':b.get('fulfillment'),'stock_revision':b.get('stock_revision'),'reference_decisions':b.get('reference_decisions'),'competitor_reference':b.get('competitor_reference'),'asset_review':b.get('asset_review'),'regeneration_pending':True if b.get('image_regeneration_jobs') else b.get('regeneration_pending')})
  if legacy:
   for row in data:row.pop('asset_review',None);row.pop('regeneration_pending',None)
  return hashlib.sha256(json.dumps(data,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
@@ -114,9 +114,10 @@ class GroupService:
       from color_selection import is_color_field
       if (binding(field) and binding(field)[0]==key) or (key=='color' and is_color_field(field)):
        state=b['attribute_draft'];state.get('values',{}).pop(field_key(field),None);state['manual_keys']=[k for k in state.get('manual_keys',[]) if k!=field_key(field)]
-     self._invalidate(b)
+     if key!='competitor_url':self._invalidate(b)
     from asset_state import mark_changes
     mark_changes(before,bundles);self._write(bundles)
+   if key=='competitor_url':self.status='竞品链接已保存，等待插件读取官方字段对应的公开参数';return
    self.after_edit(indices,refresh=key not in ('cost','margin','stock'))
  def set_attributes(self,indices,key,values,expected=None):
   if len(indices)!=len(values) or len(set(indices))!=len(indices):raise ValueError('批量目标与输入数量不一致')
@@ -224,14 +225,14 @@ class GroupService:
     row=inline_references(bundles[n]).get(key)
     if row is None:continue
     if skip:
-     if row['required']:raise ValueError('平台必填属性不能跳过，请填写已核实值')
+     if row['required'] and row.get('kind')!='competitor':raise ValueError('平台必填属性不能跳过，请填写已核实值')
      changes.append((n,row,None));continue
     if not row['suggested']:raise ValueError('该字段没有可靠参考值，请双击填写或选择已核实的官方选项')
     values=self.resolve_text(n,key,row['suggested']);canonical=self.attributes.prepare_values(bundles[n],key,values);changes.append((n,row,canonical))
    with self.lock:
     latest=[read(p) for p in self.paths];self._check(latest,expected)
     for n,row,values in changes:
-     b=latest[n];b.setdefault('reference_decisions',{})[key]={'source':source_fingerprint(b),'action':'skip' if skip else 'accepted','evidence':row['evidence'],'confidence':row['confidence']}
+     b=latest[n];b.setdefault('reference_decisions',{})[key]={'source':row.get('reference_source') or source_fingerprint(b),'action':'skip' if skip else 'accepted','evidence':row['evidence'],'confidence':row['confidence']}
      if not skip:
       state=b['attribute_draft'];state.setdefault('values',{})[key]=values;state['manual_keys']=sorted(set(state.get('manual_keys') or [])|{key});state['confirmed']=False
      # Attribute-only reference choices do not change pricing inputs.
