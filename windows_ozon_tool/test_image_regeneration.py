@@ -12,7 +12,7 @@ class ImageRegenerationTests(unittest.TestCase):
  def test_main_prompt_uses_only_this_variant_and_locks_original_structure(self):
   from image_prompts import generation_prompt,shared_prompt
   prompt=generation_prompt('灰色椅子，数量1','OTHER_RED_VARIANT',1)
-  self.assertNotIn('OTHER_RED_VARIANT',prompt);self.assertIn('灰色椅子',prompt);self.assertIn('抠图合成',prompt);self.assertIn('扶手有无',prompt);self.assertIn('2—4',prompt);self.assertIn('01—07',shared_prompt('真实全组参数'))
+  self.assertNotIn('OTHER_RED_VARIANT',prompt);self.assertNotIn('灰色椅子',prompt);self.assertIn('优先保留原商品',prompt);self.assertIn('商品本体锁定',prompt);self.assertIn('不能新增商品事实',prompt);self.assertIn('01—07',shared_prompt('真实全组参数'))
  def test_main_regeneration_and_initial_claim_attach_original_shared_details(self):
   with tempfile.TemporaryDirectory() as tmp,patch('image_regeneration.threading.Thread'):
    store=self.setup(tmp);leader=store.tasks[0];shared=store.folder/'products'/leader['sku']/'shared_references';shared.mkdir();path=shared/'detail.png';path.write_bytes(picture(121));leader['detail_references']=[{'path':str(path),'name':'detail.png','mime':'image/png','purpose':'shared_gallery'}]
@@ -20,7 +20,7 @@ class ImageRegenerationTests(unittest.TestCase):
    self.assertTrue(any(r['purpose']=='shared_information' and r['sku']==leader['sku'] for r in refs));self.assertTrue(any(r['purpose']=='variant_main' and r['sku']==store.tasks[1]['sku'] for r in refs))
    for task in store.tasks:task['state']='saved'
    store.tasks[1]['state']='queued';store.set_paused(False);claimed=store.claim()
-   self.assertTrue(any(r['purpose']=='shared_information' for r in claimed['references']));self.assertIn('共用详情成图只作信息索引',claimed['prompt'])
+   self.assertTrue(any(r['purpose']=='shared_information' for r in claimed['references']));self.assertIn('已生成主图/详情',claimed['prompt']);self.assertIn('均不是本次商品信息来源',claimed['prompt'])
  def setup(self,tmp):
   store=Store(tmp)
   for i in range(1,4):

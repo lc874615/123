@@ -27,7 +27,8 @@ class Tests(unittest.TestCase):
  def test_repair_updates_followers_seven_details_without_replacing_their_main(self):
   with tempfile.TemporaryDirectory() as tmp,patch('threading.Thread'):
    store=Store(tmp)
-   for n in (1,2):store.create_set(f'A({n})','资料');store.tasks[-1].update(base_article='A',variant_index=n)
+   for n in (1,2):
+    original=Path(tmp)/('original'+str(n)+'.png');original.write_bytes(base64.b64decode(image(240+n)));store.create_set(f'A({n})','资料',[original]);store.tasks[-1].update(base_article='A',variant_index=n)
    configure(store.tasks,'A');leader=store.claim()
    for n in range(8):store.set_result(leader['id'],n,image(n*20))
    follower=store.claim();store.set_result(follower['id'],0,image(190));own=follower['received_images'][0]['sha256']
@@ -39,12 +40,11 @@ class Tests(unittest.TestCase):
    self.assertTrue(list((Path(tmp)/'products'/follower['sku']/'shared_gallery_backups').glob('*/images/01_main.png')))
    self.assertEqual(len(list((Path(tmp)/'products'/follower['sku']/'images').iterdir())),8)
    self.assertFalse(old_video.exists());self.assertTrue(list(old_video.parent.parent.glob('shared_gallery_backups/*/video/product_8s.mp4')))
- def test_prompt_contract_covers_order_headlines_and_real_human_scenes(self):
-  prompt=generation_prompt('椅子，灰色，单件','A灰色；B米色')
-  self.assertEqual([prompt.index(name+'.jpg') for name,_ in ROLES],sorted(prompt.index(name+'.jpg') for name,_ in ROLES))
-  for text in ('只能交付8张','俄语大标题','重要卖点','人物正在实际使用','不提供ZIP','不编造补足','B米色'):self.assertIn(text,prompt)
-  one=generation_prompt('米色椅子','A灰色；B米色',1)
-  self.assertIn('只能生成和交付1张',one);self.assertIn('俄语大标题',one);self.assertNotIn('02_dimensions.jpg',one)
+ def test_prompt_contract_uses_originals_only_and_preserves_scope(self):
+  prompt=generation_prompt('MANUAL_FALSE_A','MANUAL_FALSE_B')
+  self.assertIn('只能交付8张',prompt);self.assertNotIn('MANUAL_FALSE',prompt);self.assertIn('本次附件',prompt);self.assertIn('不提供ZIP',prompt)
+  one=generation_prompt('MANUAL_FALSE',expected=1)
+  self.assertIn('只能生成和交付1张',one);self.assertIn('01_main.jpg',one);self.assertNotIn('02_dimensions.jpg',one)
  def test_known_unsent_copy_can_continue_but_uncertain_copy_is_not_regenerated(self):
   with tempfile.TemporaryDirectory() as tmp,patch('threading.Thread'):
    store=Store(tmp);store.create_set('A','资料');task=store.claim()

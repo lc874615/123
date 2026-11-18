@@ -20,10 +20,9 @@ class SheetTests(unittest.TestCase):
    with self.subTest(size=(w,h)),self.assertRaises(ValueError):split(sheet(w,h)[0],7)
   image=Image.new('RGB',(2250,3000),'white');out=io.BytesIO();image.save(out,'PNG')
   with self.assertRaises(ValueError):split(out.getvalue(),7)
- def test_sheet_contract_does_not_request_independent_files_or_sequential_requests(self):
+ def test_legacy_sheet_prompt_entrypoint_cannot_revive_new_contact_sheet_delivery(self):
   for prompt in (sheet_prompt('本品','全组',8),sheet_prompt('本品','全组',7,True)):
-   self.assertIn('只生成一张高分辨率3×3整套拼图',prompt);self.assertIn('2250×3000',prompt)
-   self.assertNotIn('逐张制作',prompt);self.assertNotIn('逐张下载入口',prompt);self.assertNotIn('不能整套拼成一张',prompt)
+   self.assertIn('独立成品交付',prompt);self.assertNotIn('只生成一张高分辨率3×3整套拼图',prompt);self.assertIn('不提供ZIP',prompt)
  def test_low_resolution_does_not_mutate_existing_images(self):
   from local_bridge import Store
   with tempfile.TemporaryDirectory() as tmp:

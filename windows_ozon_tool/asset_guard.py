@@ -9,7 +9,11 @@ def pixels(data):
 
 def reject_reference(data,references):
  digest=hashlib.sha256(data).digest();sample=None
+ sources=[];seen=set()
  for row in references:
+  for source in [row]+list(row.get('cells') or []):
+   if source.get('path') and source['path'] not in seen:seen.add(source['path']);sources.append(source)
+ for row in sources:
   path=Path(row['path'])
   if not path.is_file():continue
   original=path.read_bytes()

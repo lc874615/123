@@ -3,7 +3,7 @@ Rules select presentation, never product facts or technical specifications.
 """
 import copy,hashlib,json,re
 from pathlib import Path
-VERSION=1
+VERSION=2
 STYLES={
  'digital':('精密数码','精确轮廓、接口与材质分区；按商品对比选择浅色或深色摄影背景，不固定蓝色圆台。用柔和侧光分清塑料、金属、玻璃与屏幕；标题短、最多突出1—2个有依据的关键数字，避免顶部排满小标签。克制高光，不虚构电路、芯片、声波效果或内部剖面。'),
  'appliance':('生活电器','干净真实的厨房、浴室或操作空间；产品与实际任务同框，操作与配置清楚。主图可有序展示实际配置，使用页让产品与任务成为主体；文字直接说明用途，不夸大处理效果。'),
@@ -84,14 +84,6 @@ ORDERS={
  'toy':('main','age','play','pieces','second_use','dimensions','storage','contents'),
  'neutral':('main','exterior','dimensions','material','structure','use','second_use','contents')}
 DEFAULTS={'digital':'digital_accessory','appliance':'kitchen_appliance','interior':'furniture','textile':'bedding','engineering':'hardware','utility':'storage','wearable':'clothing','interaction':'pet','neutral':'neutral'}
-NEEDS={
- 'operation':r'开合|折叠|操作|按键|触控|режим|кноп|управлен|склад',
- 'connection':r'蓝牙|bluetooth|usb|type.?c|无线|兼容|连接|совмест|подключ',
- 'charging':r'充电|电池|供电|usb|type.?c|заряд|питан|аккумулятор',
- 'care':r'清洗|护理|洗涤|不可水洗|уход|стирк|мыть|чистк',
- 'fit':r'兼容|适配|совмест|подходит|поддержива',
- 'installation':r'安装|组装|悬挂|无需组装|креплен|монтаж|сборк|подвес',
- 'age':r'适用年龄|岁以上|возраст|лет|год'}
 FALLBACKS={'controls':('exterior','真实外部操作部位，不声称未确认功能'), 'connection':('exterior','接口或外观，仅展示原图可见处'),
  'charging':('structure','外部接口或连接细节，不编造供电能力'), 'attachments':('exterior','当前商品另一已确认细节'),
  'care':('material','可见表面与做工，不推测清洗方法'), 'capacity':('placement','整体尺度与摆放，不标猜测容量'),
@@ -110,36 +102,18 @@ def route(category):
   if any(re.search(p,text) for p in patterns):return subtype,style,'已按官方商品类型匹配'
  return 'neutral','neutral','当前类型尚无明确映射，使用简洁实物，不靠上级大类猜测'
 
-def evidence(need,params,count):
- if need=='options':return count>1
- if need=='dimensions':return any(str(params.get(k,'')).strip() for k in ('length','width','height')) or bool(re.search(r'\d+(?:[.,]\d+)?\s*(?:cm|mm|см|мм|厘米|毫米)|\d+\s*[x×]\s*\d+',str(params.get('size','')),re.I))
- if need=='capacity':return bool(re.search(r'容量|容积|毫升|\bml\b|объем|объём|литр',str(params.get('extra','')).casefold()))
- if need=='accessories':
-  text=str(params.get('extra','')).casefold()
-  return not re.search(r'无配件|无附件|不含配件|без насад|без аксессуар',text) and bool(re.search(r'配件|附件|随附|насад|комплект',text))
- if need in NEEDS:return bool(re.search(NEEDS[need],str(params.get('extra',''))+' '+str(params.get('size',''))+' '+str(params.get('assembly','')),re.I))
- return True
-
 def build(category=None,params=None,group_count=1,override=None):
- params=params if isinstance(params,dict) else {};category=category if isinstance(category,dict) else {}
- subtype,style,reason=route(category);automatic=style
+ # Product parameter tables intentionally do not influence new image plans.
+ category=category if isinstance(category,dict) else {};subtype,style,reason=route(category);automatic=style
  if override in STYLES:
   style=override
   if style!=automatic:subtype=DEFAULTS[style]
-  reason='手动视觉风格；商品事实与官方类目不改变'
+  reason='手动视觉风格；商品事实仍只取本次原始参考图'
  pages=[]
  for n,topic in enumerate(ORDERS[subtype],1):
-  title,need=TOPICS[topic];fallback=None
-  available=evidence(need,params,group_count)
-  if need=='fit' and subtype in ('clothing','shoes'):available=bool(str(params.get('size','')).strip()) or evidence('dimensions',params,group_count)
-  if need and not available:
-   fallback=FALLBACKS[topic];title=fallback[1]
-  pages.append({'order':n,'key':fallback[0] if fallback else topic,'requested_topic':topic,'filename':('01_main.jpg' if n==1 else f"{n:02d}_{fallback[0] if fallback else topic}.jpg"),'title':title,'fallback':fallback,'needs':need})
- warnings=[]
- if automatic!='neutral' and params.get('name'):
-  _,named_style,_=route({'description_category_id':1,'type_id':1,'name':params['name'],'confirmed':True})
-  if named_style not in ('neutral',automatic):warnings.append('商品名称与所选类目的品类方向不一致，请核对；未自动更改类目或商品事实')
- result={'warnings':warnings,'version':VERSION,'style':style,'style_name':STYLES[style][0],'subtype':subtype,'reason':reason,'source':'manual' if override in STYLES else 'fallback' if subtype=='neutral' else 'official_category','category':{k:category.get(k) for k in ('description_category_id','type_id','name','zh_path')},'pages':pages,'group_count':group_count}
+  title,need=TOPICS[topic]
+  pages.append({'order':n,'key':topic,'requested_topic':topic,'filename':('01_main.jpg' if n==1 else f"{n:02d}_{topic}.jpg"),'title':title,'fallback':None,'fallback_if_unproven':FALLBACKS.get(topic),'needs':need})
+ result={'warnings':[],'version':VERSION,'evidence_policy':'original_references_only','style':style,'style_name':STYLES[style][0],'subtype':subtype,'reason':reason,'source':'manual' if override in STYLES else 'fallback' if subtype=='neutral' else 'official_category','category':{k:category.get(k) for k in ('description_category_id','type_id','name','zh_path')},'pages':pages,'group_count':group_count}
  result['fingerprint']=hashlib.sha256(json.dumps(result,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
  return result
 
@@ -148,32 +122,37 @@ def context(store,task):
  from pricing_service import read
  path=store.folder/'products'/task['sku']/'listing_bundle.json';bundle=read(path) if path.exists() else {}
  category=bundle.get('category') if isinstance(bundle.get('category'),dict) else category_for_task(task)
- params=bundle.get('variant_parameters') or task.get('variant_parameters') or {}
  from account_context import credentials
  merchant=credentials()[0]
  task_override=task.get('visual_style_override') if task.get('visual_style_account',merchant)==merchant else None
  override=bundle.get('visual_style_override',task_override)
  members=[t for t in store.tasks if t.get('copy_leader',t['sku'])==task.get('copy_leader',task['sku']) and t.get('state')!='cancelled']
- return build(category,params,len(members) or 1,override)
+ return build(category,group_count=len(members) or 1,override=override)
 
-def render(plan,facts,group_facts='',scope='full'):
- from image_prompts import SEQUENTIAL_DELIVERY,FIDELITY,MAIN_DIMENSIONS,EVIDENCE_STYLE,POSTER_RULE,visual_facts
+def render(plan,facts='',group_facts='',scope='full'):
+ from original_image_policy import SOURCE_POLICY,EVIDENCE_PASS,PRODUCT_LOCK,ART_DIRECTION,DIMENSIONS,DELIVERY,FINAL_CHECK,GATES,COMPOSITIONS,DIGITAL_DIRECTION
  if scope not in ('full','main','shared'):raise ValueError('未知作图范围')
+ # Old saved plans are never trusted as product evidence; rebuild presentation
+ # from their category/override rather than carrying parameter-based fallbacks.
+ if plan.get('evidence_policy')!='original_references_only':
+  category={**(plan.get('category') or {}),'confirmed':True};plan=build(category,override=plan.get('style') if plan.get('source')=='manual' else None)
  pages=plan['pages'] if scope=='full' else plan['pages'][:1] if scope=='main' else plan['pages'][1:]
- count=len(pages);rows=[]
+ rows=[]
  for i,page in enumerate(pages,1):
   name=page['filename'] if scope!='shared' else f"{i:02d}_{page['key']}.jpg"
-  rows.append(name+'：'+page['title']+'。只做这一主题；不同主题不能缩成完整海报塞入本张。')
- main_rules=('01主图优先商品识别及重要购买理由，不强制大标题或同数量标签；穿戴类可少字，其余按商品与风格用简短标题及0—3条已确认信息。'+MAIN_DIMENSIONS) if scope!='shared' else '本任务只重做7张共用详情，不生成主图、不改现有主图；01—07对应商品位置02—08。'
- group_rules=('本次只有当前变体主图，其他详情页不在交付范围。' if scope=='main' else '共用详情可参考全组选项原图与已填参数，但每张须明确选项差异，不把不同结构、尺寸或件数合成一件商品。只有一个选项时不生成色卡。')
- return '\n'.join([SEQUENTIAL_DELIVERY,f'【本次只交付{count}张】范围：{scope}。只交付这些编号最终文件，不增加其他海报。',
- '【类目路由】'+plan['style_name']+' / '+plan['subtype']+'；'+plan['reason']+'。类目只决定呈现，不提供商品事实。',
- '【类目与资料核对】'+('；'.join(plan.get('warnings',[])) if plan.get('warnings') else '无名称与类目方向冲突提示；原图真实性仍需核对')+'。出现真实冲突时不得照类目凭空改造商品，应说明冲突。',
- '【摄影与版式】'+STYLES[plan['style']][1]+'真实照片级画面，大主体、清楚细节，自然俄语；背景和关键部位清楚，不能用虚化隐藏缺失结构。每图选择整体、局部、操作、人物或示意中适用的构图，不统一套圆角卡片。人物/宠物/儿童仅在用途适合且尺度合理时出现，不强制两张人物场景。',
- main_rules,EVIDENCE_STYLE,FIDELITY,POSTER_RULE,group_rules,'【任务清单，不是一张图的分区】',*rows,
- '【证据检查】上述主题只是内容计划，不能暗示未证实功能；参数未覆盖的内容已给替代方向。原图能补充明确依据时可细化；否则按替代主题或已确认外观制作。不能猜测充电、协议、续航、适龄、清洁、承重、兼容或隐藏背面。所有尺寸冲突明确报告。',
- '【当前变体真实资料】'+visual_facts(facts),'【全组选项资料】'+(visual_facts(group_facts or facts) if scope!='main' else '本次只制作当前变体主图，不引入其他变体外观资料'),
- '【交付核对】逐张核对商品、变体、主题、人物与反射、俄语、件数及实际文件。文件名、数量、像素合格不能代替视觉合格；修改只替换当前编号，失败准确说明缺项，不把拼图或旧文件换名。'])
+  rule=GATES.get(page.get('needs'),'只展示本次原图能证实的外观、部件或用途；不生成未见视角与隐藏结构')
+  fallback=page.get('fallback_if_unproven')
+  alternative=('；证据不足改为'+fallback[1]+'，文件编号与名称保持本清单不变') if fallback else ''
+  composition=COMPOSITIONS.get(page['requested_topic'],'用当前原始视角组织大幅实物摄影，与其他编号区分。')
+  rows.append(name+'：'+page['title']+'。'+composition+rule+alternative+'。单张只讲该主题。')
+ limits={'full':'只能交付8张独立成品，01为当前变体主图，02—08为全组共用详情。','main':'只能生成和交付1张本变体主图，文件名固定01_main.jpg；不制作其他变体主图与详情。','shared':'只重做7张共用详情；本次01—07分别对应商品详情位置02—08，不生成或修改任何主图。'}
+ category=plan.get('category') or {};label=category.get('zh_path') or category.get('name') or '未明确识别的类目'
+ return '\n'.join([SOURCE_POLICY,limits[scope],DELIVERY,
+  '【已选类目，仅设计路由】'+str(label)+'；'+plan['style_name']+' / '+plan['subtype']+'。类目与原图商品明显冲突时说明，不照类目改造实物。',
+  EVIDENCE_PASS,PRODUCT_LOCK,'【本类摄影方向】'+STYLES[plan['style']][1]+(DIGITAL_DIRECTION if plan['style']=='digital' else ''),ART_DIRECTION,
+  DIMENSIONS if scope!='shared' else '共用详情以全部有对应原图的变体为范围，差异须标选项，不把其他变体外观、结构或参数混成一件商品。',
+  '【范围隔离】当前主图只用当前变体的原始外观；共用原始详情只补能核实适用的信息。重做不以旧AI成图为外观或参数依据。只保留本次范围内的编号，重做与首次执行同一证据和质量规则。',
+  '【任务清单，不是一张图的分区】',*rows,FINAL_CHECK])
 
 def shared_compatible(store,task):
  """A shared image set cannot silently mix independently selected product types."""

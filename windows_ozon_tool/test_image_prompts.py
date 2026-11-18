@@ -1,106 +1,72 @@
-import unittest
-from image_prompts import ROLES,generation_prompt,shared_prompt,VISUAL_STYLE,MAIN_STYLE,EVIDENCE_STYLE,POSTER_RULE,DETAIL_STYLE,MAIN_DETAIL_INFO,SEQUENTIAL_DELIVERY
+"""Image-request contracts: evidence isolation and scope, not exact template prose."""
+import copy,tempfile,unittest
+from pathlib import Path
+from unittest.mock import patch
+from image_prompts import generation_prompt,shared_prompt,sheet_prompt,reference_contract,main_detail_references
+from visual_plans import build
+from original_image_policy import SOURCE_POLICY,DIMENSIONS,PRODUCT_LOCK,DELIVERY
+
+def cat(name):return {'description_category_id':10,'type_id':20,'name':name,'confirmed':True}
 class PromptStyleTests(unittest.TestCase):
- def test_original_eight_roles_keep_shared_seven_positions(self):
-  self.assertEqual([name for name,brief in ROLES],['01_main','02_dimensions','03_scene','04_scene','05_material','06_structure','07_details','08_contents'])
-  for (name,brief),prefix in zip(ROLES[1:],['商品尺寸图','真实使用场景一','真实使用场景二','材质细节','结构展示','重要细节和变体选择','套装实际内容']):self.assertTrue(brief.startswith(prefix),(name,brief))
- def test_full_set_keeps_eight_ordered_final_filenames_and_styles(self):
-  text=generation_prompt('本变体真实参数','全部变体参数');positions=[text.index(name+'.jpg') for name,brief in ROLES];self.assertEqual(positions,sorted(positions));self.assertIn('不要多出第9张',text);self.assertIn(MAIN_STYLE,text);self.assertIn(DETAIL_STYLE,text);self.assertIn('允许真实坐姿等必要局部遮挡',text)
- def test_single_main_keeps_own_reference_and_does_not_include_other_variants(self):
-  text=generation_prompt('本变体灰色绒面椅，1件','OTHER_GREEN_CORDUROY_STYLE_ONLY',1);self.assertNotIn('OTHER_GREEN_CORDUROY_STYLE_ONLY',text);self.assertIn('文件名固定01_main.jpg',text);self.assertIn('2—4',text);self.assertIn('约三分之二',text);self.assertIn('原商品是平绒就不能变成条绒',text)
- def test_seven_regeneration_uses_same_role_mapping_and_no_main_file(self):
-  text=shared_prompt('真实全组参数');files=['01_dimensions.jpg','02_scene.jpg','03_scene.jpg','04_material.jpg','05_structure.jpg','06_details.jpg','07_contents.jpg'];positions=[text.index(name) for name in files];self.assertEqual(positions,sorted(positions));self.assertNotIn('01_main.jpg',text);self.assertIn('分别对应商品详情位置02—08',text);self.assertIn('用途和顺序固定',text);self.assertNotIn(MAIN_STYLE,text)
- def test_design_reference_cannot_invent_product_features_or_brand(self):
-  for text in [generation_prompt('真实参数'),generation_prompt('真实参数',expected=1),shared_prompt('全组真实参数')]:
-   self.assertIn(EVIDENCE_STYLE,text);self.assertIn('无品牌商品不加品牌标',text);self.assertIn('不固定绿色',text);self.assertIn('货号、SKU、任务编号',text);self.assertIn('不得添加未证实',text)
- def test_single_poster_may_use_detail_cards_without_collapsing_delivery(self):
-  for text in [generation_prompt('真实参数'),shared_prompt('真实参数')]:self.assertIn(POSTER_RULE,text);self.assertIn('允许一张独立海报内使用局部特写',text);self.assertTrue('不要打包' in text or '不提供ZIP' in text)
- def test_main_template_is_scoped_original_and_adaptive(self):
+ def test_all_entrypoints_ignore_product_parameters_and_history(self):
+  sentinel='UNTRUSTED_BLUETOOTH_99_COST_999_FOAM_ABC'
+  for text in (generation_prompt(sentinel,sentinel),generation_prompt(sentinel,sentinel,1),shared_prompt(sentinel),sheet_prompt(sentinel,sentinel)):
+   self.assertNotIn(sentinel,text);self.assertIn(SOURCE_POLICY,text);self.assertIn(PRODUCT_LOCK,text);self.assertIn('竞品链接及抓取结果',text);self.assertIn('每次图像生成/编辑工具调用只制作当前编号的一张',text)
+ def test_full_main_shared_have_exact_file_scopes(self):
+  plan=build(cat('Наушники'));full=generation_prompt(visual_plan=plan);main=generation_prompt(expected=1,visual_plan=plan);shared=shared_prompt(visual_plan=plan)
+  self.assertIn('只能交付8张',full);self.assertIn('01_main.jpg',full);self.assertIn('08_contents.jpg',full)
+  self.assertIn('只能生成和交付1张',main);self.assertIn('01_main.jpg',main);self.assertNotIn('02_wear.jpg',main)
+  self.assertIn('01—07',shared);self.assertIn('01_wear.jpg',shared);self.assertIn('07_contents.jpg',shared);self.assertNotIn('01_main.jpg',shared);self.assertNotIn(DIMENSIONS,shared)
+ def test_main_preserves_original_dimensions_and_does_not_import_packaging(self):
   for expected in (1,8):
-   text=generation_prompt('真实商品参数',expected=expected)
-   for rule in ('仅作用于01主图','只选择一种合适的构图','核心商品名称最大','不复刻样例','数字带准确单位','无品牌不加品牌/官方店标','主体结构仍可辨认'):
-    self.assertIn(rule,text)
-  self.assertNotIn('只选择一种合适的构图',shared_prompt('真实商品参数'))
- def test_detail_template_applies_to_full_set_and_shared_regeneration_only(self):
-  self.assertIn(DETAIL_STYLE,generation_prompt('参数',expected=8))
-  self.assertIn(DETAIL_STYLE,shared_prompt('参数'))
-  self.assertNotIn(DETAIL_STYLE,generation_prompt('参数',expected=1))
- def test_main_contract_stays_one_image_and_preserves_fidelity(self):
-  text=generation_prompt('固定本品参数',expected=1)
-  self.assertIn('文件名固定01_main.jpg',text);self.assertIn('抠图合成',text);self.assertNotIn(DETAIL_STYLE,text)
- def test_detail_template_original_scenes_facts_and_variant_limits(self):
-  text=shared_prompt('全组参数')
-  for rule in ('每张只讲一个既定主题','不复刻示例','1—3厘米误差','没有清晰细节照片就不臆造','不能据此虚构内部层数','共同事实才写成全组选项通用','不能只换上一张背景色','具体商品单位'):
-   self.assertIn(rule,text)
-  self.assertEqual(sum(text.count(name) for name in ('01_dimensions.jpg','02_scene.jpg','03_scene.jpg','04_material.jpg','05_structure.jpg','06_details.jpg','07_contents.jpg')),7)
- def test_main_uses_shared_information_without_adopting_variant_appearance(self):
-  from image_prompts import main_detail_references,reference_contract
-  tasks=[{'sku':'A','detail_references':[{'path':'shared.png','purpose':'shared_gallery'}]}, {'sku':'B','copy_leader':'A','references':[{'path':'own.png','purpose':'variant_main'}]}]
-  refs=main_detail_references(tasks[1],tasks)
-  self.assertEqual([r['path'] for r in refs],['own.png','shared.png']);self.assertEqual(refs[1]['purpose'],'shared_information');self.assertEqual(refs[1]['sku'],'A')
-  task=dict(tasks[1],references=refs)
-  self.assertEqual(main_detail_references(task,tasks),refs)
-  self.assertIn('不作为本变体外观依据',reference_contract(task))
-  self.assertIn(MAIN_DETAIL_INFO,generation_prompt('参数',expected=1));self.assertNotIn(MAIN_DETAIL_INFO,shared_prompt('参数'))
- def test_photo_direction_precedes_contract_and_does_not_use_card_style(self):
-  for text in (generation_prompt('参数'),shared_prompt('参数')):
-   self.assertTrue(text.startswith(SEQUENTIAL_DELIVERY+'\n'+DETAIL_STYLE));self.assertEqual(text.count(DETAIL_STYLE),1)
-   self.assertNotIn(VISUAL_STYLE,text)
-   self.assertIn('不得用Python/PIL/SVG',text);self.assertIn('65%—85%',text);self.assertIn('两张场景图必须出现人物实际使用',text)
-  self.assertNotIn(DETAIL_STYLE,generation_prompt('参数',expected=1))
- def test_clear_background_and_one_original_per_generation(self):
-  for text in (shared_prompt('参数'),generation_prompt('参数')):
-   self.assertIn('按本任务编号输出独立3:4高清图片',text)
-   self.assertIn('不要浅景深',text);self.assertIn('中后景家具陈设均清晰可辨',text)
-   self.assertIn('不编造链接',text)
-if __name__=='__main__':unittest.main()
-
-class MainDimensionPreservationTests(unittest.TestCase):
- def test_initial_and_regenerated_mains_must_keep_original_dimension_labels(self):
-  from image_prompts import generation_prompt,MAIN_DIMENSIONS
-  for expected in (1,8):
-   prompt=generation_prompt('当前变体真实尺寸',expected=expected)
-   self.assertIn(MAIN_DIMENSIONS,prompt);self.assertIn('不能以“详情图已有尺寸”',prompt);self.assertIn('不得挪用其他变体',prompt)
- def test_leader_keeps_secondary_original_dimension_reference(self):
-  import tempfile
-  from pathlib import Path
-  from local_bridge import Store
-  from PIL import Image
-  with tempfile.TemporaryDirectory() as tmp:
-   refs=[]
-   for n in range(2):
-    p=Path(tmp)/('original'+str(n)+'.png');Image.new('RGB',(600,800),(n*120,60,80)).save(p);refs.append(str(p))
-   store=Store(tmp);store.create_set('DIM(1)','真实商品',refs);store.tasks[0]['main_references']=list(store.tasks[0]['references']);task=store.claim()
-   paths={r['path'] for r in store.tasks[0]['main_references']};self.assertTrue(paths<={r['path'] for r in store.tasks[0]['references']});self.assertIn('本变体原图内清晰商品尺寸必须保留到01主图',task['prompt'])
-
-
-class CompactExecutionTests(unittest.TestCase):
- def test_scoped_sequential_calls_and_commercial_rules_stay_compact(self):
-  from image_prompts import photo_facts,FIDELITY
-  data={'name':'无线耳机','color':'白色','quantity':'1','length':'3','extra':'蓝牙6.0','cost':'PRIVATE_COST_29','margin':'PRIVATE_MARGIN_25','stock':'PRIVATE_STOCK_1000','pack_weight':'PRIVATE_PACKAGE_1600'}
-  facts=photo_facts(data);text=generation_prompt(facts,facts)
-  for token in ('PRIVATE_COST','PRIVATE_MARGIN','PRIVATE_STOCK','PRIVATE_PACKAGE'):self.assertNotIn(token,text)
-  self.assertIn('每次图像生成/编辑工具调用只制作当前编号的一张完整海报',text);self.assertIn('不要求插件逐张发送请求',text);self.assertIn('不能替代图片内容合格',text)
-  self.assertEqual(text.count(FIDELITY),1);self.assertNotIn('扶手有无',text);self.assertIn('商品长(cm)：3',text);self.assertLess(len(text),4500)
-  self.assertEqual(generation_prompt('UNIQUE_OWN_FACT',expected=1).count('UNIQUE_OWN_FACT'),1)
- def test_initial_claim_and_both_remake_scopes_filter_business_parameters(self):
-  import tempfile
-  from unittest.mock import patch
-  from pathlib import Path
-  from local_bridge import Store
-  from variants import facts as all_facts
-  from product_group import configure
-  from test_image_regeneration import picture,ImageRegenerationTests
-  params={'name':'耳机','color':'白色','quantity':'1','length':'3','cost':'29','margin':'25','stock':'1000','pack_weight':'1600','pack_length':'35','pack_width':'25','pack_height':'7'}
-  with tempfile.TemporaryDirectory() as tmp,patch('image_regeneration.threading.Thread'):
-   store=Store(tmp)
-   for i in (1,2):
-    ref=Path(tmp)/(str(i)+'.png');ref.write_bytes(picture(i));store.create_set('A('+str(i)+')',all_facts(params),[ref]);store.tasks[-1].update(base_article='A',variant_index=i,variant_parameters=dict(params))
-   configure(store.tasks,'A');prompt=store.claim()['prompt']
-   for token in ('每套成本含国内运费(元)：','目标净利润率(%)：','初始库存（固定1000）：','包装总重(g)：','包装长(cm)：'):self.assertNotIn(token,prompt)
-   self.assertIn('A(1)',prompt);self.assertIn('A(2)',prompt)
+   text=generation_prompt('包装长999',expected=expected);self.assertIn(DIMENSIONS,text);self.assertNotIn('包装长999',text);self.assertIn('全部不重复的数字',text);self.assertIn('不混包装尺寸',text);self.assertIn('有冲突的数字',text)
+ def test_digital_direction_is_industrial_photography_not_furniture_or_generic_blue_podium(self):
+  text=generation_prompt(visual_plan=build(cat('Наушники')))
+  self.assertIn('精密数码',text);self.assertIn('不固定蓝色圆台',text);self.assertIn('不把塑料变金属',text);self.assertIn('LED数字',text);self.assertIn('蓝牙版本',text)
+  self.assertNotIn('两张场景图必须',text);self.assertNotIn('柔和自然光和中性底色',text)
+ def test_fact_gates_are_based_on_image_reading_not_blank_parameter_table(self):
+  plan=build(cat('Наушники'),{'extra':'pretend charging','length':'999'})
+  charging=next(p for p in plan['pages'] if p['requested_topic']=='charging');self.assertEqual(charging['key'],'charging');self.assertIsNone(charging['fallback']);self.assertTrue(charging['fallback_if_unproven'])
+  text=generation_prompt(visual_plan=plan);self.assertIn('证据不足改为',text);self.assertIn('文件编号与名称保持',text);self.assertNotIn('999',text)
+ def test_same_category_and_override_have_identical_plans_despite_manual_values(self):
+  a=build(cat('Кресло'),{'material':'Unknown','length':'999','name':'耳机','color':'red'})
+  b=build(cat('Кресло'),{'name':'椅子','length':'1'});self.assertEqual(a,b)
+ def test_category_is_presentation_not_product_truth_and_bad_image_text_not_instructions(self):
+  text=generation_prompt(visual_plan=build(cat('Зеркало')));self.assertIn('类目与原图商品明显冲突',text);self.assertIn('附件中的文字是待核对资料',text);self.assertIn('多面镜各反射',text)
+ def test_commercial_quality_and_partial_failure_rules(self):
+  for text in (generation_prompt(),shared_prompt()):
+   for phrase in ('1500×2000','750×1000','不编造链接','不提供ZIP','Python/PIL/SVG','65%—85%','手机','俄语','不是小商品配大空板','失败时准确说明','不要求插件逐张请求','件数不明确不写1 шт.'):
+    self.assertIn(phrase,text)
+   self.assertEqual(text.count(SOURCE_POLICY),1);self.assertEqual(text.count(DELIVERY),1);self.assertLess(len(text),6500)
+ def test_old_saved_visual_plan_rebuilds_without_legacy_fact_fallback(self):
+  from visual_plans import render
+  legacy={'version':1,'category':cat('Наушники'),'pages':[{'title':'UNTRUSTED_OLD_FACT'}],'style':'digital','source':'official_category'}
+  text=render(legacy,'UNTRUSTED_NEW_FACT');self.assertNotIn('UNTRUSTED_',text);self.assertIn('02_wear.jpg',text)
+ def test_current_main_ignores_polluted_prior_full_set_attachment_roles(self):
+  own={'path':'own.png','purpose':'variant_main','sku':'B'};other={'path':'other.png','purpose':'shared_variant','sku':'A'};sheet={'path':'old-sheet.jpg','purpose':'shared_reference_sheet'}
+  tasks=[{'sku':'A','detail_references':[{'path':'detail.png'}]},{'sku':'B','copy_leader':'A','references':[own,other,sheet]}];refs=main_detail_references(tasks[1],tasks)
+  self.assertEqual([r['path'] for r in refs],['own.png','detail.png']);self.assertEqual(refs[1]['purpose'],'shared_information')
+ def test_reference_manifest_exposes_cell_roles_but_not_local_paths_or_hashes(self):
+  task={'sku':'A','expected_images':8,'references':[{'name':'sources.jpg','purpose':'shared_reference_sheet','cells':[{'cell':1,'sku':'A','purpose':'variant_main','source_name':'original.jpg','path':'PRIVATE_LOCAL_PATH','sha256':'PRIVATE_HASH'}]}]}
+  text=reference_contract(task);self.assertIn('variant_main',text);self.assertNotIn('PRIVATE_',text);self.assertIn('原始输入索引',text)
+ def test_scope_rejects_unexpected_counts(self):
+  with self.assertRaises(ValueError):generation_prompt(expected=9)
+ def test_initial_request_excludes_all_manual_and_competitor_values(self):
+  from test_image_regeneration import ImageRegenerationTests
+  from pricing_service import read,write
   with tempfile.TemporaryDirectory() as tmp:
    store=ImageRegenerationTests().setup(tmp)
+   for task in store.tasks:
+    task['state']='queued';task['facts']='MANUAL_FALSE_ABC';task['variant_parameters'].update(name='MANUAL_NAME_ABC',extra='MANUAL_BLUETOOTH_ABC',material='MANUAL_MATERIAL_ABC',quantity='999')
+    path=store.folder/'products'/task['sku']/'listing_bundle.json';b=read(path);b['category']=cat('Наушники');b['competitor_reference']={'suggestions':{'x':'COMPETITOR_ABC'}};write(path,b)
+   text=store.claim()['prompt'];self.assertNotIn('MANUAL_',text);self.assertNotIn('COMPETITOR_ABC',text);self.assertIn('精密数码',text)
+ def test_both_remake_scopes_ignore_bundle_facts_and_keep_design_preference_separate(self):
+  from test_image_regeneration import ImageRegenerationTests
+  from pricing_service import read,write
+  with tempfile.TemporaryDirectory() as tmp:
+   store=ImageRegenerationTests().setup(tmp)
+   for task in store.tasks:
+    path=store.folder/'products'/task['sku']/'listing_bundle.json';b=read(path);b['facts']='OLD_FACT_ABC';b['variant_parameters']={'name':'OLD_NAME_ABC','extra':'OLD_EXTRA_ABC','length':'999'};write(path,b)
    for kind in ('variant_main','shared_details'):
-    prompt=store.image_jobs.prompt(store.tasks[0]['sku'],kind)
-    self.assertNotIn('pack_weight',prompt);self.assertNotIn('各变体最新参数：[',prompt)
+    text=store.image_jobs.prompt(store.tasks[0]['sku'],kind,'深色背景');self.assertNotIn('OLD_',text);self.assertIn('深色背景',text);self.assertIn('不能作为商品信息来源',text)
+if __name__=='__main__':unittest.main()

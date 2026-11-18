@@ -406,22 +406,17 @@ class Store:
   if not t:raise ValueError('没有排队任务，请在本地窗口创建商品')
   t['generation_parameters']=copy.deepcopy(t.get('variant_parameters') or {});t['generation_variants']=copy.deepcopy(t.get('group_variants') or []);t['state']='claimed'
   if t.get('set_mode'):
-   from image_prompts import generation_prompt,reference_contract,main_detail_references,photo_facts,photo_group
-   t['delivery_policy']='generated_originals'
-   if t.get('expected_images',8)==8:
-    from group_references import collect,INFO
-    shared,variants=collect(self,t,limit=7);own=t.get('main_references') or [r for r in t.get('references',[]) if r.get('purpose','variant_main')=='variant_main']
-    # Preserve the leader hero's own appearance references, all variant information accompanies details.
-    own_paths={r.get('path') for r in own}
-    t['references']=[{**r,'name':t['sku']+'_'+str(r.get('name','original'))} for r in own]+[r for r in shared if r.get('path') not in own_paths]
-    t['group_variants']=variants;t['generation_variants']=copy.deepcopy(variants)
-    t['group_facts']=INFO+'\n'+photo_group(variants)
-   else:t['references']=main_detail_references(t,self.tasks)
+   from image_prompts import generation_prompt,reference_contract
+   from group_references import compile_references
+   t['delivery_policy']='generated_originals';t['expected_images']=t.get('expected_images',8)
+   try:t['references']=compile_references(self,t,'full' if t.get('expected_images',8)==8 else 'main')
+   except (ValueError,OSError) as exc:
+    t.update(state='needs_attention',message='原始资料校验未通过，未发送：'+str(exc));self.save();raise ValueError(t['message']) from None
    from image_retry import configure
    configure(t)
    from visual_plans import context as visual_context
    t['visual_plan']=visual_context(self,t)
-   t['prompt']=generation_prompt(photo_facts(t.get('variant_parameters'),t['facts']),t.get('group_facts',''),t.get('expected_images',8),visual_plan=t['visual_plan'])+'\n'+reference_contract(t)
+   t['prompt']=generation_prompt(expected=t.get('expected_images',8),visual_plan=t['visual_plan'])+'\n'+reference_contract(t)
   t['prompt']=t['prompt'].replace('。如以文件或ZIP交付，8张文件须按01_至08_编号，01_为主图，ZIP不得包含原始参考图。','。仅交付8张独立图片，按01_至08_编号。');t['prompt']+=('\n只交付一张原始拼图，不提供ZIP。' if t.get('sheet_layout') else '\n交付要求：仅输出独立图片及逐张下载入口，不要打包，不提供ZIP或其他压缩包。');self.save();result=dict(t);result['references']=[{'name':r['name'],'mime':r['mime'],'purpose':r.get('purpose','variant_main'),'base64':base64.b64encode(Path(r['path']).read_bytes()).decode()} for r in t.get('references',[])];return result
  def find(self,tid):
   t=next((t for t in self.tasks if t['id']==tid),None)
@@ -671,7 +666,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.65','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.66','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)

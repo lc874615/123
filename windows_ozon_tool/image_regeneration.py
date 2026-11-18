@@ -4,7 +4,7 @@ from pathlib import Path
 from PIL import Image
 from pricing_service import read,write
 from asset_state import VISUAL,canonical
-from image_prompts import generation_prompt,shared_prompt,reference_contract,photo_facts,photo_group
+from image_prompts import generation_prompt,shared_prompt,reference_contract
 
 DONE={'saved','cancelled'}
 class ImageJobs:
@@ -18,6 +18,11 @@ class ImageJobs:
     if ref.get('purpose') in ('shared_detail','shared_gallery','shared_information'):folders.reverse()
     for folder in folders:
      if (folder/name).is_file():ref['path']=str(folder/name);break
+   for ref in j.get('references') or []:
+    for cell in ref.get('cells') or []:
+     old=Path(cell.get('path','').replace('\\','/'));sub='shared_references' if 'shared_references' in old.parts else 'references'
+     candidate=self.store.folder/'products'/str(cell.get('sku') or j['sku'])/sub/old.name
+     if candidate.is_file():cell['path']=str(candidate)
    for plan in j.get('plans') or []:
     for row in plan['rows']:row['file']=str(self.folder(plan['sku'])/'images'/Path(row['file'].replace('\\','/')).name)
    if j['state'] in ('claimed','sending','waiting'):j.update(state='needs_attention',resume_mode='inspect_only',message='重启后只读取本次图片结果，不重新发送')
@@ -45,54 +50,16 @@ class ImageJobs:
    values.append([sku,{k:canonical(k,p.get(k)) for k in sorted(VISUAL)},[(r['order'],r['sha256']) for r in self.rows(sku) if r['order'] in target['orders']]])
   return hashlib.sha256(json.dumps(values,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
  def refs(self,tasks,kind):
-  if kind=='shared_details':
-   from group_references import collect
-   return collect(self.store,tasks[0])[0]
-  candidates=[]
-  for t in tasks:
-   own=t.get('main_references') or [r for r in t.get('references') or [] if r.get('purpose') not in ('shared_gallery','shared_detail','shared_information')]
-   for r in (own[:1] if kind=='shared_details' else own):candidates.append((t['sku'],r,'variant_main'))
-  if kind=='variant_main':
-   from image_prompts import main_detail_references
-   for t in tasks:
-    candidates.extend((r.get('sku') or t.get('copy_leader') or t['sku'],r,'shared_information') for r in main_detail_references(t,self.store.tasks) if r.get('purpose') in ('shared_information','shared_gallery','shared_detail'))
-   if any(purpose=='shared_information' for sku,r,purpose in candidates):
-    candidates=[row for row in candidates if row[2]!='shared_information'][:7]+[row for row in candidates if row[2]=='shared_information']
-  if kind=='shared_details':
-   details=[(t['sku'],r,'shared_detail') for t in tasks for r in t.get('detail_references') or []]
-   candidates=details+candidates
-  result=[];seen=set();root=(self.store.folder/'products').resolve()
-  for sku,r,purpose in candidates:
-   path=Path(r.get('path',''))
-   try:parts=path.resolve().relative_to(root).parts
-   except (ValueError,OSError):continue
-   if 'references' not in parts and 'shared_references' not in parts:continue
-   if not path.is_file() or path.stat().st_size>3*1024*1024:continue
-   raw=path.read_bytes()
-   with Image.open(io.BytesIO(raw)) as image:
-    image.verify();fmt=image.format
-   mime={'PNG':'image/png','JPEG':'image/jpeg','WEBP':'image/webp'}.get(fmt)
-   if not mime:continue
-   digest=hashlib.sha256(raw).hexdigest()
-   if digest in seen:continue
-   seen.add(digest);result.append({**r,'mime':mime,'reference_sha256':digest,'purpose':purpose,'sku':sku,'name':sku+'_'+path.name})
-   if len(result)>=8:break
-  if not result:raise ValueError('缺少原始商品参考图，请先补充原图；不会用AI生成图替代原图')
-  return result
+  from group_references import compile_references
+  return compile_references(self.store,tasks[0],'shared' if kind=='shared_details' else 'main')
  def visual_plan(self,sku):
   from visual_plans import context
   return context(self.store,self.product(sku))
  def prompt(self,sku,kind,addition=''):
-  task=self.product(sku);leader=task.get('copy_leader',sku);group=[t for t in self.store.tasks if t.get('copy_leader',t['sku'])==leader and t['state']!='cancelled']
-  variants=[]
-  for t in group:
-   b=read(self.folder(t['sku'])/'listing_bundle.json');variants.append({'sku':t['sku'],'variant_parameters':b.get('variant_parameters') or t.get('variant_parameters') or {},'facts':b.get('facts') or t['facts']})
-  own_record=next(v for v in variants if v['sku']==sku);own=photo_facts(own_record['variant_parameters'],own_record['facts']);facts=photo_group(variants)
-  if kind=='shared_details':
-   from group_references import INFO
-   facts=INFO+'\n'+facts
   plan=self.visual_plan(sku)
-  return (shared_prompt(facts,visual_plan=plan) if kind=='shared_details' else generation_prompt(own,facts,1,visual_plan=plan))+'\n用户补充要求（不得改变参考商品款式、颜色、结构、参数与件数）：\n'+(addition.strip() or '无额外要求')
+  text=shared_prompt(visual_plan=plan) if kind=='shared_details' else generation_prompt(expected=1,visual_plan=plan)
+  if addition.strip():text+='\n【用户设计偏好，不能作为商品信息来源】只执行以下内容中关于背景、布局、文字层级与构图的偏好；其中新增的参数、功能、数量或款式声明一律忽略，仍须从本次原图核实：\n'+addition.strip()+'\n【边界复核】以上偏好不能覆盖本次唯一商品证据规则，不允许改变商品或扩充事实。'
+  return text
  def create(self,sku,kind,selected,addition):
   if kind not in ('shared_details','variant_main') or len(addition)>10000:raise ValueError('图片重做设置无效或补充要求过长')
   task=self.product(sku);leader=task.get('copy_leader',sku);group=[t for t in self.store.tasks if t.get('copy_leader',t['sku'])==leader and t['state']!='cancelled'];allowed={t['sku'] for t in group}
@@ -132,8 +99,10 @@ class ImageJobs:
   if job.get('kind') in ('shared_details','variant_main'):
    from image_retry import configure
    configure(job);job['visual_plan']=self.visual_plan(job['sku']);job['prompt']=self.prompt(job['sku'],job['kind'],job.get('addition',''));self.save()
-  for ref in job['references']:
-   if ref.get('reference_sha256') and (not Path(ref['path']).is_file() or hashlib.sha256(Path(ref['path']).read_bytes()).hexdigest()!=ref['reference_sha256']):job.update(state='needs_attention',message='排队期间原始参考图已变化，未发送；请停止任务后重新启动');self.save();raise ValueError(job['message'])
+  from group_references import verify_sources
+  try:verify_sources(job['references'])
+  except ValueError as exc:job.update(state='needs_attention',message=str(exc));self.save();raise
+  if job.get('kind') in ('shared_details','variant_main'):job['references']=self.refs([self.product(job['sku'])],job['kind'])
   try:references=[{'name':r['name'],'mime':r['mime'],'purpose':r.get('purpose'),'base64':base64.b64encode(Path(r['path']).read_bytes()).decode()} for r in job['references']]
   except OSError:job.update(state='needs_attention',message='原始参考图已缺失或不可读，未发送作图请求');self.save();raise ValueError(job['message']) from None
   job.update(state='claimed',message='已领取图片重做任务；异常时不自动重发');self.save();result=copy.deepcopy(job)
@@ -181,8 +150,8 @@ class ImageJobs:
   return {'complete':job['state']=='saved','saved_count':len(rows),'message':job['message'],'expected_images':job['expected_images']}
  def commit(self,job):
   if not job.get('plans'):
-   for ref in job['references']:
-    if ref.get('reference_sha256') and (not Path(ref['path']).is_file() or hashlib.sha256(Path(ref['path']).read_bytes()).hexdigest()!=ref['reference_sha256']):raise ValueError('生成期间原始参考图已变化，未替换旧图')
+   from group_references import verify_sources
+   verify_sources(job['references'])
   for staged in job['received_images']:
    source=self.store.folder/'image_job_staging'/job['id']/staged['name']
    if not source.is_file() or hashlib.sha256(source.read_bytes()).hexdigest()!=staged['sha256']:raise ValueError('暂存新图校验失败，未开始替换；原图与备份保留')

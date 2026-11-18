@@ -15,30 +15,26 @@ class VisualPlanTests(unittest.TestCase):
   self.assertEqual(p['style'],'neutral');self.assertEqual(build({'name':'耳机'})['style'],'neutral')
   self.assertEqual(build({**cat('Наушники'),'confirmed':False})['style'],'neutral')
   self.assertEqual(build(cat('Автомобильный держатель'),{'name':'无线耳机'})['subtype'],'auto_holder')
- def test_known_category_title_conflict_is_visible_without_rewriting_class(self):
-  p=build(cat('Автомобильный держатель'),{'name':'耳机'});self.assertTrue(p['warnings']);self.assertEqual(p['style'],'engineering');self.assertEqual(p['category']['name'],'Автомобильный держатель');self.assertIn('方向不一致',render(p,'真实耳机资料'))
- def test_accessory_material_does_not_invent_included_accessories(self):
-  p=build(cat('Блендер'),{'accessory_material':'金属','size':'MODEL_A1'})
-  self.assertTrue(next(x for x in p['pages'] if x['requested_topic']=='attachments')['fallback'])
-  self.assertTrue(next(x for x in build(cat('Зарядные устройства'),{'size':'MODEL_A1'})['pages'] if x['requested_topic']=='fit')['fallback'])
+ def test_local_product_name_is_not_a_source_for_category_or_image_facts(self):
+  p=build(cat('Автомобильный держатель'),{'name':'耳机'});self.assertEqual(p,build(cat('Автомобильный держатель')));self.assertEqual(p['style'],'engineering');self.assertEqual(p['category']['name'],'Автомобильный держатель');self.assertIn('类目与原图商品明显冲突',render(p,'NOT_AN_IMAGE_FACT'))
+ def test_accessory_material_cannot_enable_a_topic_without_image_evidence(self):
+  p=build(cat('Блендер'),{'accessory_material':'金属','size':'MODEL_A1','extra':'配件ABC'})
+  row=next(x for x in p['pages'] if x['requested_topic']=='attachments');self.assertTrue(row['fallback_if_unproven']);self.assertIsNone(row['fallback']);self.assertEqual(p,build(cat('Блендер')))
  def test_content_order_differs_by_product_type_not_just_background(self):
   params={'extra':'蓝牙，充电，触控，兼容，护理，安装','length':'10','accessory_material':'配件'}
   plans=[build(cat(n),params,3) for n in ('Наушники','Зарядные устройства','Кресло','Постельное белье','Шуруповерт','Футболка','Когтеточка','Конструктор')]
   orders=[tuple(p['requested_topic'] for p in b['pages']) for b in plans];self.assertEqual(len(set(orders)),len(orders))
   for b in plans:self.assertEqual(b['pages'][0]['filename'],'01_main.jpg');self.assertEqual([p['order'] for p in b['pages']],list(range(1,9)))
- def test_missing_evidence_has_safe_named_replacement(self):
-  p=build(cat('Наушники'),{'name':'耳机','size':'MODEL_A1'},1);by={r['requested_topic']:r for r in p['pages']}
-  for key in ('connection','charging','controls','dimensions'):self.assertTrue(by[key]['fallback']);self.assertNotIn(key,by[key]['filename'])
-  p=build(cat('Кресло'),{'length':'50'},1);options=next(r for r in p['pages'] if r['requested_topic']=='options');self.assertTrue(options['fallback'])
-  p=build(cat('Наушники'),{'extra':'蓝牙5.3；USB-C充电；按键控制','length':'3'},2)
-  for r in p['pages']:
-   if r['requested_topic'] in ('connection','charging','controls','dimensions'):self.assertIsNone(r['fallback'])
+ def test_theme_fallback_waits_for_original_image_evidence_instead_of_parameter_table(self):
+  p=build(cat('Наушники'),{'size':'MODEL_A1'});by={r['requested_topic']:r for r in p['pages']}
+  for key in ('connection','charging','controls','dimensions'):self.assertTrue(by[key]['fallback_if_unproven']);self.assertIsNone(by[key]['fallback']);self.assertIn(key,by[key]['filename'])
+  self.assertEqual(p,build(cat('Наушники'),{'extra':'蓝牙5.3；USB-C充电；按键控制','length':'3'}))
  def test_render_scope_separates_main_shared_and_filenames(self):
   plan=build(cat('Наушники'),{'extra':'蓝牙；充电；按键','length':'3'})
   full=render(plan,'CURRENT','OTHER','full');main=render(plan,'CURRENT','OTHER_SECRET','main');shared=render(plan,'CURRENT','OTHER','shared')
   self.assertIn('01_main.jpg',full);self.assertIn('02_wear.jpg',full);self.assertNotIn('OTHER_SECRET',main)
-  self.assertIn('当前主图尺寸',main.replace('01主图尺寸','当前主图尺寸'));self.assertNotIn('01_main.jpg',shared);self.assertIn('01_wear.jpg',shared);self.assertIn('07_contents.jpg',shared)
-  self.assertIn('不强制两张人物场景',full);self.assertIn('穿戴类可少字',main)
+  self.assertIn('主图尺寸必须保留',main);self.assertNotIn('01_main.jpg',shared);self.assertIn('01_wear.jpg',shared);self.assertIn('07_contents.jpg',shared)
+  self.assertNotIn('两张场景图必须',full);self.assertIn('服装可少字',main)
  def test_creation_selection_claim_and_draft_preserve_plan_and_override(self):
   from local_bridge import Store
   from creation_category import selection,apply_task

@@ -13,7 +13,7 @@ class AllVariantReferencesTests(unittest.TestCase):
    self.assertTrue(all(any(r['sku'] in ref['name'] for ref in task['references']) for r in store.tasks));self.assertIn(INFO,task['prompt']);self.assertLessEqual(len(task['references']),8)
    for row in store.tasks:row['state']='saved'
    refs=store.image_jobs.refs(store.tasks,'shared_details');self.assertEqual({r['sku'] for r in refs},{t['sku'] for t in store.tasks})
-   self.assertIn(INFO,store.image_jobs.prompt(store.tasks[0]['sku'],'shared_details'))
+   self.assertIn('唯一商品证据',store.image_jobs.prompt(store.tasks[0]['sku'],'shared_details'))
  def test_large_group_keeps_all_skus_in_reference_sheet_mapping(self):
   with tempfile.TemporaryDirectory() as tmp:
    store=fixtures.ImageRegenerationTests().setup(tmp);leader=store.tasks[0]['sku']
