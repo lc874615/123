@@ -678,7 +678,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.83','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.84','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
@@ -1202,7 +1202,7 @@ def main(test_mode=False,on_ready=None):
     if cached is not None:return cached
     picker=remember(dialog,('commission_picker',str(path.resolve())),tk.Toplevel(dialog));picker.title('中文搜索官方佣金类型');picker.geometry('1100x520');picker.minsize(850,420)
     official=(read_pricing(path).get('category') or {}).get('name','')
-    ttk.Label(picker,text='当前 Ozon 官方类型：'+(official or '尚未确认')+'\n以下仅为候选佣金行，必须由你确认后才会用于 rFBS 定价；不判断 FBP。',justify='left').pack(pady=6)
+    ttk.Label(picker,text='当前 Ozon 官方类型：'+(official or '尚未确认')+'\n以下仅为候选佣金行，必须由你确认后才会用于 rFBS 定价；不判断 FBP。确认后，同一官方商品类型会自动沿用该映射；佣金表更新时才要求复核。',justify='left').pack(pady=6)
     query=tk.StringVar();entry=ttk.Entry(picker,textvariable=query,width=70);entry.pack(pady=4);entry.focus_set()
     frame=ttk.Frame(picker);frame.pack(fill='both',expand=True,padx=8)
     cols=('zh','ru','category','low','mid','high')
@@ -1228,8 +1228,13 @@ def main(test_mode=False,on_ready=None):
      row=choices[box.selection()[0]]
      pricing.map_type(type_id,row['type_ru'],row['source_row'],cfg['sha256'],official);picker.destroy()
      threading.Thread(target=pricing.calculate_all,daemon=True).start()
-    ttk.Button(picker,text='确认所选类型及该行佣金',command=apply).pack(pady=4)
-    ttk.Button(picker,text='先匹配 / 确认上架类目',command=lambda:category_editor(task)).pack(pady=4)
+    # Double-click is the fast confirmation path.  ``after_idle`` lets the
+    # Treeview finish selecting the clicked row before ``apply`` reads it.
+    box.bind('<Double-1>',lambda event:picker.after_idle(apply))
+    box.bind('<Return>',lambda event:apply())
+    actions=ttk.Frame(picker,padding=(8,6));actions.pack(side='bottom',fill='x')
+    ttk.Button(actions,text='确认所选类型及该行佣金',style='Primary.TButton',command=apply).pack(side='left',fill='x',expand=True,padx=(0,4))
+    ttk.Button(actions,text='修改上架类目',command=lambda:category_editor(task)).pack(side='left',padx=(4,0))
    except Exception as e:show_task_error('无法选择',str(e))
   def refresh_details():
    dialog.destroy();pricing_details(task)
