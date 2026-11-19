@@ -678,7 +678,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.84','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.85','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
@@ -892,7 +892,7 @@ def main(test_mode=False,on_ready=None):
   if cached is not None:return cached
   dialog=remember(root,('competitor_network_settings',),tk.Toplevel(root));dialog.title('本地竞品采集网络');dialog.geometry('700x360');dialog.minsize(600,300)
   current=competitor_local.network_settings()
-  ttk.Label(dialog,text='竞品参数由本地工具直连 Ozon 公开页读取，不使用浏览器插件或 ChatGPT 页面。\n默认保持为空，直接访问 Ozon；只有直连被拒绝时，才填写单独的 Ozon 网络出口。').pack(padx=16,pady=(16,8),anchor='w')
+  ttk.Label(dialog,text='竞品参数由本地工具直连 Ozon 公开页读取，不使用浏览器插件或 ChatGPT 页面。\n默认保持为空，直接访问 Ozon；只有直连被拒绝或重复跳转时，才填写单独的 Ozon 网络出口。中国大陆网络请使用能够实际访问 Ozon 的出口。').pack(padx=16,pady=(16,8),anchor='w')
   proxy=tk.StringVar(value=current['proxy_url']);url=tk.StringVar()
   ttk.Label(dialog,text='备用 Ozon 网络出口（可留空，例如 http://127.0.0.1:7890）').pack(padx=16,anchor='w')
   ttk.Entry(dialog,textvariable=proxy,width=76).pack(padx=16,pady=(2,8),fill='x')
@@ -904,15 +904,21 @@ def main(test_mode=False,on_ready=None):
    try:competitor_local.configure_proxy(proxy.get());state.configure(text=competitor_local.status+'；设置已保存。')
    except ValueError as exc:show_task_error('网络出口未保存',str(exc),parent=dialog)
   def probe():
+   if not url.get().strip():show_task_error('缺少测试链接','请粘贴一个 https://www.ozon.ru/product/... 商品链接。',parent=dialog);return
+   test_button.configure(state='disabled');state.configure(text='正在测试本地 Ozon 连接，请稍候…')
    def work():
     try:
      competitor_local.configure_proxy(proxy.get());page=competitor_local.read_page(url.get());message='连接成功：已读取 Ozon 公开页 '+str(len(page))+' 字节。'
     except Exception as exc:message='连接失败：'+str(exc)
-    root.after(0,lambda:state.configure(text=message))
-   if not url.get().strip():show_task_error('缺少测试链接','请粘贴一个 https://www.ozon.ru/product/... 商品链接。',parent=dialog);return
+    root.after(0,lambda:(state.configure(text=message),test_button.configure(state='normal')))
    threading.Thread(target=work,daemon=True).start()
+  def discover():
+   values=competitor_local.proxy_candidates()
+   if not values:state.configure(text='未发现本机正在监听的常见 HTTP 代理端口。127.0.0.1:7890 当前不可用，不要填写它。');return
+   proxy.set(values[0]);state.configure(text='发现本机候选出口：'+values[0]+'。已填入但未保存；请点击“测试本地 Ozon 连接”验证。')
   ttk.Button(buttons,text='保存网络设置',command=save).pack(side='left',padx=5)
-  ttk.Button(buttons,text='测试本地 Ozon 连接',style='Primary.TButton',command=probe).pack(side='left',padx=5)
+  ttk.Button(buttons,text='检测本机代理',command=discover).pack(side='left',padx=5)
+  test_button=ttk.Button(buttons,text='测试本地 Ozon 连接',style='Primary.TButton',command=probe);test_button.pack(side='left',padx=5)
  ttk.Button(sources_panel,text='本地竞品采集网络 / 连接测试',command=competitor_network_settings).pack(pady=3)
  from publication_service import PublicationService
  publication=PublicationService(DATA,store.lock,initial_stock=1000)

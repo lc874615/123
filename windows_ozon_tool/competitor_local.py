@@ -4,7 +4,7 @@ This deliberately does not use Edge, browser cookies, or the ChatGPT VPN path.
 Only the canonical public product URL is requested and only exact labels from
 the already loaded official category schema are returned to the reference gate.
 """
-import html,json,re,ssl,threading,urllib.error,urllib.request
+import html,json,re,socket,ssl,threading,urllib.error,urllib.request
 from pathlib import Path
 from html.parser import HTMLParser
 from urllib.parse import urlsplit
@@ -21,6 +21,21 @@ def _proxy_url(value):
  parts=urlsplit(value)
  if parts.scheme not in ('http','https') or not parts.hostname or parts.username or parts.password or parts.path not in ('','/') or parts.query or parts.fragment:raise ValueError('备用 Ozon 网络出口仅支持不含账号密码的 http://主机:端口 或 https://主机:端口')
  return value.rstrip('/')
+
+def discover_local_proxies():
+ """Find listening local HTTP-proxy candidates without touching the network."""
+ candidates=[]
+ for value in urllib.request.getproxies().values():
+  try:value=_proxy_url(value)
+  except ValueError:continue
+  if value not in candidates:candidates.append(value)
+ for port in (7890,7897,10809,10808,1080,2080,8080):
+  try:
+   with socket.create_connection(('127.0.0.1',port),timeout=.18):pass
+   value='http://127.0.0.1:'+str(port)
+   if value not in candidates:candidates.append(value)
+  except OSError:pass
+ return candidates
 
 def _direct_read(url,limit=3_000_000,timeout=18,proxy_url=''):
  """HTTPS only, with global proxy variables intentionally disabled.
@@ -46,6 +61,7 @@ def _direct_read(url,limit=3_000_000,timeout=18,proxy_url=''):
   except (urllib.error.HTTPError,urllib.error.URLError,ssl.SSLError) as exc:
    last=exc
    text=str(exc).casefold()
+   if isinstance(exc,urllib.error.HTTPError) and exc.code in (301,302,303,307,308):raise CaptureError('Ozon 公开页发生重复跳转，当前网络出口无法取得页面。请切换为可访问 Ozon 的本地出口后重试。','network') from exc
    if any(x in text for x in ('403','429','captcha','forbidden')):raise CaptureError('公开竞品页要求验证或限制访问，请稍后重试或在 Ozon 页面核对','verification') from exc
   except OSError as exc:last=exc
  route='备用 Ozon 网络出口' if proxy_url else '本地直连网络';detail=str(last)[:120]
@@ -113,6 +129,7 @@ class LocalCompetitorService:
   self.network_path.write_text(json.dumps({'proxy_url':proxy_url},ensure_ascii=False),encoding='utf-8')
   self.status=('本地 Ozon 采集：使用独立备用出口' if proxy_url else '本地直连 Ozon（不使用插件或 ChatGPT VPN）');self.wake.set()
  def read_page(self,url):return _direct_read(url,proxy_url=self.network_settings()['proxy_url'])
+ def proxy_candidates(self):return discover_local_proxies()
  def run_once(self):
   with self.store.lock:job=claim(self.store).get('job')
   if not job:return False
