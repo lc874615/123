@@ -27,7 +27,10 @@ class ImageJobs:
     for row in plan['rows']:row['file']=str(self.folder(plan['sku'])/'images'/Path(row['file'].replace('\\','/')).name)
    if j['state'] in ('claimed','sending','waiting'):j.update(state='needs_attention',resume_mode='inspect_only',message='重启后只读取本次图片结果，不重新发送')
   self.save()
- def save(self):write(self.path,self.jobs)
+ def save(self):
+  write(self.path,self.jobs)
+  from automation_wake import notify
+  notify(self.store)
  def get(self,identifier):return next((j for j in self.jobs if j['id']==identifier),None)
  def next(self):return next((j for j in self.jobs if j['state']=='queued'),None)
  def active(self,skus):return [j for j in self.jobs if j['state'] not in DONE and any(t['sku'] in skus for t in j['targets'])]

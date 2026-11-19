@@ -22,6 +22,8 @@ class ImageOrderConflict(ValueError):
 
 class Store:
  def __init__(self,folder):
+  from automation_wake import AutomationWake
+  self.automation_wake=AutomationWake()
   self.folder=Path(folder);self.folder.mkdir(parents=True,exist_ok=True);self.lock=threading.Lock();self.client={};self.download_tickets={};self.path=self.folder/'tasks.json';self.video_running=set();self.video_slots=threading.BoundedSemaphore(1);self.tasks=json.loads(self.path.read_text(encoding='utf-8-sig')) if self.path.exists() else []
   for t in self.tasks:
    if t['state'] in ('claimed','sending','waiting'):t['state']='needs_attention';t['resume_mode']='inspect_only';t['message']='服务已重启，等待自动读取现有网页结果；不重新发送'
@@ -65,6 +67,8 @@ class Store:
  def save(self):
   if hasattr(self,'image_jobs'):self.image_jobs.save()
   temp=self.path.with_suffix('.tmp');temp.write_text(json.dumps(self.tasks,ensure_ascii=False,indent=2),encoding='utf-8');temp.replace(self.path)
+  from automation_wake import notify
+  notify(self)
  def create(self,sku,facts,references=None):
   if not valid_article(sku):raise ValueError('货号格式无效')
   if not facts.strip() or len(facts)>20000:raise ValueError('商品资料为空或过长')
@@ -131,7 +135,7 @@ class Store:
    restored.append(task)
   self.tasks.extend(restored);self.rebase_paths();self.save();return len(restored)
  def set_paused(self,paused):
-  self.control={'paused':bool(paused),'serial':self.control.get('serial',0)+1,'command_token':secrets.token_hex(16)}
+  self.control={'paused':bool(paused),'serial':self.control.get('serial',0)+1,'command_token':secrets.token_hex(16),'issued_at':time.time()}
   self.control_path.write_text(json.dumps(self.control),encoding='utf-8')
   for task in self.tasks+(self.image_jobs.jobs if hasattr(self,'image_jobs') else []):
    if paused and task.get('copy_state')=='running':task.update(copy_state='needs_attention',pause_requested=True,pause_ack=False,resume_mode='copy_inspect_only',message='文案制作已暂停，继续时只读取已有结果')
@@ -223,7 +227,9 @@ class Store:
    return '前序任务 '+t['sku']+' 尚未完成：'+detail+t.get('message','')
   if time.time()-self.client.get('last_seen',0)>75:return '等待扩展连接：请保存配对码，并绑定当前ChatGPT标签'
   if not self.client.get('auto_enabled'):return '扩展已连接，但自动批次未启用'
-  return '扩展已连接，等待下一次轮询领取（最长约30秒）'
+  if self.client.get('bound') is False:return '扩展已连接，请先绑定ChatGPT商品作图页'
+  if time.time()-self.client.get('wake_seen',0)<45:return '本地事件通道已连接，任务变化后自动领取'
+  return '扩展已连接，等待下一次轮询领取（最长约30秒；事件通道正在恢复）'
  def task_status(self,tid):
   if hasattr(self,'image_jobs') and self.image_jobs.get(tid):
    self.image_jobs.tick();job=self.image_jobs.get(tid);return {'found':True,**job,'saved_count':len(job['received_images'])}
@@ -659,14 +665,17 @@ def server(store,token,port=8765):
     n=int(self.headers.get('Content-Length','0'))
     if not 0<n<29*1024*1024:raise ValueError('请求大小无效')
     body=json.loads(self.rfile.read(n))
+    if self.path=='/automation-wait':
+     store.client.update(last_seen=time.time(),wake_seen=time.time(),auto_enabled=bool(body.get('auto_enabled')),bound=bool(body.get('bound')))
+     return self.reply(200,store.automation_wake.wait(str(body.get('cursor') or '')))
     if self.path=='/queue-diagnostic':
      if not store.lock.acquire(blocking=False):return self.reply(200,{'busy':True,'message':'本地正在处理素材，已跳过队列快照；页面诊断仍可导出'})
-     try:value={'busy':False,'paused':store.control.get('paused',False),'tasks':[{'id':t['id'],'sku':t['sku'],'state':t['state'],'received':len(t.get('received_images') or []),'copy_state':t.get('copy_state'),'copy_mode':t.get('copy_mode'),'copy_phase':t.get('copy_phase'),'resume_mode':t.get('resume_mode'),'pause_requested':bool(t.get('pause_requested')),'recollection_requested':bool(t.get('recollection_requested')),'message':t.get('message',''),'attribute_deferred_reason':t.get('attribute_deferred_reason')} for t in store.tasks],'image_jobs':[{'id':j['id'],'sku':j['sku'],'state':j['state'],'received':len(j.get('received_images') or []),'expected':j.get('expected_images'),'kind':j.get('kind'),'resume_mode':j.get('resume_mode'),'message':j.get('message','')} for j in store.image_jobs.jobs if j['state'] not in ('saved','cancelled')]}
+     try:value={'wake':store.automation_wake.stats(),'command_ack':store.control.get('plugin_ack'),'busy':False,'paused':store.control.get('paused',False),'tasks':[{'id':t['id'],'sku':t['sku'],'state':t['state'],'received':len(t.get('received_images') or []),'copy_state':t.get('copy_state'),'copy_mode':t.get('copy_mode'),'copy_phase':t.get('copy_phase'),'resume_mode':t.get('resume_mode'),'pause_requested':bool(t.get('pause_requested')),'recollection_requested':bool(t.get('recollection_requested')),'message':t.get('message',''),'attribute_deferred_reason':t.get('attribute_deferred_reason')} for t in store.tasks],'image_jobs':[{'id':j['id'],'sku':j['sku'],'state':j['state'],'received':len(j.get('received_images') or []),'expected':j.get('expected_images'),'kind':j.get('kind'),'resume_mode':j.get('resume_mode'),'message':j.get('message','')} for j in store.image_jobs.jobs if j['state'] not in ('saved','cancelled')]}
      finally:store.lock.release()
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.66','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.67','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
@@ -676,6 +685,9 @@ def server(store,token,port=8765):
      elif self.path=='/competitor-result':
       from competitor_reference import receive
       value=receive(store,body)
+     elif self.path=='/control-ack':
+      from automation_wake import acknowledge
+      value=acknowledge(store,body.get('command_token'))
      elif self.path=='/control':value=store.control
      elif self.path=='/automation-control':value=store.set_paused(bool(body.get('paused')))
      elif self.path=='/pause-ack':
@@ -692,7 +704,7 @@ def server(store,token,port=8765):
       store.control['queue_restart_ack']={'token':command['token'],'received_at':time.time()}
       store.control_path.write_text(json.dumps(store.control),encoding='utf-8');value={'ok':True}
      elif self.path=='/heartbeat':
-      store.client={'last_seen':time.time(),'auto_enabled':bool(body.get('auto_enabled'))}
+      store.client.update(last_seen=time.time(),auto_enabled=bool(body.get('auto_enabled')))
       value={'ok':True,'queue_reason':store.queue_reason(),'blockers':store.blockers()}
      elif self.path=='/resume-unsent-upload':value=store.resume_unsent_upload()
      elif self.path=='/queue-status':value={'blockers':store.blockers(),'queue_reason':store.queue_reason(),'queued_count':sum(t['state']=='queued' for t in store.tasks),'listings':store.listing_status()}
