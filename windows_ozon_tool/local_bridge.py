@@ -678,7 +678,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.81','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.82','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
@@ -1204,12 +1204,8 @@ def main(test_mode=False,on_ready=None):
     ttk.Button(picker,text='确认所选类型及该行佣金',command=apply).pack(pady=4)
     ttk.Button(picker,text='先匹配 / 确认上架类目',command=lambda:category_editor(task)).pack(pady=4)
    except Exception as e:show_task_error('无法选择',str(e))
-  ttk.Label(dialog,text='估算售价已自动采用，无需单独确认；请在整组预览核对数据。').pack(pady=4)
-  ttk.Button(dialog,text='匹配 / 确认 / 修改本变体及同组类目',command=lambda:category_editor(task)).pack(pady=4)
-  ttk.Button(dialog,text='连接Ozon API / 重新匹配类目',command=connect_category).pack(pady=4)
   def refresh_details():
    dialog.destroy();pricing_details(task)
-  ttk.Button(dialog,text='刷新售价与处理进度',command=refresh_details).pack(pady=4)
   def update_details():
    if not dialog.winfo_exists():return
    try:
@@ -1218,7 +1214,14 @@ def main(test_mode=False,on_ready=None):
    dialog.after(1500,update_details)
   update_details()
   commission_missing='佣金表未找到' in str(bundle.get('pricing_status',''))
-  ttk.Button(dialog,text=('立即匹配 rFBS 佣金行（需要确认）' if commission_missing else '查看 / 修改 rFBS 佣金类型'),style='Primary.TButton' if commission_missing else 'TButton',command=select_type).pack(pady=4)
+  # Keep the blocking action outside the price text. On small Windows
+  # displays stacked controls used to be pushed below the dialog.
+  actions=ttk.Frame(dialog,padding=(10,8));actions.pack(side='bottom',fill='x')
+  ttk.Label(actions,text='估算售价自动采用；请在整组预览核对数据。',style='Status.TLabel').grid(row=0,column=0,columnspan=3,sticky='w',pady=(0,5))
+  ttk.Button(actions,text=('立即匹配 rFBS 佣金行（需要确认）' if commission_missing else '查看 / 修改 rFBS 佣金类型'),style='Primary.TButton' if commission_missing else 'TButton',command=select_type).grid(row=1,column=0,sticky='ew',padx=(0,5))
+  ttk.Button(actions,text='修改上架类目',command=lambda:category_editor(task)).grid(row=1,column=1,sticky='ew',padx=5)
+  ttk.Button(actions,text='刷新',command=refresh_details).grid(row=1,column=2,sticky='ew',padx=(5,0))
+  actions.columnconfigure(0,weight=3);actions.columnconfigure(1,weight=2);actions.columnconfigure(2,weight=1)
  task_more.add_command(label='查看所选变体售价明细 / 佣金类型',command=pricing_details)
  ttk.Button(task_actions,text='匹配 rFBS 佣金',command=pricing_details).pack(side='left',padx=4)
  task_more.add_command(label='删除选中本地记录（保留平台商品）',command=delete)
