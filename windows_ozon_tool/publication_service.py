@@ -14,6 +14,19 @@ def warehouse_label(row):
  kind=str(row.get('warehouse_type') or ('rFBS' if explicit_true(row.get('is_rfbs')) else '未标明类型'))
  state=str(row.get('status') or '未提供状态')
  return str(row.get('name') or row['warehouse_id'])+' ['+kind+'，'+state+'] / '+str(row['warehouse_id'])
+
+def stock_error_guidance(errors):
+ """Turn permanent stock eligibility errors into a safe local action.
+
+ Ozon may call this a tag-validation error although the stock endpoint does
+ not accept listing tags.  It is a delivery-scheme restriction, so retrying
+ the same stock request cannot resolve it.
+ """
+ rows=errors if isinstance(errors,list) else []
+ codes={str(row.get('code','')).upper() for row in rows if isinstance(row,dict)}
+ if 'CB_DELIVERY_ONLY_FBP' in codes:
+  return '平台配送方案限制：该商品当前仅允许 FBP 配送，所选仓库不兼容；请先在 Ozon 后台确认/启用该商品可用的配送方案和仓库，再刷新仓库后重新提交库存。此项不是商品文案标签错误，已停止对同一仓库自动重试。'
+ return ''
 READ_PATHS={'/v2/warehouse/list','/v1/product/import/info','/v3/product/info/list','/v2/product/info/stocks-by-warehouse/fbs'}
 WRITE_PATHS={'/v3/product/import','/v2/products/stocks','/v1/product/import/prices','/v1/barcode/generate'}
 def account():
@@ -227,7 +240,12 @@ class PublicationService:
      if offer not in job['items']:continue
      target=job['items'][offer];errors=row.get('errors') or []
      if row.get('status') in ('failed','error') or any(str(e.get('level','ERROR')).upper() in ('ERROR','ERROR_LEVEL_ERROR','ERROR_LEVEL_INTERNAL','INTERNAL') for e in errors):target.update(import_state='failed',errors=errors,status='导入失败')
-     elif row.get('status') in ('imported','skipped') and row.get('product_id'):target.update(import_state='imported',product_id=row['product_id'],errors=[],status='已导入')
+     elif row.get('status') in ('imported','skipped') and row.get('product_id'):
+      target.update(import_state='imported',product_id=row['product_id'],errors=[])
+      # Keep a later-stage rejection visible. The import-status poll repeats
+      # on every pass and previously overwrote a useful stock/warehouse error
+      # with the misleading generic text "已导入".
+      if target.get('stock_state')=='pending':target['status']='已导入'
      elif target['import_state']!='imported':target.update(status='平台正在处理导入，等待创建完成',errors=errors)
    self._save(job)
    current=[read(p) for p in job['source_paths']]
@@ -299,8 +317,16 @@ class PublicationService:
      response=self.call_for(job['account_id'],'/v2/products/stocks',{'stocks':stock_rows});results={r.get('offer_id'):r for r in response.get('result',[])}
      for row in stock_rows:
       target=job['items'][row['offer_id']];result=results.get(row['offer_id'])
-      if result and result.get('warehouse_id')==row['warehouse_id'] and result.get('updated') is True and not result.get('errors'):target.update(stock_state='done',stock_errors=[],status='库存已设置')
-      elif result and result.get('updated') is False:target.update(stock_state='rejected',errors=result.get('errors') or [],stock_errors=result.get('errors') or [],status='库存未设置，稍后重试',stock_retry_at=time.time()+120)
+      # /v2/products/stocks identifies a result by offer_id (and may return
+      # product_id), but does not consistently echo warehouse_id.  The target
+      # warehouse is already frozen in this job and is verified again below by
+      # /stocks-by-warehouse/fbs.  Requiring a non-contractual warehouse_id in
+      # the write response used to turn a successful updated=true result into
+      # an "uncertain" inventory write.
+      if result and result.get('updated') is True and not result.get('errors'):target.update(stock_state='done',stock_errors=[],status='库存已设置，待按仓库查询核对')
+      elif result and result.get('updated') is False:
+       stock_errors=result.get('errors') or [];guidance=stock_error_guidance(stock_errors)
+       target.update(stock_state='rejected',errors=stock_errors,stock_errors=stock_errors,status=guidance or '库存未设置，稍后重试',stock_retry_at=float('inf') if guidance else time.time()+120)
       else:target.update(stock_state='uncertain',status='库存响应不完整，自动核对但不重复写入')
     except Rejected as exc:
      for row in stock_rows:job['items'][row['offer_id']].update(stock_state='rejected',stock_errors=[{'message':str(exc)}],status=str(exc),stock_retry_at=time.time()+120)

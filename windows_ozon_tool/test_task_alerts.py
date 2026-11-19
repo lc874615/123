@@ -4,6 +4,9 @@ from unittest.mock import patch
 from task_alerts import collect,issue,render,AlertState,ProgressWatch,save_plugin_status,solution
 from local_bridge import Store
 class AlertTests(unittest.TestCase):
+ def test_delivery_only_fbp_has_specific_warehouse_guidance(self):
+  cause,steps=solution('库存: [{"code":"CB_DELIVERY_ONLY_FBP","message":"tags validation failed"}]')
+  self.assertEqual(cause,'配送方案与所选仓库不兼容');self.assertIn('不是商品标题、标签或图片问题',steps[0])
  def test_image_exception_has_chinese_task_and_recovery_steps(self):
   rows=collect([{'id':'T','sku':'SKU(1)','state':'needs_attention','message':'未找到原始作图标记'}],[],[]);text=render(rows);self.assertIn('SKU(1)',text);self.assertIn('中文说明',text);self.assertIn('定位 / 更换作图页',text);self.assertIn('不重新作图',text)
  def test_published_old_copy_attention_has_no_false_production_alert(self):

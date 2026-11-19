@@ -10,7 +10,7 @@ from pricing_service import PricingService,read,write
 
 class FakeApi:
  def __init__(self):
-  self.calls=[];self.items={};self.stocks={};self.import_error=None;self.stock_error=None;self.import_pending=False;self.warehouse_active=True;self.moderate='approved'
+  self.calls=[];self.items={};self.stocks={};self.import_error=None;self.stock_error=None;self.import_pending=False;self.warehouse_active=True;self.moderate='approved';self.stock_result_includes_warehouse=True
  def __call__(self,path,body):
   self.calls.append((path,copy.deepcopy(body)))
   if path.endswith('/attribute'):
@@ -47,7 +47,7 @@ class FakeApi:
    if self.stock_error=='before':raise ValueError('response lost')
    for row in body['stocks']:self.stocks[(row['offer_id'],row['warehouse_id'])]=row['stock']
    if self.stock_error=='after':raise ValueError('response lost')
-   return {'result':[{**r,'updated':True,'errors':[]} for r in body['stocks']]}
+   return {'result':[{**(r if self.stock_result_includes_warehouse else {k:v for k,v in r.items() if k!='warehouse_id'}),'updated':True,'errors':[]} for r in body['stocks']]}
   if path=='/v2/product/info/stocks-by-warehouse/fbs':return {'products':[{'offer_id':o,'warehouse_id':w,'free_stock':v} for (o,w),v in self.stocks.items() if o in body['offer_id']],'has_next':False}
   raise AssertionError(path)
 
@@ -109,6 +109,21 @@ class GroupTests(unittest.TestCase):
     group,api,pub=self.setup_group(tmp);api.stock_error=mode;job=pub.begin(group,group.token());pub.step(job['id']);pub.step(job['id'])
     self.assertEqual(sum(p=='/v2/products/stocks' for p,b in api.calls),1)
     current=read(pub.root/(job['id']+'.json'));self.assertEqual(current['items']['ITEM']['stock_state'],'done' if mode=='after' else 'uncertain')
+ def test_stock_success_without_warehouse_in_write_receipt_is_accepted(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   group,api,pub=self.setup_group(tmp);api.stock_result_includes_warehouse=False;job=pub.begin(group,group.token())
+   pub.step(job['id']);result=pub.step(job['id']);item=next(iter(result['items'].values()))
+   self.assertEqual(item['stock_state'],'done');self.assertEqual(item['current_free_stock'],5);self.assertNotIn('响应不完整',item['status'])
+ def test_delivery_only_fbp_rejection_is_not_retried_as_a_transient_stock_error(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   group,api,pub=self.setup_group(tmp);original=pub.caller
+   def call(path,body):
+    if path=='/v2/products/stocks':return {'result':[{'offer_id':row['offer_id'],'updated':False,'errors':[{'code':'CB_DELIVERY_ONLY_FBP','message':'tags validation failed'}]} for row in body['stocks']]}
+    return original(path,body)
+   pub.caller=call;job=pub.begin(group,group.token())
+   for _ in range(6):result=pub.step(job['id'])
+   item=next(iter(result['items'].values()))
+   self.assertEqual(item['stock_state'],'rejected');self.assertEqual(item['stock_errors'][0]['code'],'CB_DELIVERY_ONLY_FBP');self.assertEqual(item['stock_retry_at'],float('inf'));self.assertIn('配送方案限制',item['status'])
  def test_existing_live_card_cannot_mask_pending_import(self):
   with tempfile.TemporaryDirectory() as tmp:
    group,api,pub=self.setup_group(tmp);api.import_pending=True;job=pub.begin(group,group.token());api.stocks[('ITEM',77)]=5;current=pub.step(job['id'])
