@@ -1,9 +1,9 @@
 const test=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs');
 const source=fs.readFileSync(__dirname+'/background.js','utf8');
-function fixture({redirect=false,resume=false,fail=false,invalid=false,blocked=false}={}){
+function fixture({redirect=false,resume=false,fail=false,invalid=false,blocked=false,partial=false}={}){
  const job={token:'synthetic-token',url:invalid?'https://attacker.com/product/123/':'https://www.ozon.ru/product/mock-123/'};
- const stored={pairToken:'synthetic-pair',...(resume?{competitorActive:{job,createdAt:Date.now(),tabId:77}}:{})};const calls=[],created=[],removed=[];
- const chrome={storage:{local:{get:async keys=>{const out={};for(const k of [].concat(keys))out[k]=stored[k];return out;},set:async v=>Object.assign(stored,v),remove:async k=>delete stored[k]}},runtime:{onMessage:{addListener(){}},onStartup:{addListener(){}},onInstalled:{addListener(){}}},alarms:{onAlarm:{addListener(){}}},tabs:{create:async t=>{created.push(t);return {id:77};},get:async()=>({id:77,status:'complete',url:redirect?'https://www.ozon.ru/my/order':job.url}),remove:async id=>removed.push(id)},scripting:{executeScript:async p=>{if(fail)throw Error('synthetic browser failure');return p.files?[]:[{result:{url:job.url,rows:blocked?[]:[{name:'Тип разъема',value:'USB-C'}],...(blocked?{error_code:'verification'}:{})}}];}}};
+ const stored={pairToken:'synthetic-pair',...(resume?{competitorActive:{job,createdAt:Date.now(),tabId:77}}:{})};const calls=[],created=[],removed=[];let reads=0;
+ const chrome={storage:{local:{get:async keys=>{const out={};for(const k of [].concat(keys))out[k]=stored[k];return out;},set:async v=>Object.assign(stored,v),remove:async k=>delete stored[k]}},runtime:{onMessage:{addListener(){}},onStartup:{addListener(){}},onInstalled:{addListener(){}}},alarms:{onAlarm:{addListener(){}}},tabs:{create:async t=>{created.push(t);return {id:77};},get:async()=>({id:77,status:'complete',url:redirect?'https://www.ozon.ru/my/order':job.url}),remove:async id=>removed.push(id)},scripting:{executeScript:async p=>{if(fail)throw Error('synthetic browser failure');return p.files?[]:[{result:{url:job.url,rows:blocked?[]:[{name:'Тип разъема',value:'USB-C'}],...(blocked?{error_code:'verification'}:{}),diagnostics:{full_sections:partial&&reads++===0?0:1}}}];}}};
  const ctx={chrome,URL,AbortSignal,setTimeout,clearTimeout,console,fetch:async(url,init)=>{const path=new URL(url).pathname,body=JSON.parse(init.body);calls.push({path,body});return {ok:true,json:async()=>path==='/competitor-task'?{job}:{ok:true}};}};
  vm.createContext(ctx);vm.runInContext(source,ctx);vm.runInContext("busy=true;runTab=42;current={id:'original-chatgpt-task'}",ctx);
  return {ctx,job,stored,calls,created,removed,run:()=>vm.runInContext('competitorPoll()',ctx),state:()=>vm.runInContext('({busy,runTab,current})',ctx)};
@@ -17,3 +17,5 @@ test('arbitrary host from a stale or invalid job is never opened',async()=>{cons
 test('failed owned product tab is reused instead of opening duplicates',async()=>{const h=fixture({fail:true});await h.run();await h.run();assert.equal(h.created.length,1);assert.equal(h.removed.length,0);});
 
 test('verification is explicit, leaves page open and reports no adopted data',async()=>{const h=fixture({blocked:true});await h.run();assert.equal(h.removed.length,0);assert.equal(h.calls.at(-1).body.error_code,'verification');assert.equal(h.calls.at(-1).body.rows,undefined);assert.equal(h.stored.competitorRecovery.tabId,77);});
+
+test('short characteristics do not end capture before the full section loads',async()=>{const h=fixture({partial:true});await h.run();assert.equal(h.calls.at(-1).body.diagnostics.full_sections,1);});

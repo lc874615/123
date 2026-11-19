@@ -68,6 +68,7 @@ def describe(bundle,task=None):
  elif not snap:state='queued';label='待采集 / 未预填'
  else:
   state=snap.get('state','queued');label={'reading':'采集中 / 未预填','failed':'采集失败 / 未预填','ready':f'已读 · 匹配{matched} · 预填{prefilled} · 采用{applied}'}.get(state,'待采集 / 未预填')
+ if state=='ready' and snap.get('read_scope')=='summary':label=f'仅简要 · 匹配{matched} · 预填{prefilled}'
  if state=='failed' and snap.get('retryable'):state='retrying';label='等待自动重试 / 未预填'
  if state=='failed' and snap.get('error_code')=='verification':state='verification';label='需页面验证 / 未预填'
  if gate.get('state')=='timeout' and state in ('schema','queued','reading'):state='timeout';label='采集超时 / 未预填'

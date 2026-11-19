@@ -5,7 +5,9 @@
   const visible=el=>!!el.getClientRects().length&&getComputedStyle(el).visibility!=='hidden';
   const section=[...document.querySelectorAll(selectors)].find(visible);
   if(section){section.scrollIntoView({block:'center'});const button=[...section.querySelectorAll('button,a')].find(el=>visible(el)&&/^(развернуть|показать все|все характеристики|показать полностью)$/i.test(el.innerText.trim()));if(button)button.click();return;}
-  const tab=[...document.querySelectorAll('button,a,[role="tab"]')].find(el=>visible(el)&&/^(характеристики|все характеристики)$/i.test(el.innerText.trim())&&(el.tagName!=='A'||(el.getAttribute('href')||'').startsWith('#')));
+  const direct=document.querySelector('[data-widget="webShortCharacteristics"] [title="Перейти к характеристикам"]');
+  if(direct&&visible(direct)){direct.click();return;}
+  const tab=[...document.querySelectorAll('button,a,[role="tab"],[data-widget="webShortCharacteristics"] [title], [data-widget="webShortCharacteristics"] div')].find(el=>visible(el)&&/^(характеристики|все характеристики|перейти к характеристикам)$/i.test(el.innerText.trim())&&(el.tagName!=='A'||(el.getAttribute('href')||'').startsWith('#')));
   if(tab)tab.click();
  };
  globalThis.__ozonCompetitorRead=(fields=[])=>{
@@ -17,7 +19,7 @@
    const key=name+'\0'+value;if(!seen.has(key)&&rows.length<400){seen.add(key);rows.push({name,value,...(Array.isArray(values)&&values.length>1?{values}: {})});}
   };
   const visible=el=>!!el.getClientRects().length&&getComputedStyle(el).visibility!=='hidden';
-  for(const section of document.querySelectorAll(selectors)){
+  for(const section of document.querySelectorAll(selectors+', [data-widget="webShortCharacteristics"]')){
    if(!visible(section))continue;
    for(const dl of section.querySelectorAll('dl'))for(const dt of dl.querySelectorAll('dt')){
     const dd=dt.nextElementSibling?.tagName==='DD'?dt.nextElementSibling:dt.parentElement?.nextElementSibling?.querySelector('dd');if(dd?.tagName==='DD'&&visible(dt)&&visible(dd))add(dt.innerText,dd.innerText,[...dd.querySelectorAll('a')].map(a=>a.innerText.trim()).filter(Boolean));
@@ -59,7 +61,7 @@
   for(const obj of products.filter(owns))for(const p of [].concat(obj.additionalProperty||[]))if(p&&Array.isArray(p.value)&&p.value.every(v=>typeof v==='string'))add(p.name,p.value.join('；'),p.value);else if(p&&typeof p.value!=='object')add(p.name,p.unitText?String(p.value)+' '+p.unitText:p.value);
   const body=(document.body?.innerText||'').slice(0,12000);
   const blocked=/подтвердите.{0,40}(человек|робот)|доступ ограничен|проверка безопасности|captcha|access denied|verify.{0,30}(human|identity)|провер.{0,30}(робот|человек)/i.test(body);
-  const diagnostics={sections:document.querySelectorAll(selectors).length,rows:rows.length,blocked};
+  const diagnostics={sections:document.querySelectorAll(selectors+', [data-widget="webShortCharacteristics"]').length,full_sections:[...document.querySelectorAll(selectors)].filter(visible).length,rows:rows.length,blocked};
   return {url:url.origin+url.pathname,rows,diagnostics,error_code:blocked&&!rows.length?'verification':null};
  };
 })();
