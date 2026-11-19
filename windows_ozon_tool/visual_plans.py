@@ -3,7 +3,7 @@ Rules select presentation, never product facts or technical specifications.
 """
 import copy,hashlib,json,re
 from pathlib import Path
-VERSION=3
+VERSION=4
 STYLES={
  'digital':('精密数码','精确轮廓、接口与材质分区；按商品对比选择浅色或深色摄影背景，不固定蓝色圆台。用柔和侧光分清塑料、金属、玻璃与屏幕；标题短、最多突出1—2个有依据的关键数字，避免顶部排满小标签。克制高光，不虚构电路、芯片、声波效果或内部剖面。'),
  'appliance':('生活电器','干净真实的厨房、浴室或操作空间；产品与实际任务同框，操作与配置清楚。主图可有序展示实际配置，使用页让产品与任务成为主体；文字直接说明用途，不夸大处理效果。'),
@@ -113,7 +113,7 @@ def build(category=None,params=None,group_count=1,override=None):
  for n,topic in enumerate(ORDERS[subtype],1):
   title,need=TOPICS[topic]
   pages.append({'order':n,'key':topic,'requested_topic':topic,'filename':('01_main.jpg' if n==1 else f"{n:02d}_{topic}.jpg"),'title':title,'fallback':None,'fallback_if_unproven':FALLBACKS.get(topic),'needs':need})
- result={'warnings':[],'version':VERSION,'evidence_policy':'original_references_only','selling_plan_version':1,'style':style,'style_name':STYLES[style][0],'subtype':subtype,'reason':reason,'source':'manual' if override in STYLES else 'fallback' if subtype=='neutral' else 'official_category','category':{k:category.get(k) for k in ('description_category_id','type_id','name','zh_path')},'pages':pages,'group_count':group_count}
+ result={'warnings':[],'version':VERSION,'evidence_policy':'original_references_only','selling_plan_version':2,'style':style,'style_name':STYLES[style][0],'subtype':subtype,'reason':reason,'source':'manual' if override in STYLES else 'fallback' if subtype=='neutral' else 'official_category','category':{k:category.get(k) for k in ('description_category_id','type_id','name','zh_path')},'pages':pages,'group_count':group_count}
  result['fingerprint']=hashlib.sha256(json.dumps(result,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
  return result
 
@@ -135,7 +135,7 @@ def render(plan,facts='',group_facts='',scope='full'):
  if scope not in ('full','main','shared'):raise ValueError('未知作图范围')
  # Old saved plans are never trusted as product evidence; rebuild presentation
  # from their category/override rather than carrying parameter-based fallbacks.
- if plan.get('evidence_policy')!='original_references_only' or plan.get('selling_plan_version')!=1:
+ if plan.get('evidence_policy')!='original_references_only' or plan.get('selling_plan_version')!=2:
   category={**(plan.get('category') or {}),'confirmed':True};plan=build(category,override=plan.get('style') if plan.get('source')=='manual' else None)
  pages=plan['pages'] if scope=='full' else plan['pages'][:1] if scope=='main' else plan['pages'][1:]
  rows=[]

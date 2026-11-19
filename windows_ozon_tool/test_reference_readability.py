@@ -16,6 +16,15 @@ class ReferenceReadabilityTests(unittest.TestCase):
     with Image.open(path) as source,Image.open(ref['path']) as crop:self.assertEqual(crop.tobytes(),ImageOps.exif_transpose(source).crop(tuple(ref['crop_box'])).tobytes())
     self.assertEqual(ref['purpose'],'shared_information');self.assertEqual(ref['source_path'],str(path));self.assertIn('区域',ref['region'])
    verify_sources(refs)
+ def test_very_long_original_gets_readable_regions_covering_bottom_without_extra_attachments(self):
+  from reference_readability import detail_regions
+  import hashlib
+  with tempfile.TemporaryDirectory() as tmp:
+   store,path=self.setup_long(tmp);Image.new('RGB',(600,9000),'white').save(path);t=store.tasks[0]
+   ref={**t['detail_references'][0],'reference_sha256':hashlib.sha256(path.read_bytes()).hexdigest(),'sku':t['sku']}
+   rows=detail_regions(store,t,[ref],12);self.assertGreater(len(rows),4);self.assertLessEqual(len(rows),12)
+   self.assertEqual(rows[0]['crop_box'][1],0);self.assertEqual(rows[-1]['crop_box'][3],9000)
+   self.assertTrue(all(r['crop_box'][3]-r['crop_box'][1]<=1000 for r in rows));verify_sources(rows)
  def test_parent_change_invalidates_regions_and_source_index_together(self):
   with tempfile.TemporaryDirectory() as tmp:
    store,path=self.setup_long(tmp);refs=compile_references(store,store.tasks[0],'main');Image.new('RGB',(600,1900),'green').save(path)

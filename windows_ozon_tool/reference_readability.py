@@ -13,13 +13,13 @@ def detail_regions(store,task,references,budget):
    w,h=image.size
    if image.getexif().get(274) in (5,6,7,8):w,h=h,w
   if w<500 or h<1600 or h/w<1.8:continue
-  count=min(4,max(2,math.ceil(h/(w*1.45))));span=math.ceil(h/count);overlap=max(24,round(span*.06));regions=[]
+  count=min(12,max(2,math.ceil(h/(w*1.45))));span=math.ceil(h/count);overlap=max(24,round(span*.06));regions=[]
   for i in range(count):
    regions.append((0,max(0,i*span-overlap),w,min(h,(i+1)*span+overlap)))
   candidates.append((ref,regions))
  result=[];folder=store.folder/'products'/task['sku']/'reference_regions'
  # Round-robin ensures one very long original cannot consume all region slots.
- for turn in range(4):
+ for turn in range(12):
   for ref,regions in candidates:
    if len(result)>=budget:return result
    if turn>=len(regions):continue
