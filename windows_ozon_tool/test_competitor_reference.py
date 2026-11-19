@@ -28,6 +28,17 @@ class CompetitorTests(unittest.TestCase):
    store=self.store(tmp,1);store.lock=threading.RLock();store.save=lambda:None
    with patch('competitor_local._direct_read',return_value=markup):self.assertTrue(LocalCompetitorService(store).run_once())
    saved=read(store.folder/'products'/'A'/'listing_bundle.json');self.assertEqual(saved['competitor_reference']['state'],'ready');self.assertIn('0:901',saved['competitor_reference']['suggestions']);self.assertNotIn('0:904',saved['competitor_reference']['suggestions'])
+ def test_local_collector_uses_only_explicit_ozon_network_fallback(self):
+  import threading
+  from competitor_local import LocalCompetitorService,_proxy_url
+  self.assertEqual(_proxy_url('http://127.0.0.1:7890/'),'http://127.0.0.1:7890')
+  for bad in ('socks5://127.0.0.1:7890','http://user:pass@127.0.0.1:7890','http://127.0.0.1:7890/path'):
+   with self.subTest(bad=bad):
+    with self.assertRaises(ValueError):_proxy_url(bad)
+  with tempfile.TemporaryDirectory() as tmp:
+   store=self.store(tmp,1);store.lock=threading.RLock();store.save=lambda:None;service=LocalCompetitorService(store);service.configure_proxy('http://127.0.0.1:7890')
+   with patch('competitor_local._direct_read',return_value='ok') as request:
+    self.assertEqual(service.read_page(URL),'ok');self.assertEqual(request.call_args.kwargs['proxy_url'],'http://127.0.0.1:7890')
  def test_local_empty_result_is_terminal_not_a_browser_retry(self):
   with tempfile.TemporaryDirectory() as tmp:
    store=self.store(tmp,1);job=claim(store)['job'];receive(store,{'token':job['token'],'error':'本地公开页未找到字段','error_code':'empty'})

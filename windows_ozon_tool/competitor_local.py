@@ -5,6 +5,7 @@ Only the canonical public product URL is requested and only exact labels from
 the already loaded official category schema are returned to the reference gate.
 """
 import html,json,re,ssl,threading,urllib.error,urllib.request
+from pathlib import Path
 from html.parser import HTMLParser
 from urllib.parse import urlsplit
 from secure_http import contexts
@@ -14,11 +15,25 @@ class CaptureError(ValueError):
  def __init__(self,message,code='transient'):
   super().__init__(message);self.code=code
 
-def _direct_read(url,limit=3_000_000,timeout=18):
- """HTTPS only, with environment proxy variables intentionally disabled."""
+def _proxy_url(value):
+ value=str(value or '').strip()
+ if not value:return ''
+ parts=urlsplit(value)
+ if parts.scheme not in ('http','https') or not parts.hostname or parts.username or parts.password or parts.path not in ('','/') or parts.query or parts.fragment:raise ValueError('备用 Ozon 网络出口仅支持不含账号密码的 http://主机:端口 或 https://主机:端口')
+ return value.rstrip('/')
+
+def _direct_read(url,limit=3_000_000,timeout=18,proxy_url=''):
+ """HTTPS only, with global proxy variables intentionally disabled.
+
+ ``proxy_url`` is an explicit Ozon-only fallback supplied by the local user.
+ It is never inherited from the browser/ChatGPT VPN environment.
+ """
  canonical=normalize_url(url);last=None
+ try:proxy_url=_proxy_url(proxy_url)
+ except ValueError as exc:raise CaptureError(str(exc),'network') from exc
  for context in contexts():
-  opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),urllib.request.HTTPSHandler(context=context))
+  routes={'http':proxy_url,'https':proxy_url} if proxy_url else {}
+  opener=urllib.request.build_opener(urllib.request.ProxyHandler(routes),urllib.request.HTTPSHandler(context=context))
   request=urllib.request.Request(canonical,headers={'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/121 Safari/537.36','Accept-Language':'ru-RU,ru;q=0.9','Accept':'text/html,application/xhtml+xml'})
   try:
    with opener.open(request,timeout=timeout) as response:
@@ -33,7 +48,9 @@ def _direct_read(url,limit=3_000_000,timeout=18):
    text=str(exc).casefold()
    if any(x in text for x in ('403','429','captcha','forbidden')):raise CaptureError('公开竞品页要求验证或限制访问，请稍后重试或在 Ozon 页面核对','verification') from exc
   except OSError as exc:last=exc
- raise CaptureError('本地直连未能读取竞品公开页：'+str(last)[:120])
+ route='备用 Ozon 网络出口' if proxy_url else '本地直连网络';detail=str(last)[:120]
+ if 'connection refused' in detail.casefold():raise CaptureError(route+'无法连接 Ozon（连接被拒绝）。请让 VPN 对 ozon.ru 走直连，或配置仅用于 Ozon 的备用出口。','network')
+ raise CaptureError(route+'未能读取竞品公开页：'+detail,'network')
 
 def _key(value):return re.sub(r'[^\w]+',' ',str(value or '').casefold().replace('ё','е')).strip()
 
@@ -84,17 +101,30 @@ def extract(html_text,fields):
  return out[:400]
 
 class LocalCompetitorService:
- def __init__(self,store):self.store=store;self.wake=threading.Event()
+ def __init__(self,store):self.store=store;self.wake=threading.Event();self.status='本地直连 Ozon（不使用插件或 ChatGPT VPN）'
+ @property
+ def network_path(self):return Path(self.store.folder)/'competitor_network.json'
+ def network_settings(self):
+  try:value=json.loads(self.network_path.read_text(encoding='utf-8'))
+  except (OSError,ValueError):value={}
+  return {'proxy_url':_proxy_url(value.get('proxy_url','')) if value.get('proxy_url') else ''}
+ def configure_proxy(self,proxy_url):
+  proxy_url=_proxy_url(proxy_url)
+  self.network_path.write_text(json.dumps({'proxy_url':proxy_url},ensure_ascii=False),encoding='utf-8')
+  self.status=('本地 Ozon 采集：使用独立备用出口' if proxy_url else '本地直连 Ozon（不使用插件或 ChatGPT VPN）');self.wake.set()
+ def read_page(self,url):return _direct_read(url,proxy_url=self.network_settings()['proxy_url'])
  def run_once(self):
   with self.store.lock:job=claim(self.store).get('job')
   if not job:return False
   try:
-   page=_direct_read(job['url']);rows=extract(page,job['fields'])
+   page=self.read_page(job['url']);rows=extract(page,job['fields'])
    body={'token':job['token'],'url':job['url'],'rows':rows,'diagnostics':{'collector':'local_direct','full_sections':1}}
    if not rows:body.update(error='本地公开页未找到与当前类目相同名称的参数，未预填',error_code='empty')
-  except CaptureError as exc:body={'token':job['token'],'error':str(exc),'error_code':exc.code}
+  except CaptureError as exc:
+   self.status='本地竞品采集失败：'+str(exc);body={'token':job['token'],'error':str(exc),'error_code':exc.code}
   except Exception as exc:body={'token':job['token'],'error':'本地采集异常：'+str(exc)[:160],'error_code':'transient'}
   with self.store.lock:receive(self.store,body)
+  if not body.get('error'):self.status='本地竞品采集正常：已读取公开 Ozon 页面'
   return True
  def worker(self,stop):
   while not stop.is_set():
