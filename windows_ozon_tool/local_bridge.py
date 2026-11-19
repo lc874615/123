@@ -678,7 +678,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.77','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.78','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
@@ -812,14 +812,23 @@ def main(test_mode=False,on_ready=None):
  ttk.Label(identity,text='商品类目',style='Card.TLabel').grid(row=0,column=1,sticky='w',padx=(12,0),pady=(0,5))
  base=tk.StringVar();ttk.Entry(identity,textvariable=base).grid(row=1,column=0,sticky='ew')
  category_row=ttk.Frame(identity,style='Card.TFrame');category_row.grid(row=1,column=1,sticky='ew',padx=(12,0));category_selection={}
+ color_catalog_note=ttk.Label(category_row,text='',style='Muted.TLabel');color_catalog_note.pack(side='bottom',anchor='w',pady=(3,0))
  def choose_creation_category():
   from creation_category import choose
   from account_context import credentials
   def saved(value):
-   category_selection.clear();category_selection.update(value);label=(value['category'].get('zh_path') or value['category'].get('name','')).split(' / ')[-1];category_button.configure(text=label[:30]+' · 已选定');refresh_visual_label()
+   category_selection.clear();category_selection.update(value);category=dict(value['category']);label=(category.get('zh_path') or category.get('name','')).split(' / ')[-1];category_button.configure(text=label[:30]+' · 正在读取官方颜色');color_catalog_note.configure(text='正在读取该类目官方颜色，完成后所有变体可直接选择…');grid.color_bundles=[{'sku':'creation-color-catalog','category':{**category,'confirmed':True}}];refresh_visual_label()
+   def load_colors():
+    try:
+     from color_catalog import preload
+     result=preload(attributes,category)
+     root.after(0,lambda: (category_button.configure(text=label[:30]+' · 已选定'),color_catalog_note.configure(text='官方颜色已读取：'+str(len(result['rows']))+' 项，适用于全部变体。')))
+    except Exception as exc:
+     root.after(0,lambda text=str(exc): (category_button.configure(text=label[:30]+' · 已选定'),color_catalog_note.configure(text='官方颜色读取未完成：'+text[:80]+'；可稍后在颜色选择器刷新。')))
+   threading.Thread(target=load_colors,daemon=True).start()
   return choose(root,attributes,lambda:credentials()[0],saved)
  category_button=ttk.Button(category_row,text='选择官方类目（可选）',style='Compact.TButton',command=choose_creation_category);category_button.pack(side='left',fill='x',expand=True)
- def clear_creation_category():category_selection.clear();category_button.configure(text='选择官方类目（可选）');refresh_visual_label()
+ def clear_creation_category():category_selection.clear();grid.color_bundles=None;category_button.configure(text='选择官方类目（可选）');color_catalog_note.configure(text='');refresh_visual_label()
  ttk.Button(category_row,text='清除',style='Compact.TButton',command=clear_creation_category).pack(side='left',padx=(6,0))
  from variants import VariantGrid
  shared_refs=[]

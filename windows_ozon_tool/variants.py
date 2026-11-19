@@ -299,7 +299,7 @@ class VariantGrid:
   if key=='color':
    from color_selection import choose
    def save_color(value):row['values']['color']=value;self.refresh()
-   choose(self.frame,row['values'][key],save_color,window_key=('create',id(self),row['index']),service=getattr(self,'color_service',None));return
+   choose(self.frame,row['values'][key],save_color,window_key=('create',id(self),row['index']),service=getattr(self,'color_service',None),bundles=getattr(self,'color_bundles',None));return
   entry=self.ttk.Entry(self.tree,justify='center');entry.insert(0,row['values'][key]);entry.place(x=box[0],y=box[1],width=box[2],height=box[3]);entry.focus_set();entry.selection_range(0,'end');self.editor=(entry,row,key)
   entry.bind('<Return>',lambda e:self.commit());entry.bind('<FocusOut>',lambda e:self.commit())
  def fill_row(self):

@@ -1,7 +1,7 @@
 import tempfile,unittest
 from pathlib import Path
 from attribute_service import AttributeService
-from color_catalog import load
+from color_catalog import load,preload
 from color_swatches import swatch
 FIELD={'id':100,'name':'颜色','name_ru':'Цвет товара','dictionary_id':9,'is_collection':True,'max_value_count':5,'type':'String'}
 def bundle(type_id=20):return {'sku':'A','category':{'description_category_id':10,'type_id':type_id,'confirmed':True}}
@@ -21,6 +21,10 @@ class OfficialColorTests(unittest.TestCase):
    svc,calls=self.service(tmp);result=load(svc,[bundle()]);self.assertTrue(result['complete']);self.assertEqual(len(result['rows']),6)
    cursors=[body['last_value_id'] for path,body in calls if path.endswith('/values')];self.assertEqual(cursors,[0,2,4,0,2,4])
    values=svc.resolve_suggestion(bundle(),FIELD,['аквамариновый']);self.assertEqual(values,[{'dictionary_value_id':5,'value':'аквамариновый'}])
+ def test_preload_uses_confirmed_creation_category_and_populates_cache(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   svc,calls=self.service(tmp);result=preload(svc,{'description_category_id':10,'type_id':20,'name':'测试'})
+   self.assertEqual(len(result['rows']),6);self.assertTrue(list(Path(tmp).glob('attributes/*fullcolors*')))
  def test_bulk_categories_keep_common_names_but_resolve_own_verified_ids(self):
   with tempfile.TemporaryDirectory() as tmp:
    svc,calls=self.service(tmp);result=load(svc,[bundle(),bundle(30)]);self.assertEqual(result['contexts'],2);self.assertEqual(result['total_read'],12)

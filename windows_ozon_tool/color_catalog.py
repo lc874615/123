@@ -60,3 +60,11 @@ def load(service,bundles,force=False):
  rows=[catalogs[0][key] for key in catalogs[0] if key in common]
  if not rows:raise ValueError('所选类目没有共同可选颜色，请逐变体核对')
  return {'rows':rows,'total_read':total,'contexts':len(contexts),'maximum':min(limits),'complete':True}
+
+def preload(service,category,force=False):
+ """Read and cache the official palette immediately after category choice.
+
+ The creation grid has no listing bundle yet.  A minimal confirmed category is
+ enough because colors are a category dictionary, not a product attribute.
+ """
+ return load(service,[{'sku':'creation-color-catalog','category':{**dict(category or {}),'confirmed':True}}],force)
