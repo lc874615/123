@@ -15,7 +15,9 @@ def group_bundles(store,leader):
  return result
 def copy_basis(bundles,legacy=False):
  normalize=legacy_canonical if legacy else canonical
- return hashlib.sha256(json.dumps(sorted([(b['sku'],{k:normalize(k,(b.get('variant_parameters') or {}).get(k)) for k in sorted(COPY)}) for b in bundles]),ensure_ascii=False,sort_keys=True).encode()).hexdigest()
+ from competitor_flow import copy_signature
+ supplement=copy_signature(bundles) if not legacy else ''
+ return hashlib.sha256(json.dumps(sorted([(b['sku'],{k:normalize(k,(b.get('variant_parameters') or {}).get(k)) for k in sorted(COPY)}) for b in bundles]),ensure_ascii=False,sort_keys=True).encode()+(supplement.encode() if supplement else b'')).hexdigest()
 def checked(store,task):
  folder=store.folder/'products'/task['sku']
  try:

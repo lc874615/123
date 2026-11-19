@@ -232,7 +232,7 @@ class GroupService:
    with self.lock:
     latest=[read(p) for p in self.paths];self._check(latest,expected)
     for n,row,values in changes:
-     b=latest[n];b.setdefault('reference_decisions',{})[key]={'source':row.get('reference_source') or source_fingerprint(b),'action':'skip' if skip else 'accepted','evidence':row['evidence'],'confidence':row['confidence']}
+     b=latest[n];b.setdefault('reference_decisions',{})[key]={'source':row.get('reference_source') or source_fingerprint(b),'action':'skip' if skip else 'accepted','evidence':row['evidence'],'confidence':row['confidence'],'kind':row.get('kind'),'accepted_values':values}
      if not skip:
       state=b['attribute_draft'];state.setdefault('values',{})[key]=values;state['manual_keys']=sorted(set(state.get('manual_keys') or [])|{key});state['confirmed']=False
      # Attribute-only reference choices do not change pricing inputs.

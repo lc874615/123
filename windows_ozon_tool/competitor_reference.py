@@ -22,12 +22,12 @@ def norm(value):return re.sub(r'[\W_]+',' ',str(value).casefold().replace('ё','
 
 # Fields tied to the seller, legal declarations or a different physical package
 # must never be borrowed. Names are checked in BOTH official languages.
-DENY=('упаков','包装','брутто','бренд','品牌','модель','型号','артикул','货号','штрих','barcode','сертифик','认证','证书','декларац','гаранти','质保','гарантия','страна','产地','производител','制造商','изготовител','продав','поставщик','налог','税','ндс','маркиров','标记','комплект','套装','数量','количество','совместим','兼容','медицин','医疗','безопас','安全','возраст','年龄','идентификатор','ссылка','链接','фото','图片','видео','视频','название','名称','описание','描述','аннотац','цен','价格','скид','折扣','остат','库存','тег','标签','серия','系列','срок','有效期','инструкц','说明书','pdf','rich','html','url')
+DENY=('упаков','包装','брутто','бренд','品牌','модель','型号','артикул','货号','штрих','barcode','сертифик','认证','证书','декларац','гаранти','质保','гарантия','страна','产地','производител','制造商','изготовител','продав','поставщик','налог','税','ндс','маркиров','标记','комплект','套装','每套件数','销售数量','количество в упаковке','количество предметов','количество товара','медицин','医疗','безопас','安全','идентификатор','ссылка','链接','фото','图片','видео','视频','название','名称','описание','描述','аннотац','цен','价格','скид','折扣','остат','库存','тег','标签','серия','系列','срок','有效期','инструкц','说明书','pdf','rich','html','url')
 DENY_IDS={85,8229,4180,4191,21841,21837,21845}
 
 
 def eligible(field):
- if field.get('id') in DENY_IDS or field.get('attribute_complex_id') or field.get('is_collection'):return False
+ if field.get('id') in DENY_IDS or field.get('attribute_complex_id'):return False
  names=' '.join(str(field.get(k) or '').casefold() for k in ('name','name_ru'))
  return bool(names.strip()) and not any(s in names for s in DENY)
 
@@ -36,9 +36,10 @@ def context(bundle,account):
  url=normalize_url((bundle.get('variant_parameters') or {}).get('competitor_url'))
  state=bundle.get('attribute_draft') or {}
  if not url or not account or not (bundle.get('category') or {}).get('confirmed'):return None
- cat=list(category_key(bundle))
+ try:cat=list(category_key(bundle))
+ except (ValueError,TypeError):return None
  if state.get('category_key')!=cat or not state.get('fields') or not state.get('schema_hash'):return None
- fields=[{k:f.get(k) for k in ('id','attribute_complex_id','name','name_ru','type','dictionary_id','is_required','is_collection')} for f in state['fields'] if eligible(f)]
+ fields=[{k:f.get(k) for k in ('id','attribute_complex_id','name','name_ru','type','dictionary_id','is_required','is_collection','max_value_count')} for f in state['fields'] if eligible(f)]
  fingerprint=hashlib.sha256(json.dumps([str(account),url,cat,state['schema_hash'],fields],ensure_ascii=False,sort_keys=True).encode()).hexdigest()
  return {'fingerprint':fingerprint,'url':url,'category_key':cat,'schema_hash':state['schema_hash'],'fields':fields}
 
@@ -68,7 +69,7 @@ def proposals(bundle):
 
 def match(fields,rows):
  """Exact bilingual label matching only; no inferred facts or loose similarity."""
- index={}
+ index={};multi={}
  if not isinstance(rows,list):raise ValueError('竞品参数格式无效')
  for row in rows[:400]:
   if not isinstance(row,dict):continue
@@ -76,6 +77,8 @@ def match(fields,rows):
   if not isinstance(name,str) or not isinstance(value,str) or not 0<len(name)<=180 or not 0<len(value)<=800:continue
   if any(c in value for c in ('<','>','\x00')) or re.search(r'https?://',value,re.I):continue
   index.setdefault(norm(name),set()).add(value.strip())
+  options=row.get('values')
+  if isinstance(options,list) and 0<len(options)<=100 and all(isinstance(v,str) and 0<len(v.strip())<=800 and not any(c in v for c in ('<','>','\x00')) and not re.search(r'https?://',v,re.I) for v in options):multi.setdefault(norm(name),set()).add(tuple(sorted(set(v.strip() for v in options))))
  result={}
  for f in fields:
   if not eligible(f):continue
@@ -84,6 +87,13 @@ def match(fields,rows):
   if len(values)!=1:continue
   value=values.pop()
   if not value:continue
+  if f.get('is_collection'):
+   sets=set()
+   for label in (f.get('name'),f.get('name_ru')):sets.update(multi.get(norm(label),set()))
+   if len(sets)>1:continue
+   options=list(sets.pop()) if sets else [value]
+   if len(options)>int(f.get('max_value_count') or 100):continue
+   result[field_key(f)]={'name':f.get('name_ru') or f.get('name'),'value':'；'.join(options),'values':options};continue
   # Numerical units must already match the official field's unit. Never
   # guess cm/mm, package vs product, or convert an ambiguous compound value.
   if str(f.get('type')).lower() in ('integer','decimal'):
@@ -125,6 +135,9 @@ def claim(store):
   if previous.get('fingerprint')==c['fingerprint']:
    if previous.get('state')=='ready' or previous.get('retry_at',0)>now:continue
   candidates.append((path,b,c))
+ waiting={t.get('copy_leader',t['sku']) for t in store.tasks if (t.get('competitor_wait') or {}).get('state')=='waiting'}
+ priority={t['sku'] for t in store.tasks if t.get('copy_leader',t['sku']) in waiting}
+ candidates.sort(key=lambda row:row[1].get('sku') not in priority)
  if not candidates:return {'job':None}
  target=candidates[0][2];token=secrets.token_hex(16)
  # One lease per URL/schema/shop. It also prevents two service-worker wakes
@@ -154,13 +167,16 @@ def receive(store,body):
  if not error:
   if normalize_url(body.get('url'))!=c['url']:raise ValueError('竞品页面已跳转，未采用其他商品参数')
   suggestions=match(c['fields'],body.get('rows'))
-  if not suggestions:error='未匹配到本类目的官方字段；可能页面未加载、需要验证或参数名称不一致。可打开原链接核对。'
+  if not body.get('rows'):error='页面未读取到公开参数，未预填；可打开原链接核对。'
  else:suggestions={}
  result={'fingerprint':c['fingerprint'],'url':c['url'],'state':'failed' if error else 'ready','suggestions':suggestions,'fetched_at':time.time(),'retry_at':time.time()+86400,'message':error or f'已匹配 {len(suggestions)} 项竞品参考；只补空白，核对后采用','result_hash':hashlib.sha256(json.dumps(suggestions,sort_keys=True,ensure_ascii=False).encode()).hexdigest()}
  for path,b,_ in matches:b['competitor_reference']=dict(result);write(path,b)
+ from competitor_flow import signal
+ signal(store)
  return {'ok':True,'matched':len(suggestions)}
 
 
 def status(bundle):
  if not (bundle.get('variant_parameters') or {}).get('competitor_url'):return ''
- return (bundle.get('competitor_reference') or {}).get('message') or '竞品参考：等待已选类目的官方字段同步与插件读取'
+ from competitor_flow import describe
+ return describe(bundle)['label']

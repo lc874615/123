@@ -31,7 +31,7 @@ def notify(store):
  rows=[[t.get(k) for k in keys] for t in store.tasks]
  jobs=[[t.get(k) for k in keys] for t in getattr(getattr(store,'image_jobs',None),'jobs',[])]
  control=getattr(store,'control',{})
- wake.signal(json.dumps([control.get('command_token'),control.get('paused'),rows,jobs],sort_keys=True,separators=(',',':')))
+ wake.signal(json.dumps([control.get('command_token'),control.get('paused'),rows,jobs,getattr(store,'competitor_revision',0)],sort_keys=True,separators=(',',':')))
 
 def acknowledge(store,token):
  control=store.control

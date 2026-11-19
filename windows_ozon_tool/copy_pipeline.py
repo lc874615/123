@@ -18,6 +18,9 @@ def prepare(store,body):
  dispatched=owner.get('copy_phase')=='generating' and owner.get('copy_state') in ('running','needs_attention') or owner.get('resume_mode')=='copy_inspect_only' and not owner.get('copy_phase')
  if body.get('prepare_only') and not dispatched and owner.get('copy_mode')!='attributes' and copy_complete(b.get('copy')) and not refresh:
   store.sync_shared_copies();return {'id':'copy:'+sku,'sku':sku,'local_ready':True,'fingerprint':fingerprint}
+ if not dispatched and not body.get('inspect_only') and owner.get('copy_mode')!='attributes':
+  from competitor_flow import before_copy
+  if not before_copy(store,owner):return {'id':'copy:'+sku,'sku':sku,'waiting_for_competitor':True,'message':owner['competitor_wait']['message']}
  if body.get('prepare_only'):
   if not dispatched:owner.update(copy_phase='inspecting',copy_context_basis=fingerprint,copy_source_revision=b.get('copy_user_revision'))
   owner['copy_state']='running';store.save()
@@ -35,7 +38,13 @@ def prepare(store,body):
  marker=owner.get('copy_request_marker') if read_only else '【OZON_COPY:'+secrets.token_hex(12)+'】'
  if not read_only:owner.update(copy_phase='generating',copy_context_basis=fingerprint,copy_request_marker=marker,copy_source_revision=b.get('copy_user_revision'))
  owner['copy_state']='running';store.save()
- prompt=(marker or '')+'\n本次商品组文案保存货号：'+sku+'。输出JSON额外包含sku字段，值为'+sku+'，以及facts_fingerprint字段，值为'+fingerprint+'。'+copy_prompt_for(context)
+ from competitor_flow import copy_prompt as competitor_copy_prompt,accepted_records
+ from competitor_reference import proposals
+ for entry in bundles:
+  record_path=store.folder/'products'/entry['sku']/'listing_bundle.json'
+  if not record_path.exists():continue
+  record=read(record_path);record['copy_competitor_fields']=accepted_records(entry);record['copy_competitor_candidates']=list(proposals(entry));record['copy_competitor_request_marker']=marker;write(record_path,record)
+ prompt=(marker or '')+'\n本次商品组文案保存货号：'+sku+'。输出JSON额外包含sku字段，值为'+sku+'，以及facts_fingerprint字段，值为'+fingerprint+'。'+copy_prompt_for(context)+competitor_copy_prompt(bundles)
  if owner.get('copy_mode')=='attributes':prompt=(marker or '')+'\n只读取属性，不改写已有文案。仅输出JSON，包含sku字段（值为'+sku+'）和variant_attributes。'
  prompt+='\n'+attribute_prompt(photo_context)+'\n再次强调：sku、facts_fingerprint、variant_attributes的SKU键仅为内部关联元数据；title_ru、description_ru、tags_ru不得含任何货号、卖家代码或SKU。';(folder/'copy_prompt.txt').write_text(prompt,encoding='utf-8')
  return {'id':'copy:'+sku,'sku':sku,'marker':marker,'prompt':prompt,'references':references,'fingerprint':fingerprint,'copy_phase':owner.get('copy_phase'),'replace_unsent_prompt':previous_prompt}

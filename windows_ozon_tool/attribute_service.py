@@ -105,6 +105,10 @@ def validate_values(field,values):
     if not number.is_finite() or (kind in ('integer','int') and number!=number.to_integral_value()):raise ValueError('此属性要求有效数值')
  return values
 
+def competitor_priority(path):
+ try:return 0 if (read(path).get('variant_parameters') or {}).get('competitor_url') else 1
+ except (ValueError,OSError):return 2
+
 class AttributeService:
  def __init__(self,data,lock=None,caller=api,active_skus=None):
   self.data=Path(data);self.root=self.data/'attributes';self.root.mkdir(parents=True,exist_ok=True);self.lock=lock or threading.Lock();self.io_lock=threading.RLock();self.caller=caller;self.active_skus=active_skus;self.schema_cache={};self.status='等待类目确认后读取必填属性';self.wake=threading.Event();self.retry_at={}
@@ -312,6 +316,9 @@ class AttributeService:
     latest['attribute_draft']=state;latest.pop('attribute_history',None)
     if not state.get('confirmed') and '必填属性待核对' not in latest.get('blockers',[]):latest.setdefault('blockers',[]).append('必填属性待核对')
     write(path,latest)
+    if getattr(self,'task_store',None) is not None:
+     from competitor_flow import signal
+     signal(self.task_store)
    return state
  def prepare_values(self,bundle,key,values):
   state=bundle.get('attribute_draft') or {}
@@ -370,7 +377,7 @@ class AttributeService:
   return len(prepared)
  def worker(self,stop):
   while not stop.is_set():
-   for path in (self.data/'products').glob('*/listing_bundle.json'):
+   for path in sorted((self.data/'products').glob('*/listing_bundle.json'),key=competitor_priority):
     if stop.is_set():return
     if self.active_skus is not None and path.parent.name not in self.active_skus():continue
     if self.retry_at.get(str(path),0)>time.time():continue

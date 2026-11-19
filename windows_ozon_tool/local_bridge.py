@@ -588,7 +588,8 @@ class Store:
   copy_task=self.next_copy() if not active else None
   image_pending=bool(self.image_jobs.next())
   recovery=self.next_recollection()
-  return {'recovery_sku':recovery['sku'] if recovery else None,'ready':not active and not copy_task and (image_pending or any(t['state']=='queued' and t.get('auto_batch') for t in self.tasks)),'copy_sku':copy_task['sku'] if copy_task else None,'blocked_reason':self.queue_reason() if active else None,'blockers':self.blockers(),'summary':self.queue_summary()}
+  copy_waiting=next(((t.get('competitor_wait') or {}).get('message') for t in self.tasks if (t.get('competitor_wait') or {}).get('state')=='waiting'),None)
+  return {'copy_waiting':copy_waiting,'recovery_sku':recovery['sku'] if recovery else None,'ready':not active and not copy_task and (image_pending or any(t['state']=='queued' and t.get('auto_batch') for t in self.tasks)),'copy_sku':copy_task['sku'] if copy_task else None,'blocked_reason':self.queue_reason() if active else None,'blockers':self.blockers(),'summary':self.queue_summary()}
  def next_copy(self):
   from asset_reconcile import reconcile
   from listing_bundle import prepare,copy_complete
@@ -611,6 +612,8 @@ class Store:
     continue
    if task.get('copy_state')=='done':task.pop('copy_state',None)
    if task.get('copy_state') in ('running','needs_attention'):continue
+   from competitor_flow import before_copy
+   if not before_copy(self,task):continue
    task['copy_mode']='copy_refresh' if complete else 'copy';self.save();return task
   # Reading optional reference attributes must not precede a group's missing text.
   for task in leaders:
@@ -675,7 +678,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.68','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.69','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
@@ -868,7 +871,7 @@ def main(test_mode=False,on_ready=None):
  video_hosting=VideoHostingService(hosting);None if test_mode else threading.Thread(target=video_hosting.worker,args=(pricing_stop,),daemon=True).start()
  video_label=ttk.Label(sources_panel,wraplength=850,text='视频托管：等待8秒MP4与图片链接');video_label.pack(pady=3)
  from attribute_service import AttributeService
- attributes=AttributeService(DATA,store.lock,active_skus=hosting_skus);grid.color_service=attributes
+ attributes=AttributeService(DATA,store.lock,active_skus=hosting_skus);attributes.task_store=store;store.attributes=attributes;grid.color_service=attributes
  None if test_mode else threading.Thread(target=attributes.worker,args=(pricing_stop,),daemon=True).start()
  from publication_service import PublicationService
  publication=PublicationService(DATA,store.lock,initial_stock=1000)
@@ -1007,9 +1010,9 @@ def main(test_mode=False,on_ready=None):
 
  ttk.Button(product_footer,text='创建队列 · 开始自动制作',style='Primary.TButton',command=create).pack(side='right')
  task_table=ttk.Frame(tasks_page,style='Card.TFrame');task_table.pack(fill='both',expand=True);task_table.rowconfigure(0,weight=1);task_table.columnconfigure(0,weight=1)
- view=ttk.Treeview(task_table,columns=('sku','progress','price','hosting','status'),show='tree headings',height=15,selectmode='browse')
- view.heading('#0',text='商品组');view.column('#0',width=150,stretch=False,anchor='center')
- for key,label,width in [('sku','变体货号',165),('progress','图片',90),('price','售价（元）',110),('hosting','托管链接',130),('status','当前阶段 / 原因',360)]:view.heading(key,text=label,anchor='center');view.column(key,width=width,stretch=key=='status',anchor='w' if key in ('sku','status') else 'center')
+ view=ttk.Treeview(task_table,columns=('sku','progress','price','hosting','competitor','status'),show='tree headings',height=15,selectmode='browse')
+ view.heading('#0',text='商品组');view.column('#0',width=120,stretch=False,anchor='center')
+ for key,label,width in [('sku','变体货号',140),('progress','图片',65),('price','售价（元）',85),('hosting','托管链接',105),('competitor','竞品采集 / 参数预填',205),('status','当前阶段 / 原因',255)]:view.heading(key,text=label,anchor='center');view.column(key,width=width,stretch=key=='status',anchor='w' if key in ('sku','status') else 'center')
  view.tag_configure('published',foreground='#16785B',background='#F1FAF5');view.tag_configure('archive',foreground='#687C9D',background='#EAF0F9')
  view.tag_configure('group',background='#EDF1F8',foreground='#334155');view.tag_configure('even',background='#FFFFFF');view.tag_configure('odd',background='#F8FAFE');view.tag_configure('attention',foreground='#B74347',background='#FFF4F2')
  view.grid(row=0,column=0,sticky='nsew');scroll_y=ttk.Scrollbar(task_table,orient='vertical',command=view.yview);scroll_y.grid(row=0,column=1,sticky='ns');scroll_x=ttk.Scrollbar(task_table,orient='horizontal',command=view.xview);scroll_x.grid(row=1,column=0,sticky='ew');view.configure(yscrollcommand=scroll_y.set)
@@ -1057,17 +1060,20 @@ def main(test_mode=False,on_ready=None):
   try:fx=read_pricing(pricing.root/'fx.json');fx_note=' | '+fx['date']+'：1元='+fx['rub_per_cny']+'卢布'
   except (OSError,ValueError,KeyError):fx_note=''
   pricing_label.configure(text='自动定价：'+pricing.status+fx_note);hosting_label.configure(text='图片托管：'+hosting.status);video_label.configure(text='视频托管：'+video_hosting.status)
-  jobs=[j for j in publication.jobs() if j.get('account_id')==merchant];groups={};snapshot=[];alert_bundles=[];stage_map={}
+  jobs=[j for j in publication.jobs() if j.get('account_id')==merchant];groups={};snapshot=[];alert_bundles=[];stage_map={};competitor_states={}
+  from competitor_flow import describe as competitor_describe,group_label as competitor_group_label
   for task in visible:
    try:bundle=read_pricing(DATA/'products'/task['sku']/'listing_bundle.json')
    except (OSError,ValueError):bundle={}
    if bundle and task['state']!='cancelled':alert_bundles.append(bundle)
-   state=stage(task,bundle,jobs,image_snapshot);stage_map[task['id']]=state;row=(task['sku'],str(len(task.get('received_images') or []))+'/8',bundle.get('price_cny') or '—',str((bundle.get('hosting') or {}).get('verified_images',0))+'/8 · '+('视频✓' if (bundle.get('video_hosting') or {}).get('state')=='done' else '视频…'),state)
+   group_owner=next((t for t in visible if t['sku']==task.get('copy_leader',task['sku'])),task)
+   competitor_states[task['id']]=competitor_describe(bundle,{**task,'competitor_wait':group_owner.get('competitor_wait')})
+   state=stage(task,bundle,jobs,image_snapshot);stage_map[task['id']]=state;row=(task['sku'],str(len(task.get('received_images') or []))+'/8',bundle.get('price_cny') or '—',str((bundle.get('hosting') or {}).get('verified_images',0))+'/8 · '+('视频✓' if (bundle.get('video_hosting') or {}).get('state')=='done' else '视频…'),competitor_states[task['id']]['label'],state)
    if not matches(task,pages['task_search'].get(),pages['task_filter'].get(),image_snapshot,stage_map):continue
    group=str(task.get('base_article') or task.get('copy_leader') or task['sku']);groups.setdefault(group,[]).append((task,row));snapshot.append((task['id'],group,row))
   for key,value in task_summary(visible,image_snapshot,stage_map).items():pages['metrics'][key].configure(text=str(value))
   pages['task_results'].configure(text=('显示 '+str(len(snapshot))+' 个变体 · '+str(len(groups))+' 个商品组') if snapshot else ('当前没有需要人工核对或修正的任务。' if pages['task_filter'].get()=='需处理' else '没有匹配的任务，可清除筛选查看全部。' if visible else '还没有制作任务，请前往“商品制作”创建第一组商品。'))
-  row_notes=dict(stage_map)
+  row_notes={k:v+'\n'+competitor_states[k]['detail'] for k,v in stage_map.items()}
   active_groups,published=partition_task_rows(groups)
   group_members={'group:'+group:[t['id'] for t,row in items] for group,items in active_groups.items()}
   for group,items in active_groups.items():row_notes['group:'+group]=group_summary([row[-1] for t,row in items])+'；展开后查看本组当前任务。'
@@ -1079,13 +1085,13 @@ def main(test_mode=False,on_ready=None):
    for group,items in active_groups.items():
     key='group:'+group;group_members[key]=[t['id'] for t,row in items]
     stages=[row[-1] for task,row in items];row_notes[key]=group_summary(stages)+'；展开后查看本组当前任务。'
-    view.insert('','end',iid=key,text=group,values=(str(len(items))+' 个变体','','','',group_summary(stages)),open=True if pages['task_filter'].get()!='全部任务' else expanded.get(key,True),tags=('group',))
+    view.insert('','end',iid=key,text=group,values=(str(len(items))+' 个变体','','','',competitor_group_label([competitor_states[t['id']] for t,row in items]),group_summary(stages)),open=True if pages['task_filter'].get()!='全部任务' else expanded.get(key,True),tags=('group',))
     for n,(task,row) in enumerate(items):
      tag='attention' if task_bucket(task,image_snapshot,stage_map)=='需处理' else 'even' if n%2==0 else 'odd'
      view.insert(key,'end',iid=task['id'],text='',values=row,tags=(tag,))
    if published:
     archive='archive:published';row_notes[archive]='已上架 '+str(len(published))+' 个变体；展开可查看商品、预览与原有素材。当前重做或待处理任务会显示在上方。'
-    view.insert('','end',iid=archive,text='已上架',values=(str(len(published))+' 个变体','','','','展开查看历史商品'),open=bool(pages['task_search'].get().strip()) or pages['task_filter'].get()=='已上架' or expanded.get(archive,False),tags=('archive',))
+    view.insert('','end',iid=archive,text='已上架',values=(str(len(published))+' 个变体','','','','','展开查看历史商品'),open=bool(pages['task_search'].get().strip()) or pages['task_filter'].get()=='已上架' or expanded.get(archive,False),tags=('archive',))
     for group,task,row in published:view.insert(archive,'end',iid=task['id'],text=group,values=row,tags=('published',))
    if selection and view.exists(selection[0]):view.selection_set(selection[0])
    view.yview_moveto(position);last_view=view_key

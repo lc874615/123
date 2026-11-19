@@ -26,7 +26,7 @@ class CompetitorTests(unittest.TestCase):
  def test_exact_schema_units_conflicts_and_exclusions(self):
   rows=[{'name':'Тип разъема','value':'USB-C'},{'name':'Длина, см','value':'32 см'},{'name':'Длина упаковки, см','value':'999'},{'name':'Бренд','value':'Other'},{'name':'Unknown','value':'invented'}];r=match(FIELDS,rows);self.assertEqual(set(r),{'0:901','0:902'});self.assertEqual(r['0:902']['value'],'32')
   self.assertEqual(match(FIELDS,[{'name':'Длина, см','value':'320 мм'}]),{});self.assertEqual(match(FIELDS,[{'name':'Тип разъема','value':'USB-C'},{'name':'Тип разъема','value':'Lightning'}]),{})
-  for name in ['Вес с упаковкой, г','Совместимость','认证','商标品牌','Гарантия','Страна производства','Срок службы','Нужен код маркировки']:self.assertFalse(eligible({'id':999,'name':name,'type':'String'}),name)
+  for name in ['Вес с упаковкой, г','认证','商标品牌','Гарантия','Страна производства','Срок службы','Нужен код маркировки']:self.assertFalse(eligible({'id':999,'name':name,'type':'String'}),name)
  def test_shared_lease_fanout_and_own_value_protection(self):
   with tempfile.TemporaryDirectory() as tmp:
    store=self.store(tmp);job=claim(store)['job'];self.assertIsNone(claim(store)['job']);self.assertEqual(receive(store,{'token':job['token'],'url':URL,'rows':[{'name':'Тип разъема','value':'USB-C'},{'name':'Основной материал','value':'Пластик'}]})['matched'],2)
