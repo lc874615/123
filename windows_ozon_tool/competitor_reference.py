@@ -40,8 +40,14 @@ def context(bundle,account):
  except (ValueError,TypeError):return None
  if state.get('category_key')!=cat or not state.get('fields') or not state.get('schema_hash'):return None
  fields=[{k:f.get(k) for k in ('id','attribute_complex_id','name','name_ru','type','dictionary_id','is_required','is_collection','max_value_count')} for f in state['fields'] if eligible(f)]
- fingerprint=hashlib.sha256(json.dumps([str(account),url,cat,state['schema_hash'],fields]+([bundle['competitor_refresh_revision']] if bundle.get('competitor_refresh_revision') else []),ensure_ascii=False,sort_keys=True).encode()).hexdigest()
- return {'fingerprint':fingerprint,'url':url,'category_key':cat,'schema_hash':state['schema_hash'],'fields':fields}
+ # A type_id is not a safe reuse key: Ozon may expose distinct catalogue
+ # branches with the exact same official attribute schema.  Reuse competitor
+ # data only when the complete usable official schema is identical.  Pricing
+ # mappings are intentionally absent here: they affect rFBS fees, not product
+ # attributes and must never invalidate a valid parameter reference.
+ schema_signature=hashlib.sha256(json.dumps(fields,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
+ fingerprint=hashlib.sha256(json.dumps([str(account),url,schema_signature]+([bundle['competitor_refresh_revision']] if bundle.get('competitor_refresh_revision') else []),ensure_ascii=False,sort_keys=True).encode()).hexdigest()
+ return {'fingerprint':fingerprint,'url':url,'category_key':cat,'schema_hash':state['schema_hash'],'schema_signature':schema_signature,'fields':fields}
 
 
 def proposals(bundle):

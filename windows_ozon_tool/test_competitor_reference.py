@@ -76,15 +76,23 @@ class CompetitorTests(unittest.TestCase):
   with tempfile.TemporaryDirectory() as tmp:
    store=self.store(tmp,1);job=claim(store)['job'];receive(store,{'token':job['token'],'error':'captcha','error_code':'verification'})
    self.assertIsNone(claim(store)['job']);b=read(store.folder/'products'/'A'/'listing_bundle.json');self.assertEqual(b['attribute_draft']['values'],{});self.assertFalse(b['competitor_reference']['retryable'])
- def test_stale_result_after_url_category_schema_or_shop_change(self):
-  for change in ('url','category','account','schema'):
+ def test_stale_result_after_url_schema_or_shop_change(self):
+  for change in ('url','account','schema'):
    with self.subTest(change=change),tempfile.TemporaryDirectory() as tmp:
     store=self.store(tmp,1);job=claim(store)['job'];path=store.folder/'products'/'A'/'listing_bundle.json';b=read(path)
     if change=='url':b['variant_parameters']['competitor_url']=URL.replace('12345','99999')
-    if change=='category':b['category']['type_id']=21
-    if change=='schema':b['attribute_draft']['schema_hash']='new'
+    if change=='schema':b['attribute_draft']['fields'][0]['dictionary_id']=999
     write(path,b)
     with patch('account_context.credentials',return_value=('other-shop' if change=='account' else 'synthetic-shop','fake')):self.assertTrue(receive(store,{'token':job['token'],'url':URL,'rows':[]})['stale'])
+ def test_same_official_schema_reuses_reference_after_category_change(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   store=self.store(tmp,1);job=claim(store)['job'];path=store.folder/'products'/'A'/'listing_bundle.json';b=read(path)
+   b['category']['type_id']=21;b['attribute_draft']['category_key']=[10,21]
+   # The category changes, but the freshly returned official fields are exactly
+   # the same, so a completed public-reference read stays safe to reuse.
+   write(path,b)
+   result=receive(store,{'token':job['token'],'url':URL,'rows':[{'name':'Тип разъема','value':'USB-C'}]})
+   self.assertFalse(result.get('stale'));self.assertIn('0:901',read(path)['competitor_reference']['suggestions'])
  def test_missing_schema_waits_failure_does_not_block_queue(self):
   with tempfile.TemporaryDirectory() as tmp:
    store=self.store(tmp,1);path=store.folder/'products'/'A'/'listing_bundle.json';b=read(path);b['attribute_draft']['fields']=[];write(path,b);self.assertIsNone(claim(store)['job']);write(path,bundle());job=claim(store)['job'];before=copy.deepcopy(store.tasks);receive(store,{'token':job['token'],'error':'需要验证'});self.assertEqual(store.tasks,before);self.assertEqual(read(path)['competitor_reference']['state'],'failed');self.assertIsNone(claim(store)['job'])

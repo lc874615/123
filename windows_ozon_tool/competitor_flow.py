@@ -75,7 +75,7 @@ def describe(bundle,task=None):
  if state=='failed' and snap.get('error_code')=='verification':state='verification';label='需页面验证 / 未预填'
  if gate.get('state')=='timeout' and state in ('schema','queued','reading'):state='timeout';label='采集超时 / 未预填'
  used=bundle.get('copy_competitor_fields') or []
- detail=(str(url)+'\n'+(snap.get('message') or gate.get('message') or '等待本地直连读取公开参数')+'\n采集方式：本地工具直连 Ozon 公开页，不使用浏览器插件、ChatGPT 页面或 VPN。\n页面读取 '+str(snap.get('raw_count',0))+' 项；自动尝试 '+str(snap.get('attempts',0))+'/3。\n官方可引用字段 '+str(official)+'；匹配 '+str(matched)+'；参考预填 '+str(prefilled)+'（待核对）；已采用 '+str(applied)+'；已填值保留 '+str(existing)+'。未获取字段不补造。\n文案请求中已核对参数 '+str(len(used))+' 项，待原图核验候选 '+str(len(bundle.get('copy_competitor_candidates') or []))+' 项；不代表文案已逐项引用，实际内容请在预览核对。'+('\n未匹配字段示例：'+'、'.join(snap['unmatched_names']) if snap.get('unmatched_names') else ''))
+ detail=(str(url)+'\n'+(snap.get('message') or gate.get('message') or '等待本地直连读取公开参数')+'\n采集方式：本地工具直连 Ozon 公开页，不使用浏览器插件、ChatGPT 页面或 VPN。\n页面读取 '+str(snap.get('raw_count',0))+' 项；自动尝试 '+str(snap.get('attempts',0))+'/3。\n官方可引用字段 '+str(official)+'；匹配 '+str(matched)+'；参考预填 '+str(prefilled)+'（待核对）；已采用 '+str(applied)+'；已填值保留 '+str(existing)+'。未获取字段不补造。\n参数复用只依据当前 Ozon 官方字段结构；rFBS 佣金映射仅用于定价，不会使同一字段结构的竞品参考失效。\n文案请求中已核对参数 '+str(len(used))+' 项，待原图核验候选 '+str(len(bundle.get('copy_competitor_candidates') or []))+' 项；不代表文案已逐项引用，实际内容请在预览核对。'+('\n未匹配字段示例：'+'、'.join(snap['unmatched_names']) if snap.get('unmatched_names') else ''))
  return {'state':state,'label':label,'configured':True,'matched':matched,'prefilled':prefilled,'applied':applied,'detail':detail}
 
 def group_label(rows):
