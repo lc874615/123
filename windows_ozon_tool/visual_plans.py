@@ -3,7 +3,7 @@ Rules select presentation, never product facts or technical specifications.
 """
 import copy,hashlib,json,re
 from pathlib import Path
-VERSION=2
+VERSION=3
 STYLES={
  'digital':('精密数码','精确轮廓、接口与材质分区；按商品对比选择浅色或深色摄影背景，不固定蓝色圆台。用柔和侧光分清塑料、金属、玻璃与屏幕；标题短、最多突出1—2个有依据的关键数字，避免顶部排满小标签。克制高光，不虚构电路、芯片、声波效果或内部剖面。'),
  'appliance':('生活电器','干净真实的厨房、浴室或操作空间；产品与实际任务同框，操作与配置清楚。主图可有序展示实际配置，使用页让产品与任务成为主体；文字直接说明用途，不夸大处理效果。'),
@@ -113,7 +113,7 @@ def build(category=None,params=None,group_count=1,override=None):
  for n,topic in enumerate(ORDERS[subtype],1):
   title,need=TOPICS[topic]
   pages.append({'order':n,'key':topic,'requested_topic':topic,'filename':('01_main.jpg' if n==1 else f"{n:02d}_{topic}.jpg"),'title':title,'fallback':None,'fallback_if_unproven':FALLBACKS.get(topic),'needs':need})
- result={'warnings':[],'version':VERSION,'evidence_policy':'original_references_only','style':style,'style_name':STYLES[style][0],'subtype':subtype,'reason':reason,'source':'manual' if override in STYLES else 'fallback' if subtype=='neutral' else 'official_category','category':{k:category.get(k) for k in ('description_category_id','type_id','name','zh_path')},'pages':pages,'group_count':group_count}
+ result={'warnings':[],'version':VERSION,'evidence_policy':'original_references_only','selling_plan_version':1,'style':style,'style_name':STYLES[style][0],'subtype':subtype,'reason':reason,'source':'manual' if override in STYLES else 'fallback' if subtype=='neutral' else 'official_category','category':{k:category.get(k) for k in ('description_category_id','type_id','name','zh_path')},'pages':pages,'group_count':group_count}
  result['fingerprint']=hashlib.sha256(json.dumps(result,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
  return result
 
@@ -130,11 +130,12 @@ def context(store,task):
  return build(category,group_count=len(members) or 1,override=override)
 
 def render(plan,facts='',group_facts='',scope='full'):
+ from selling_plan import EXTRACTION,VALUE_SELECTION,STORYBOARD,VISUAL_PROOF,render_profile,selection_for_scope,storyboard_for_scope
  from original_image_policy import SOURCE_POLICY,EVIDENCE_PASS,PRODUCT_LOCK,ART_DIRECTION,DIMENSIONS,DELIVERY,FINAL_CHECK,GATES,COMPOSITIONS,DIGITAL_DIRECTION
  if scope not in ('full','main','shared'):raise ValueError('未知作图范围')
  # Old saved plans are never trusted as product evidence; rebuild presentation
  # from their category/override rather than carrying parameter-based fallbacks.
- if plan.get('evidence_policy')!='original_references_only':
+ if plan.get('evidence_policy')!='original_references_only' or plan.get('selling_plan_version')!=1:
   category={**(plan.get('category') or {}),'confirmed':True};plan=build(category,override=plan.get('style') if plan.get('source')=='manual' else None)
  pages=plan['pages'] if scope=='full' else plan['pages'][:1] if scope=='main' else plan['pages'][1:]
  rows=[]
@@ -142,14 +143,14 @@ def render(plan,facts='',group_facts='',scope='full'):
   name=page['filename'] if scope!='shared' else f"{i:02d}_{page['key']}.jpg"
   rule=GATES.get(page.get('needs'),'只展示本次原图能证实的外观、部件或用途；不生成未见视角与隐藏结构')
   fallback=page.get('fallback_if_unproven')
-  alternative=('；证据不足改为'+fallback[1]+'，文件编号与名称保持本清单不变') if fallback else ''
+  alternative=('；证据不足改为'+fallback[1]+'或尚未覆盖的更强图证主题，文件编号与名称保持本清单不变') if fallback else ''
   composition=COMPOSITIONS.get(page['requested_topic'],'用当前原始视角组织大幅实物摄影，与其他编号区分。')
-  rows.append(name+'：'+page['title']+'。'+composition+rule+alternative+'。单张只讲该主题。')
+  rows.append(name+'：建议'+page['title']+'。'+composition+rule+alternative+'。同一张只讲一个核心主题，详情按证据分配规则调整。')
  limits={'full':'只能交付8张独立成品，01为当前变体主图，02—08为全组共用详情。','main':'只能生成和交付1张本变体主图，文件名固定01_main.jpg；不制作其他变体主图与详情。','shared':'只重做7张共用详情；本次01—07分别对应商品详情位置02—08，不生成或修改任何主图。'}
  category=plan.get('category') or {};label=category.get('zh_path') or category.get('name') or '未明确识别的类目'
  return '\n'.join([SOURCE_POLICY,limits[scope],DELIVERY,
   '【已选类目，仅设计路由】'+str(label)+'；'+plan['style_name']+' / '+plan['subtype']+'。类目与原图商品明显冲突时说明，不照类目改造实物。',
-  EVIDENCE_PASS,PRODUCT_LOCK,'【本类摄影方向】'+STYLES[plan['style']][1]+(DIGITAL_DIRECTION if plan['style']=='digital' else ''),ART_DIRECTION,
+  EXTRACTION,selection_for_scope(scope),render_profile(plan['style'],scope),storyboard_for_scope(scope),PRODUCT_LOCK,'【本类摄影方向】'+STYLES[plan['style']][1]+(DIGITAL_DIRECTION if plan['style']=='digital' else ''),ART_DIRECTION,VISUAL_PROOF,
   DIMENSIONS if scope!='shared' else '共用详情以全部有对应原图的变体为范围，差异须标选项，不把其他变体外观、结构或参数混成一件商品。',
   '【范围隔离】当前主图只用当前变体的原始外观；共用原始详情只补能核实适用的信息。重做不以旧AI成图为外观或参数依据。只保留本次范围内的编号，重做与首次执行同一证据和质量规则。',
   '【任务清单，不是一张图的分区】',*rows,FINAL_CHECK])

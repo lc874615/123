@@ -11,7 +11,7 @@ def open_plan(parent,get_plan,save_override=None,key='current'):
  top=ttk.Frame(window,padding=(14,10));top.pack(fill='x');title=ttk.Label(top,style='SectionTitle.TLabel');title.pack(anchor='w');reason=ttk.Label(top,wraplength=820,style='Muted.TLabel');reason.pack(anchor='w',pady=(4,6))
  choices=['按官方类目自动选择']+[v[0] for v in STYLES.values()];choice=ttk.Combobox(top,values=choices,state='readonly');choice.pack(fill='x')
  body=ttk.Frame(window,padding=(14,0));body.pack(fill='both',expand=True);body.rowconfigure(0,weight=1);body.columnconfigure(0,weight=1)
- tree=ttk.Treeview(body,columns=('number','topic'),show='headings',selectmode='browse');tree.heading('number',text='商品位置');tree.column('number',width=80,stretch=False,anchor='center');tree.heading('topic',text='本张用途（先读原图；无依据时采用替代主题）');tree.column('topic',width=680);tree.grid(row=0,column=0,sticky='nsew');sy=ttk.Scrollbar(body,command=tree.yview);sy.grid(row=0,column=1,sticky='ns');tree.configure(yscrollcommand=sy.set)
+ tree=ttk.Treeview(body,columns=('number','topic'),show='headings',selectmode='browse');tree.heading('number',text='商品位置');tree.column('number',width=80,stretch=False,anchor='center');tree.heading('topic',text='建议用途（读完原图后按卖点证据分配）');tree.column('topic',width=680);tree.grid(row=0,column=0,sticky='nsew');sy=ttk.Scrollbar(body,command=tree.yview);sy.grid(row=0,column=1,sticky='ns');tree.configure(yscrollcommand=sy.set)
  def refresh():
   plan=get_plan();title.configure(text=plan['style_name']+' · '+plan['subtype']);reason.configure(text=plan['reason']+'；'+'；'.join(plan.get('warnings',[]))+'；商品事实仅来自本次主图与共用详情原始参考；类目只决定设计方向。');choice.current(0 if plan['source']!='manual' else list(STYLES).index(plan['style'])+1)
   tree.delete(*tree.get_children())

@@ -14,15 +14,20 @@ class ImageJobs:
   for j in self.jobs:
    for ref in j.get('references') or []:
     name=Path(ref.get('path','').replace('\\','/')).name
-    folders=[self.store.folder/'products'/str(ref.get('sku') or j['sku'])/'references',self.store.folder/'products'/j['sku']/'shared_references',self.store.folder/'products'/j['sku']/'group_reference_sheets']
+    folders=[self.store.folder/'products'/str(ref.get('sku') or j['sku'])/'references',self.store.folder/'products'/j['sku']/'shared_references',self.store.folder/'products'/j['sku']/'group_reference_sheets',self.store.folder/'products'/j['sku']/'reference_regions']
     if ref.get('purpose') in ('shared_detail','shared_gallery','shared_information'):folders.reverse()
     for folder in folders:
      if (folder/name).is_file():ref['path']=str(folder/name);break
    for ref in j.get('references') or []:
     for cell in ref.get('cells') or []:
-     old=Path(cell.get('path','').replace('\\','/'));sub='shared_references' if 'shared_references' in old.parts else 'references'
-     candidate=self.store.folder/'products'/str(cell.get('sku') or j['sku'])/sub/old.name
+     old=Path(cell.get('path','').replace('\\','/'));sub='reference_regions' if 'reference_regions' in old.parts else 'shared_references' if 'shared_references' in old.parts else 'references'
+     candidate=self.store.folder/'products'/str(j['sku'] if sub=='reference_regions' else cell.get('sku') or j['sku'])/sub/old.name
      if candidate.is_file():cell['path']=str(candidate)
+   for ref in j.get('references') or []:
+    for item in [ref]+list(ref.get('cells') or []):
+     if not item.get('source_path'):continue
+     source=Path(item['source_path'].replace('\\','/'));sub='shared_references' if 'shared_references' in source.parts else 'references';candidate=self.store.folder/'products'/str(item.get('source_sku') or item.get('sku') or j['sku'])/sub/source.name
+     if candidate.is_file():item['source_path']=str(candidate)
    for plan in j.get('plans') or []:
     for row in plan['rows']:row['file']=str(self.folder(plan['sku'])/'images'/Path(row['file'].replace('\\','/')).name)
    if j['state'] in ('claimed','sending','waiting'):j.update(state='needs_attention',resume_mode='inspect_only',message='重启后只读取本次图片结果，不重新发送')

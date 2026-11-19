@@ -48,6 +48,13 @@ def pack_sources(store,task,references,limit=8):
   digest=hashlib.sha256(raw).hexdigest();key=(ref.get('sku'),ref.get('purpose'),digest)
   if key in seen:continue
   seen.add(key);valid.append({**ref,'path':str(p),'mime':mime,'reference_sha256':digest})
+ # Add readable regions only within the existing attachment/index budget.
+ # Preserve up to two current-variant originals in full when capacity permits.
+ from reference_readability import detail_regions
+ reserved=min(2,sum(r.get('purpose')=='variant_main' for r in valid))
+ capacity=reserved+4*(limit-reserved)
+ budget=min(12,max(0,capacity-len(valid)))
+ if budget:valid.extend(detail_regions(store,task,valid,budget))
  if len(valid)<=limit:return valid
  # Prefer full-resolution current-variant originals. Each remaining input sheet
  # has at most four images, rather than sixteen tiny unreadable thumbnails.
@@ -65,7 +72,7 @@ def pack_sources(store,task,references,limit=8):
    with Image.open(r['path']) as image:
     fit=ImageOps.contain(ImageOps.exif_transpose(image).convert('RGB'),(1160,1560));canvas.paste(fit,(x+(1200-fit.width)//2,y+(1560-fit.height)//2))
    draw.text((x+18,y+1580),str(i+1)+': '+str(r.get('sku','')).encode('ascii','replace').decode(),font=font,fill='black')
-   mapping.append({'cell':i+1,'sku':r.get('sku'),'purpose':r.get('purpose'),'source_name':r.get('name'),'path':r['path'],'sha256':r['reference_sha256']})
+   mapping.append({'cell':i+1,'sku':r.get('sku'),'purpose':r.get('purpose'),'source_name':r.get('name'),'path':r['path'],'sha256':r['reference_sha256'],**{k:r[k] for k in ('source_path','source_sha256','source_sku','source_name','region','crop_box') if k in r}})
   digest=hashlib.sha256(canvas.tobytes()+json.dumps(mapping,sort_keys=True).encode()).hexdigest();path=folder/(digest+'.jpg')
   for quality in (92,84,76,68):
    canvas.save(path,quality=quality)
@@ -90,6 +97,7 @@ def compile_references(store,task,scope):
 def verify_sources(references):
  for ref in references:
   checks=[{'path':ref.get('path'),'sha256':ref.get('reference_sha256')}]+[{'path':c.get('path'),'sha256':c.get('sha256')} for c in ref.get('cells') or []]
+  checks.extend({'path':r.get('source_path'),'sha256':r.get('source_sha256')} for r in [ref]+list(ref.get('cells') or []) if r.get('source_path'))
   for row in checks:
    if row['sha256'] and (not Path(row['path']).is_file() or hashlib.sha256(Path(row['path']).read_bytes()).hexdigest()!=row['sha256']):raise ValueError('原始参考图已变化，未发送或替换；请停止任务后重新启动')
 

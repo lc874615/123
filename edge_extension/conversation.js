@@ -12,7 +12,8 @@
   };
   return roots.reduce((best,n)=>score(n)>score(best)?n:best,roots[0]);
  }
- function userOwned(node){return node.closest?.('[data-message-author-role="user"],[data-turn="user"],[class*="group/user-message"]')!=null;}
+ function composerOwned(node){return !!node?.closest?.('[contenteditable="true"],textarea,[role="textbox"],[data-testid="composer"],[data-composer-root],[data-composer-body],[class*="ComposerLayout"],[class*="composer-attachment"],#prompt-textarea');}
+ function userOwned(node){return composerOwned(node)||node.closest?.('[data-message-author-role="user"],[data-turn="user"],[class*="group/user-message"]')!=null;}
  function assistantNodes(doc){
   const roots=[...doc.querySelectorAll('[data-message-author-role="assistant"], [data-turn="assistant"]')];
   // Some page layouts expose markdown siblings outside the role wrapper. Include only
@@ -141,6 +142,6 @@
   globalThis.__ozonRecoveryInfo.phase='not_found';
   return false;
  }
- globalThis.OzonConversation={expandUserPrompts,auxiliary,requestAnchor,nextUser,revealRequest,assistantNodes,assistantImages,userOwned,imageScopes,requestReplies,main,contentRoots,userNodes,generating,region};
+ globalThis.OzonConversation={expandUserPrompts,composerOwned,auxiliary,requestAnchor,nextUser,revealRequest,assistantNodes,assistantImages,userOwned,imageScopes,requestReplies,main,contentRoots,userNodes,generating,region};
  if(typeof module!=='undefined')module.exports=globalThis.OzonConversation;
 })();

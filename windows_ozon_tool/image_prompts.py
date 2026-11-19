@@ -31,10 +31,11 @@ def reference_contract(task):
   if r.get('purpose')=='shared_variant':usage='仅供共用详情核对该选项；不得作为当前变体主图外观依据'
   if r.get('purpose')=='shared_reference_sheet':usage='原始输入索引，逐格按purpose及sku确认角色；只有当前变体variant_main格可作其主图外观依据，shared_information/shared_detail格仅核实适用信息，其他变体格不得影响当前主图'
   if r.get('purpose','variant_main')=='variant_main' and (r.get('sku') or task.get('sku'))==task.get('sku') and task.get('kind')!='shared_details':usage+='；本变体原图内清晰商品尺寸必须保留到01主图，不能省略或仅移到详情图'
-  if r.get('cells'):usage+='；以下仅为原始输入资料，绝非成品版式；按从左到右、从上到下格号对应：'+str([{k:c.get(k) for k in ('cell','sku','purpose','source_name')} for c in r['cells']])
+  if r.get('cells'):usage+='；以下仅为原始输入资料，绝非成品版式；按从左到右、从上到下格号对应：'+str([{k:c.get(k) for k in ('cell','sku','purpose','source_name','region')} for c in r['cells']])
+  if r.get('region'):usage+='；这是同一原始详情的'+r['region']+'，用于读取文字与细节，不能当成新增商品/选项'
   lines.append(str(i+1)+'：'+str(r.get('name','原图'))+'；货号 '+str(r.get('sku') or task.get('sku',''))+'；用途 '+usage)
  from group_references import INFO
- return (INFO+'\n' if task.get('kind')=='shared_details' or task.get('expected_images')==8 else '')+'附件仅按下列角色使用，不从输入索引页复制整套拼图。\n本次附件对应关系：\n'+'\n'.join(lines)
+ return (INFO+'\n' if task.get('kind')=='shared_details' or task.get('expected_images')==8 else '')+'附件中的局部区域与完整原图属于同一证据，不能重复计入套装或当成新选项；区域编号不代表商品尺寸。附件仅按下列角色使用，不从输入索引页复制整套拼图。\n本次附件对应关系：\n'+'\n'.join(lines)
 
 
 def main_detail_references(task,tasks):
