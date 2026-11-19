@@ -18,7 +18,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  coordinator=GroupService(paths,service,pricing,store)
  cached=lookup(root,('group_preview',tuple(sorted(str(p.resolve()) for p in paths))))
  if cached is not None:return cached
- dialog=remember(root,('group_preview',tuple(sorted(str(p.resolve()) for p in paths))),tk.Toplevel(root));dialog.title('整组预览 · Ozon 商品自动化 1.0.70');dialog.geometry('1280x850');dialog.minsize(950,650)
+ dialog=remember(root,('group_preview',tuple(sorted(str(p.resolve()) for p in paths))),tk.Toplevel(root));dialog.title('整组预览 · Ozon 商品自动化 1.0.71');dialog.geometry('1280x850');dialog.minsize(950,650)
  busy=False;selected=set(range(len(paths)));focus=['',''];bundles=[];token=None;rendered=None;warehouses={};photos=[];rows={};last_job=None;copy_dirty=False;displayed_copy=None;copy_timer=None;busy_since=0;operation_error='';operation_name=''
  header=ttk.Frame(dialog,padding=(16,10));header.pack(fill='x')
  ttk.Label(header,text='整组预览',style='Heading.TLabel').pack(side='left')
@@ -366,7 +366,14 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
      b=read(path)
      if (b.get('variant_parameters') or {}).get('competitor_url'):
       b.pop('competitor_reference',None);write(path,b)
+   if coordinator.store:
+    for task in coordinator.store.tasks:
+     if task['sku'] in {p.parent.name for p in paths}:task.pop('competitor_wait',None)
+    coordinator.store.save()
+    from competitor_flow import signal
+    signal(coordinator.store)
   run(action)
+ ttk.Button(refbar,text='重新读取竞品',command=retry_competitor).pack(side='right',padx=3)
  more_menu.add_command(label='重新读取竞品参考',command=retry_competitor)
  more_menu.add_command(label='打开当前变体竞品页',command=lambda:open_competitor())
  def open_competitor():

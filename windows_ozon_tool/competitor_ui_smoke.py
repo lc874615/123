@@ -24,7 +24,14 @@ with tempfile.TemporaryDirectory() as tmp,patch('account_context.credentials',re
    tree=ui['tree'];assert tree.exists('a:0:901');assert '竞品待核对' in str(tree.item('a:0:901','values'));tree.selection_set('a:0:901');button=next(x for x in widgets(w) if x.winfo_class()=='TButton' and x.cget('text')=='采用当前行参考');button.invoke();root.after(700,verify)
   except Exception:errors.append(__import__('traceback').format_exc());finish()
  def verify():
-  try:assert read(path)['attribute_draft']['values']['0:901'][0]['value']=='USB-C';print('PASS: live Tk preview displays sourced competitor reference and explicit row adoption resolves official dictionary')
+  try:
+   assert read(path)['attribute_draft']['values']['0:901'][0]['value']=='USB-C'
+   button=next(x for x in widgets(w) if x.winfo_class()=='TButton' and x.cget('text')=='重新读取竞品');button.invoke();root.after(700,verify_retry)
+  except Exception:errors.append(__import__('traceback').format_exc());finish()
+ def verify_retry():
+  try:
+   saved=read(path);assert 'competitor_reference' not in saved;assert saved['attribute_draft']['values']['0:901'][0]['value']=='USB-C';assert store.competitor_revision>0
+   print('PASS: live Tk reference adoption, direct retry clears snapshot and wakes plugin while preserving adopted official values')
   except Exception:errors.append(__import__('traceback').format_exc())
   finish()
  def finish():w.destroy();root.destroy()

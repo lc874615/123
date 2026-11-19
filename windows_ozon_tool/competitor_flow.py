@@ -67,16 +67,18 @@ def describe(bundle,task=None):
  if not c:state='schema';label='待官方字段 / 未预填'
  elif not snap:state='queued';label='待采集 / 未预填'
  else:
-  state=snap.get('state','queued');label={'reading':'采集中 / 未预填','failed':'采集失败 / 未预填','ready':f'成功{matched} · 预填{prefilled} · 采用{applied}'}.get(state,'待采集 / 未预填')
+  state=snap.get('state','queued');label={'reading':'采集中 / 未预填','failed':'采集失败 / 未预填','ready':f'已读 · 匹配{matched} · 预填{prefilled} · 采用{applied}'}.get(state,'待采集 / 未预填')
+ if state=='failed' and snap.get('retryable'):state='retrying';label='等待自动重试 / 未预填'
+ if state=='failed' and snap.get('error_code')=='verification':state='verification';label='需页面验证 / 未预填'
  if gate.get('state')=='timeout' and state in ('schema','queued','reading'):state='timeout';label='采集超时 / 未预填'
  used=bundle.get('copy_competitor_fields') or []
- detail=(str(url)+'\n'+(snap.get('message') or gate.get('message') or '等待官方字段同步与插件读取')+'\n官方可引用字段 '+str(official)+'；匹配 '+str(matched)+'；参考预填 '+str(prefilled)+'（待核对）；已采用 '+str(applied)+'；已填值保留 '+str(existing)+'。未获取字段不补造。\n文案请求中已核对参数 '+str(len(used))+' 项，待原图核验候选 '+str(len(bundle.get('copy_competitor_candidates') or []))+' 项；不代表文案已逐项引用，实际内容请在预览核对。')
+ detail=(str(url)+'\n'+(snap.get('message') or gate.get('message') or '等待官方字段同步与插件读取')+'\n页面读取 '+str(snap.get('raw_count',0))+' 项；自动尝试 '+str(snap.get('attempts',0))+'/3。\n官方可引用字段 '+str(official)+'；匹配 '+str(matched)+'；参考预填 '+str(prefilled)+'（待核对）；已采用 '+str(applied)+'；已填值保留 '+str(existing)+'。未获取字段不补造。\n文案请求中已核对参数 '+str(len(used))+' 项，待原图核验候选 '+str(len(bundle.get('copy_competitor_candidates') or []))+' 项；不代表文案已逐项引用，实际内容请在预览核对。'+('\n未匹配字段示例：'+'、'.join(snap['unmatched_names']) if snap.get('unmatched_names') else ''))
  return {'state':state,'label':label,'configured':True,'matched':matched,'prefilled':prefilled,'applied':applied,'detail':detail}
 
 def group_label(rows):
  configured=[r for r in rows if r['configured']]
  if not configured:return '未填写链接'
- return f"成功{sum(r['state']=='ready' for r in configured)}/{len(configured)} · 预填{sum(r['prefilled'] for r in configured)} · 已采用{sum(r['applied'] for r in configured)}"
+ return f"已读{sum(r['state']=='ready' for r in configured)}/{len(configured)} · 失败{sum(r['state'] in ('failed','verification') for r in configured)} · 预填{sum(r['prefilled'] for r in configured)} · 已采用{sum(r['applied'] for r in configured)}"
 
 def before_copy(store,leader,now=None):
  """Wait for configured links to finish, never hold a business lock over IO.
@@ -97,7 +99,7 @@ def before_copy(store,leader,now=None):
   try:c=context(b,account)
   except ValueError:continue  # Invalid link is shown in the status column.
   s=current_snapshot(b)
-  if c and s.get('state') in ('ready','failed'):continue
+  if c and (s.get('state')=='ready' or s.get('state')=='failed' and not s.get('retryable')):continue
   pending.append('等待官方字段' if c is None else '等待竞品采集')
  if not pending:
   if leader.pop('competitor_wait',None):store.save()

@@ -133,7 +133,11 @@ def claim(store):
   if not c:continue
   previous=b.get('competitor_reference') or {}
   if previous.get('fingerprint')==c['fingerprint']:
-   if previous.get('state')=='ready' or previous.get('retry_at',0)>now:continue
+   if previous.get('state')=='ready':continue
+   if previous.get('state')=='failed':
+    if previous.get('attempts',0)>=3 or previous.get('error_code') in ('verification','redirect'):continue
+    if previous.get('attempts') and previous.get('retry_at',0)>now:continue
+   elif previous.get('retry_at',0)>now:continue
   candidates.append((path,b,c))
  waiting={t.get('copy_leader',t['sku']) for t in store.tasks if (t.get('competitor_wait') or {}).get('state')=='waiting'}
  priority={t['sku'] for t in store.tasks if t.get('copy_leader',t['sku']) in waiting}
@@ -148,7 +152,7 @@ def claim(store):
   if s.get('fingerprint')==target['fingerprint'] and (s.get('state')=='ready' or (s.get('state')=='reading' and s.get('retry_at',0)>now)):cached=s;break
  for path,b,c in candidates:
   if c['fingerprint']!=target['fingerprint']:continue
-  b['competitor_reference']=dict(cached) if cached else {'fingerprint':c['fingerprint'],'url':c['url'],'state':'reading','token':token,'retry_at':now+180,'message':'正在读取竞品公开参数，按已选类目官方字段匹配'}
+  b['competitor_reference']=dict(cached) if cached else {'fingerprint':c['fingerprint'],'url':c['url'],'state':'reading','token':token,'attempts':(int((b.get('competitor_reference') or {}).get('attempts',0)) if (b.get('competitor_reference') or {}).get('fingerprint')==c['fingerprint'] else 0)+1,'retry_at':now+180,'message':'正在读取竞品公开参数，按已选类目官方字段匹配'}
   write(path,b)
  if cached:return {'job':None}
  return {'job':{**target,'token':token}}
@@ -169,7 +173,8 @@ def receive(store,body):
   suggestions=match(c['fields'],body.get('rows'))
   if not body.get('rows'):error='页面未读取到公开参数，未预填；可打开原链接核对。'
  else:suggestions={}
- result={'fingerprint':c['fingerprint'],'url':c['url'],'state':'failed' if error else 'ready','suggestions':suggestions,'fetched_at':time.time(),'retry_at':time.time()+86400,'message':error or f'已匹配 {len(suggestions)} 项竞品参考；只补空白，核对后采用','result_hash':hashlib.sha256(json.dumps(suggestions,sort_keys=True,ensure_ascii=False).encode()).hexdigest()}
+ attempts=max(int((b.get('competitor_reference') or {}).get('attempts',1)) for _,b,_ in matches);code=body['error_code'] if error and body.get('error_code') in ('verification','redirect') else 'transient' if error else '';retryable=bool(error and code not in ('verification','redirect') and attempts<3)
+ result={'attempts':attempts,'error_code':code,'retryable':retryable,'raw_count':len(body.get('rows') or []) if not error else 0,'unmatched_names':[str(r.get('name',''))[:180] for r in (body.get('rows') or [])[:400] if isinstance(r,dict) and norm(r.get('name')) not in {norm(f.get(k)) for f in c['fields'] for k in ('name','name_ru')}][:12],'fingerprint':c['fingerprint'],'url':c['url'],'state':'failed' if error else 'ready','suggestions':suggestions,'fetched_at':time.time(),'retry_at':time.time()+ (5 if attempts==1 else 15) if retryable else time.time()+86400,'message':(error+('；将自动重试（第'+str(attempts)+'/3次）' if retryable else '；请完成页面验证后重新读取' if code=='verification' else '；请核对链接及页面后重新读取' if code=='redirect' else '；自动重试已停止，请点击重新读取')) if error else f'已匹配 {len(suggestions)} 项竞品参考；只补空白，核对后采用','result_hash':hashlib.sha256(json.dumps(suggestions,sort_keys=True,ensure_ascii=False).encode()).hexdigest()}
  for path,b,_ in matches:b['competitor_reference']=dict(result);write(path,b)
  from competitor_flow import signal
  signal(store)

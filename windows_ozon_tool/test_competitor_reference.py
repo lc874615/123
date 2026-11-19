@@ -39,6 +39,19 @@ class CompetitorTests(unittest.TestCase):
   import test_group_publication as fixture
   with tempfile.TemporaryDirectory() as tmp:
    group,api,pub=fixture.GroupTests().setup_group(tmp);b=read(group.paths[0]);b['variant_parameters']['competitor_url']=URL;b['attribute_draft']['fields'].append(FIELDS[0]);b['competitor_reference']={'state':'ready','url':URL,'fingerprint':context(b,'synthetic-shop')['fingerprint'],'result_hash':'abc','suggestions':{'0:901':{'name':'Тип разъема','value':'USB-C'}}};write(group.paths[0],b);group.confirm_references([0],'0:901',group.token(),skip=True);saved=read(group.paths[0]);self.assertNotIn('0:901',proposals(saved));self.assertNotIn('0:901',saved['attribute_draft']['values'])
+ def test_transient_errors_retry_bounded_and_old_daily_failure_recovers(self):
+  with tempfile.TemporaryDirectory() as tmp,patch('competitor_reference.time.time',return_value=100):
+   store=self.store(tmp,1);path=store.folder/'products'/'A'/'listing_bundle.json'
+   b=read(path);b['competitor_reference']={'fingerprint':context(b,'synthetic-shop')['fingerprint'],'state':'failed','retry_at':999999};write(path,b)
+   for attempt in range(1,4):
+    with patch('competitor_reference.time.time',return_value=100+attempt*30):
+     job=claim(store)['job'];self.assertIsNotNone(job);receive(store,{'token':job['token'],'error':'temporary no parameters'})
+     state=read(path)['competitor_reference'];self.assertEqual(state['attempts'],attempt);self.assertEqual(state['retryable'],attempt<3);self.assertIsNone(claim(store)['job'])
+   with patch('competitor_reference.time.time',return_value=9999999):self.assertIsNone(claim(store)['job'])
+ def test_verification_never_auto_retries_or_fills_values(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   store=self.store(tmp,1);job=claim(store)['job'];receive(store,{'token':job['token'],'error':'captcha','error_code':'verification'})
+   self.assertIsNone(claim(store)['job']);b=read(store.folder/'products'/'A'/'listing_bundle.json');self.assertEqual(b['attribute_draft']['values'],{});self.assertFalse(b['competitor_reference']['retryable'])
  def test_stale_result_after_url_category_schema_or_shop_change(self):
   for change in ('url','category','account','schema'):
    with self.subTest(change=change),tempfile.TemporaryDirectory() as tmp:
