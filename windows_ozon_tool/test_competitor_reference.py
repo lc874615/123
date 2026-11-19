@@ -19,6 +19,19 @@ class CompetitorTests(unittest.TestCase):
   self.assertEqual(normalize_url(URL+'?x=tracking#foo'),URL)
   for v in ['http://www.ozon.ru/product/123/','https://www.ozon.ru.attacker.com/product/123/','https://127.0.0.1/product/123/','https://name@www.ozon.ru/product/123/','https://www.ozon.ru:99/product/123/','https://www.ozon.ru/my/order','https://www.ozon.ru/product/../123/']:
    with self.subTest(v=v),self.assertRaises(ValueError):normalize_url(v)
+ def test_local_collector_reads_only_exact_official_labels_without_browser(self):
+  import threading
+  from competitor_local import LocalCompetitorService,extract
+  markup='''<script type="application/ld+json">{"name":"ignored"}</script><script>{"characteristics":[{"name":"Тип разъема","value":"USB-C"},{"name":"Основной материал","value":"Пластик"},{"name":"Длина упаковки, см","value":"99"}]}</script>'''
+  rows=extract(markup,FIELDS);self.assertEqual({r['name'] for r in rows},{'Тип разъема','Основной материал','Длина упаковки, см'})
+  with tempfile.TemporaryDirectory() as tmp:
+   store=self.store(tmp,1);store.lock=threading.RLock();store.save=lambda:None
+   with patch('competitor_local._direct_read',return_value=markup):self.assertTrue(LocalCompetitorService(store).run_once())
+   saved=read(store.folder/'products'/'A'/'listing_bundle.json');self.assertEqual(saved['competitor_reference']['state'],'ready');self.assertIn('0:901',saved['competitor_reference']['suggestions']);self.assertNotIn('0:904',saved['competitor_reference']['suggestions'])
+ def test_local_empty_result_is_terminal_not_a_browser_retry(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   store=self.store(tmp,1);job=claim(store)['job'];receive(store,{'token':job['token'],'error':'本地公开页未找到字段','error_code':'empty'})
+   saved=read(store.folder/'products'/'A'/'listing_bundle.json')['competitor_reference'];self.assertEqual(saved['error_code'],'empty');self.assertFalse(saved['retryable'])
  def test_append_same_first_and_no_prompt_leak(self):
   from variants import FIELDS as vf,same_first,facts
   self.assertEqual(vf[-2][0],'extra');self.assertEqual(vf[-1][0],'competitor_url');rows=[{'values':{'competitor_url':URL}},{'values':{}}];self.assertEqual(same_first(rows,'competitor_url'),1);self.assertEqual(rows[1]['values']['competitor_url'],URL)

@@ -678,13 +678,15 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.76','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.77','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
      elif self.path=='/competitor-task':
-      from competitor_reference import claim
-      value=claim(store)
+      # Public competitor URLs are collected by the local direct worker.
+      # Never lease an Edge tab: the browser may intentionally use a VPN for
+      # ChatGPT while Ozon is unreachable through that route.
+      value={'job':None,'collector':'local_direct'}
      elif self.path=='/competitor-result':
       from competitor_reference import receive
       value=receive(store,body)
@@ -873,6 +875,9 @@ def main(test_mode=False,on_ready=None):
  from attribute_service import AttributeService
  attributes=AttributeService(DATA,store.lock,active_skus=hosting_skus);attributes.task_store=store;store.attributes=attributes;grid.color_service=attributes
  None if test_mode else threading.Thread(target=attributes.worker,args=(pricing_stop,),daemon=True).start()
+ from competitor_local import LocalCompetitorService
+ competitor_local=LocalCompetitorService(store);store.competitor_local=competitor_local
+ None if test_mode else threading.Thread(target=competitor_local.worker,args=(pricing_stop,),daemon=True).start()
  from publication_service import PublicationService
  publication=PublicationService(DATA,store.lock,initial_stock=1000)
  if not test_mode and os.environ.get('OZON_CLIENT_ID'):publication.resume_account(os.environ['OZON_CLIENT_ID'])
