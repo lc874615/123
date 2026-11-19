@@ -7,7 +7,7 @@ the already loaded official category schema are returned to the reference gate.
 import html,json,re,socket,ssl,threading,urllib.error,urllib.request
 from pathlib import Path
 from html.parser import HTMLParser
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit,urlencode
 from secure_http import contexts
 from competitor_reference import normalize_url,claim,receive
 
@@ -37,6 +37,12 @@ def discover_local_proxies():
   except OSError:pass
  return candidates
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+ def redirect_request(self,*args,**kwargs):return None
+
+def _product_api_url(canonical):
+ return 'https://www.ozon.ru/api/composer-api.bx/page/json/v2?'+urlencode({'url':urlsplit(canonical).path})
+
 def _direct_read(url,limit=3_000_000,timeout=18,proxy_url=''):
  """HTTPS only, with global proxy variables intentionally disabled.
 
@@ -48,7 +54,7 @@ def _direct_read(url,limit=3_000_000,timeout=18,proxy_url=''):
  except ValueError as exc:raise CaptureError(str(exc),'network') from exc
  for context in contexts():
   routes={'http':proxy_url,'https':proxy_url} if proxy_url else {}
-  opener=urllib.request.build_opener(urllib.request.ProxyHandler(routes),urllib.request.HTTPSHandler(context=context))
+  opener=urllib.request.build_opener(urllib.request.ProxyHandler(routes),urllib.request.HTTPSHandler(context=context),_NoRedirect())
   request=urllib.request.Request(canonical,headers={'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/121 Safari/537.36','Accept-Language':'ru-RU,ru;q=0.9','Accept':'text/html,application/xhtml+xml'})
   try:
    with opener.open(request,timeout=timeout) as response:
@@ -58,10 +64,24 @@ def _direct_read(url,limit=3_000_000,timeout=18,proxy_url=''):
    if len(raw)>limit:raise CaptureError('竞品页面过大，未读取参数')
    return raw.decode('utf-8','replace')
   except CaptureError:raise
-  except (urllib.error.HTTPError,urllib.error.URLError,ssl.SSLError) as exc:
+  except urllib.error.HTTPError as exc:
    last=exc
    text=str(exc).casefold()
-   if isinstance(exc,urllib.error.HTTPError) and exc.code in (301,302,303,307,308):raise CaptureError('Ozon 公开页发生重复跳转，当前网络出口无法取得页面。请切换为可访问 Ozon 的本地出口后重试。','network') from exc
+   if exc.code in (301,302,303,307,308):
+    # Product HTML can be region-redirected in mainland networks. Try the
+    # same-origin public page-data endpoint before treating the route as bad.
+    try:
+     api=urllib.request.Request(_product_api_url(canonical),headers={'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/121 Safari/537.36','Accept':'application/json','Accept-Language':'ru-RU,ru;q=0.9','x-o3-app-name':'d'})
+     with opener.open(api,timeout=timeout) as response:raw=response.read(limit+1)
+     if len(raw)>limit:raise CaptureError('Ozon 商品数据响应过大，未读取参数')
+     return raw.decode('utf-8','replace')
+    except CaptureError:raise
+    except (urllib.error.HTTPError,urllib.error.URLError,ssl.SSLError,OSError) as api_exc:
+     last=api_exc;raise CaptureError('Ozon 商品网页重复跳转，且公开数据接口不可用：'+str(api_exc)[:120]+'。请切换为可访问 Ozon 的本地出口后重试。','network') from api_exc
+   if any(x in text for x in ('403','429','captcha','forbidden')):raise CaptureError('公开竞品页要求验证或限制访问，请稍后重试或在 Ozon 页面核对','verification') from exc
+  except (urllib.error.URLError,ssl.SSLError) as exc:
+   last=exc
+   text=str(exc).casefold()
    if any(x in text for x in ('403','429','captcha','forbidden')):raise CaptureError('公开竞品页要求验证或限制访问，请稍后重试或在 Ozon 页面核对','verification') from exc
   except OSError as exc:last=exc
  route='备用 Ozon 网络出口' if proxy_url else '本地直连网络';detail=str(last)[:120]
@@ -99,11 +119,17 @@ def _walk(value,labels,rows,depth=0):
    rows.append({'name':name,'value':str(raw)})
   elif name and isinstance(raw,list) and raw and all(isinstance(x,(str,int,float)) for x in raw):
    rows.append({'name':name,'value':'；'.join(str(x) for x in raw),'values':[str(x) for x in raw]})
-  for child in value.values():_walk(child,labels,rows,depth+1)
+  for child in value.values():
+   if isinstance(child,str) and len(child)<=1_500_000 and child.lstrip()[:1] in ('{','['):
+    try:_walk(json.loads(child),labels,rows,depth+1)
+    except (ValueError,TypeError):pass
+   _walk(child,labels,rows,depth+1)
 
 def extract(html_text,fields):
  labels={_key(f.get(k)) for f in fields for k in ('name','name_ru') if f.get(k)}
  parser=_Rows(labels);parser.feed(html_text);rows=list(parser.rows)
+ try:_walk(json.loads(html_text),labels,rows)
+ except (ValueError,TypeError):pass
  for script in parser.scripts:
   if len(script)>1_500_000:continue
   try:_walk(json.loads(script),labels,rows)

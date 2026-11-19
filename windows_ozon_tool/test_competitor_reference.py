@@ -1,4 +1,4 @@
-import copy,tempfile,unittest
+import copy,json,tempfile,unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -28,6 +28,11 @@ class CompetitorTests(unittest.TestCase):
    store=self.store(tmp,1);store.lock=threading.RLock();store.save=lambda:None
    with patch('competitor_local._direct_read',return_value=markup):self.assertTrue(LocalCompetitorService(store).run_once())
    saved=read(store.folder/'products'/'A'/'listing_bundle.json');self.assertEqual(saved['competitor_reference']['state'],'ready');self.assertIn('0:901',saved['competitor_reference']['suggestions']);self.assertNotIn('0:904',saved['competitor_reference']['suggestions'])
+ def test_local_collector_extracts_nested_public_page_json(self):
+  from competitor_local import extract
+  payload={'widgetStates':{'characteristics':json.dumps({'items':[{'name':'Тип разъема','value':'USB-C'},{'name':'Длина упаковки, см','value':'99'}]})}}
+  rows=extract(json.dumps(payload),FIELDS)
+  self.assertEqual({r['name'] for r in rows},{'Тип разъема','Длина упаковки, см'})
  def test_local_collector_uses_only_explicit_ozon_network_fallback(self):
   import threading
   from competitor_local import LocalCompetitorService,_proxy_url
