@@ -48,6 +48,17 @@ class CompetitorTests(unittest.TestCase):
      job=claim(store)['job'];self.assertIsNotNone(job);receive(store,{'token':job['token'],'error':'temporary no parameters'})
      state=read(path)['competitor_reference'];self.assertEqual(state['attempts'],attempt);self.assertEqual(state['retryable'],attempt<3);self.assertIsNone(claim(store)['job'])
    with patch('competitor_reference.time.time',return_value=9999999):self.assertIsNone(claim(store)['job'])
+ def test_manual_restart_scopes_variant_and_invalidates_old_shared_lease(self):
+  import threading
+  from unittest.mock import Mock
+  from competitor_reference import restart
+  with tempfile.TemporaryDirectory() as tmp:
+   store=self.store(tmp);store.lock=threading.RLock();store.save=Mock();old=claim(store)['job'];other=read(store.folder/'products'/'B'/'listing_bundle.json')
+   path=store.folder/'products'/'A'/'listing_bundle.json';b=read(path);b['attribute_draft']['values']['0:901']=[{'value':'Own'}];write(path,b)
+   result=restart(store,['A']);self.assertEqual(result['restarted'],['A']);self.assertEqual(read(store.folder/'products'/'B'/'listing_bundle.json'),other)
+   self.assertEqual(read(path)['attribute_draft']['values']['0:901'][0]['value'],'Own');fresh=claim(store)['job'];self.assertNotEqual(fresh['token'],old['token']);self.assertNotEqual(fresh['fingerprint'],old['fingerprint'])
+   receive(store,{'token':old['token'],'url':URL,'rows':[{'name':'Тип разъема','value':'Old'}]});self.assertEqual(read(path)['competitor_reference']['token'],fresh['token'])
+   restart(store,['A','B']);a=read(path);b=read(store.folder/'products'/'B'/'listing_bundle.json');self.assertEqual(a['competitor_refresh_revision'],b['competitor_refresh_revision']);self.assertIsNotNone(claim(store)['job'])
  def test_verification_never_auto_retries_or_fills_values(self):
   with tempfile.TemporaryDirectory() as tmp:
    store=self.store(tmp,1);job=claim(store)['job'];receive(store,{'token':job['token'],'error':'captcha','error_code':'verification'})

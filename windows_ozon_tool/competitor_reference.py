@@ -40,7 +40,7 @@ def context(bundle,account):
  except (ValueError,TypeError):return None
  if state.get('category_key')!=cat or not state.get('fields') or not state.get('schema_hash'):return None
  fields=[{k:f.get(k) for k in ('id','attribute_complex_id','name','name_ru','type','dictionary_id','is_required','is_collection','max_value_count')} for f in state['fields'] if eligible(f)]
- fingerprint=hashlib.sha256(json.dumps([str(account),url,cat,state['schema_hash'],fields],ensure_ascii=False,sort_keys=True).encode()).hexdigest()
+ fingerprint=hashlib.sha256(json.dumps([str(account),url,cat,state['schema_hash'],fields]+([bundle['competitor_refresh_revision']] if bundle.get('competitor_refresh_revision') else []),ensure_ascii=False,sort_keys=True).encode()).hexdigest()
  return {'fingerprint':fingerprint,'url':url,'category_key':cat,'schema_hash':state['schema_hash'],'fields':fields}
 
 
@@ -185,3 +185,26 @@ def status(bundle):
  if not (bundle.get('variant_parameters') or {}).get('competitor_url'):return ''
  from competitor_flow import describe
  return describe(bundle)['label']
+
+
+def restart(store,skus):
+ """Invalidate only selected references; preserve own values and generation jobs."""
+ selected=set(skus);changed=[];skipped=[];revision=secrets.token_hex(12)
+ with store.lock:
+  for task in store.tasks:
+   if task['sku'] not in selected or task.get('state')=='cancelled':continue
+   path=store.folder/'products'/task['sku']/'listing_bundle.json'
+   if not path.exists():skipped.append(task['sku']);continue
+   b=read(path)
+   if not (b.get('variant_parameters') or {}).get('competitor_url'):skipped.append(task['sku']);continue
+   try:normalize_url(b['variant_parameters']['competitor_url'])
+   except ValueError:skipped.append(task['sku']);continue
+   b.pop('competitor_reference',None);b['competitor_refresh_revision']=revision;write(path,b);changed.append(task['sku'])
+  owners={t.get('copy_leader',t['sku']) for t in store.tasks if t['sku'] in changed}
+  for task in store.tasks:
+   if task['sku'] in owners or task['sku'] in changed:task.pop('competitor_wait',None)
+  if changed:
+   store.save()
+   from competitor_flow import signal
+   signal(store)
+ return {'restarted':changed,'skipped':skipped}

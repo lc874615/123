@@ -678,7 +678,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.72','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.73','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
@@ -1283,6 +1283,21 @@ def main(test_mode=False,on_ready=None):
    with store.lock:item=next((dict(t) for t in store.tasks if t['sku']==folders[index].name),None)
    if item:pricing_details(item)
   return open_editor(root,folder,attributes,folders,lambda:category_editor(task),show_price,connect_category,pricing=pricing,store=store,publication=publication,hosting=hosting)
+ def restart_competitor_selected():
+  ids=view.selection();task=selected()
+  if not ids or not task:
+   messagebox.showinfo('请选择','请先选中一个商品组或具体变体',parent=root);return
+  try:
+   with store.lock:
+    if ids[0] in group_members:
+     key=ids[0][len('group:'):];targets=[t['sku'] for t in store.tasks if str(t.get('base_article') or t.get('copy_leader') or t['sku'])==key]
+    else:targets=[task['sku']]
+   from competitor_reference import restart
+   result=restart(store,targets)
+   task_note.configure(text='已重启竞品采集：'+('、'.join(result['restarted']) or '无可重启变体')+('；链接不可用或尚无草稿：'+'、'.join(result['skipped']) if result['skipped'] else '')+'。已填写参数保留。')
+   schedule_refresh(100)
+  except Exception as exc:messagebox.showerror('竞品采集未重启',str(exc),parent=root)
+ ttk.Button(task_actions,text='重启竞品采集',command=restart_competitor_selected).pack(side='left',padx=4)
  ttk.Button(task_actions,text='打开整组预览',style='Primary.TButton',command=listing_editor).pack(side='left',padx=4)
  view.bind('<Double-1>',lambda e:listing_editor())
  def change_pause(paused):
