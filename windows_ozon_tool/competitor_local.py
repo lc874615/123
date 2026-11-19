@@ -4,7 +4,7 @@ This deliberately does not use Edge, browser cookies, or the ChatGPT VPN path.
 Only the canonical public product URL is requested and only exact labels from
 the already loaded official category schema are returned to the reference gate.
 """
-import html,json,re,socket,ssl,threading,urllib.error,urllib.request
+import html,json,os,re,shutil,socket,ssl,subprocess,tempfile,threading,urllib.error,urllib.request
 from pathlib import Path
 from html.parser import HTMLParser
 from urllib.parse import urlsplit,urlencode
@@ -42,6 +42,34 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def _product_api_url(canonical):
  return 'https://www.ozon.ru/api/composer-api.bx/page/json/v2?'+urlencode({'url':urlsplit(canonical).path})
+
+def _browser_executable():
+ candidates=[]
+ for root in (os.environ.get('PROGRAMFILES',''),os.environ.get('PROGRAMFILES(X86)',''),os.environ.get('LOCALAPPDATA','')):
+  if root:candidates.extend([Path(root)/'Microsoft'/'Edge'/'Application'/'msedge.exe',Path(root)/'Google'/'Chrome'/'Application'/'chrome.exe'])
+ for path in candidates:
+  if path.is_file():return str(path)
+ return next((shutil.which(name) for name in ('msedge','microsoft-edge','chrome','google-chrome','chromium') if shutil.which(name)),None)
+
+def _browser_read(url,timeout=30):
+ """Use an isolated local Chromium process only after public HTTP fails.
+
+ It never attaches to the ChatGPT tab or a user's browser profile.  The goal is
+ to use the same normal browser network stack that can open Ozon on the local
+ machine, while keeping collection in the desktop background service.
+ """
+ executable=_browser_executable()
+ if not executable:raise CaptureError('未找到 Microsoft Edge 或 Chrome，无法使用本机浏览器回退读取 Ozon。','network')
+ canonical=normalize_url(url)
+ with tempfile.TemporaryDirectory(prefix='ozon-competitor-browser-') as profile:
+  command=[executable,'--headless=new','--disable-gpu','--no-first-run','--no-default-browser-check','--disable-background-networking','--disable-crash-reporter','--virtual-time-budget=8000','--user-data-dir='+profile,'--dump-dom',canonical]
+  if os.name!='nt':command.insert(1,'--no-sandbox')
+  try:result=subprocess.run(command,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=timeout,check=False)
+  except (OSError,subprocess.SubprocessError) as exc:raise CaptureError('本机浏览器读取 Ozon 失败：'+str(exc)[:160],'network') from exc
+ if result.returncode!=0:raise CaptureError('本机浏览器未能打开 Ozon：'+result.stderr.decode('utf-8','replace')[:160],'network')
+ page=result.stdout.decode('utf-8','replace')
+ if len(page)<200:raise CaptureError('本机浏览器未返回可解析的 Ozon 页面。','network')
+ return page
 
 def _direct_read(url,limit=3_000_000,timeout=18,proxy_url=''):
  """HTTPS only, with global proxy variables intentionally disabled.
@@ -155,19 +183,25 @@ class LocalCompetitorService:
   self.network_path.write_text(json.dumps({'proxy_url':proxy_url},ensure_ascii=False),encoding='utf-8')
   self.status=('本地 Ozon 采集：使用独立备用出口' if proxy_url else '本地直连 Ozon（不使用插件或 ChatGPT VPN）');self.wake.set()
  def read_page(self,url):return _direct_read(url,proxy_url=self.network_settings()['proxy_url'])
+ def read_with_fallback(self,url):
+  try:return self.read_page(url),'local_direct'
+  except CaptureError as direct_error:
+   if direct_error.code!='network':raise
+   return _browser_read(url),'local_browser_fallback'
  def proxy_candidates(self):return discover_local_proxies()
  def run_once(self):
   with self.store.lock:job=claim(self.store).get('job')
   if not job:return False
   try:
-   page=self.read_page(job['url']);rows=extract(page,job['fields'])
-   body={'token':job['token'],'url':job['url'],'rows':rows,'diagnostics':{'collector':'local_direct','full_sections':1}}
+   page,collector=self.read_with_fallback(job['url'])
+   rows=extract(page,job['fields'])
+   body={'token':job['token'],'url':job['url'],'rows':rows,'diagnostics':{'collector':collector,'full_sections':1}}
    if not rows:body.update(error='本地公开页未找到与当前类目相同名称的参数，未预填',error_code='empty')
   except CaptureError as exc:
    self.status='本地竞品采集失败：'+str(exc);body={'token':job['token'],'error':str(exc),'error_code':exc.code}
   except Exception as exc:body={'token':job['token'],'error':'本地采集异常：'+str(exc)[:160],'error_code':'transient'}
   with self.store.lock:receive(self.store,body)
-  if not body.get('error'):self.status='本地竞品采集正常：已读取公开 Ozon 页面'
+  if not body.get('error'):self.status='本地竞品采集正常：已读取公开 Ozon 页面'+('（本机浏览器回退）' if body.get('diagnostics',{}).get('collector')=='local_browser_fallback' else '')
   return True
  def worker(self,stop):
   while not stop.is_set():

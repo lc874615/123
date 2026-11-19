@@ -33,6 +33,15 @@ class CompetitorTests(unittest.TestCase):
   payload={'widgetStates':{'characteristics':json.dumps({'items':[{'name':'Тип разъема','value':'USB-C'},{'name':'Длина упаковки, см','value':'99'}]})}}
   rows=extract(json.dumps(payload),FIELDS)
   self.assertEqual({r['name'] for r in rows},{'Тип разъема','Длина упаковки, см'})
+ def test_local_collector_falls_back_to_isolated_browser_after_network_redirect(self):
+  import threading
+  from competitor_local import LocalCompetitorService,CaptureError
+  markup='<script>{"items":[{"name":"Тип разъема","value":"USB-C"}]}</script>'
+  with tempfile.TemporaryDirectory() as tmp:
+   store=self.store(tmp,1);store.lock=threading.RLock();store.save=lambda:None
+   with patch('competitor_local._direct_read',side_effect=CaptureError('redirect','network')),patch('competitor_local._browser_read',return_value=markup) as browser:
+    self.assertTrue(LocalCompetitorService(store).run_once());browser.assert_called_once_with(URL)
+   saved=read(store.folder/'products'/'A'/'listing_bundle.json');self.assertEqual(saved['competitor_reference']['state'],'ready');self.assertIn('0:901',saved['competitor_reference']['suggestions'])
  def test_local_collector_uses_only_explicit_ozon_network_fallback(self):
   import threading
   from competitor_local import LocalCompetitorService,_proxy_url

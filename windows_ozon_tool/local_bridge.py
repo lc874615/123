@@ -678,7 +678,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.86','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.87','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
@@ -892,7 +892,7 @@ def main(test_mode=False,on_ready=None):
   if cached is not None:return cached
   dialog=remember(root,('competitor_network_settings',),tk.Toplevel(root));dialog.title('本地竞品采集网络');dialog.geometry('700x360');dialog.minsize(600,300)
   current=competitor_local.network_settings()
-  ttk.Label(dialog,text='竞品参数由本地工具直连 Ozon 公开页读取，不使用浏览器插件或 ChatGPT 页面。\n默认保持为空，直接访问 Ozon；只有直连被拒绝或重复跳转时，才填写单独的 Ozon 网络出口。中国大陆网络请使用能够实际访问 Ozon 的出口。').pack(padx=16,pady=(16,8),anchor='w')
+  ttk.Label(dialog,text='竞品参数默认由本地工具直连 Ozon 公开页读取，不使用浏览器插件或 ChatGPT 页面。\n直连重复跳转时会自动用本机 Edge/Chrome 的隔离后台窗口回退读取；只有两者都失败时，才填写单独的 Ozon 网络出口。').pack(padx=16,pady=(16,8),anchor='w')
   proxy=tk.StringVar(value=current['proxy_url']);url=tk.StringVar()
   ttk.Label(dialog,text='备用 Ozon 网络出口（可留空，例如 http://127.0.0.1:7890）').pack(padx=16,anchor='w')
   ttk.Entry(dialog,textvariable=proxy,width=76).pack(padx=16,pady=(2,8),fill='x')
@@ -908,7 +908,7 @@ def main(test_mode=False,on_ready=None):
    test_button.configure(state='disabled');state.configure(text='正在测试本地 Ozon 连接，请稍候…')
    def work():
     try:
-     competitor_local.configure_proxy(proxy.get());page=competitor_local.read_page(url.get());message='连接成功：已读取 Ozon 公开页 '+str(len(page))+' 字节。'
+     competitor_local.configure_proxy(proxy.get());page,mode=competitor_local.read_with_fallback(url.get());message='连接成功：已读取 Ozon 公开页 '+str(len(page))+' 字节（'+('本机浏览器回退' if mode=='local_browser_fallback' else '本地直连')+'）。'
     except Exception as exc:message='连接失败：'+str(exc)
     root.after(0,lambda:(state.configure(text=message),test_button.configure(state='normal')))
    threading.Thread(target=work,daemon=True).start()
