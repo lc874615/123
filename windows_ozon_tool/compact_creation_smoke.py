@@ -19,6 +19,7 @@ def check():
   box=g.tree.bbox('1','pack_dimensions');g.edit(SimpleNamespace(x=box[0]+10,y=box[1]+10));assert g.editor and g.editor[2]=='pack_dimensions';entries=[x for x in g.editor[0].winfo_children() if isinstance(x,ttk.Entry)];assert len(entries)==3
   for entry,value in zip(entries,('35','25','7')):entry.delete(0,'end');entry.insert(0,value)
   entries[1].focus_set();root.update();assert g.editor;assert g.commit();g.bulk_column('pack_dimensions');assert all(tuple(r['values'][k] for k in PACK_KEYS)==('35','25','7') for r in g.rows)
+  g.rows[0]['values']['competitor_url']='https://www.ozon.ru/product/example-12345/';g.bulk_column('competitor_url');assert all(r['values']['competitor_url'].endswith('12345/') for r in g.rows)
   assert g.competitor_links() is g.competitor_links();g.competitor_links().destroy()
   g.focus=(1,0);g.focus_key='name';root.clipboard_clear();root.clipboard_append('镜子A\t黑色\t40x25x8\t1700\t30\t1\n镜子B\t白色\t41x26x9\t1800\t31\t2');g.paste();assert g.rows[1]['values']['pack_height']=='9';assert g.rows[1]['values']['quantity']=='2'
   window.geometry('760x560+10+10');root.update();assert g.tree.xview()[1]>=.999
@@ -26,7 +27,7 @@ def check():
   if '--screenshot' in sys.argv:
    from PIL import ImageGrab
    ImageGrab.grab(bbox=(window.winfo_rootx(),window.winfo_rooty(),window.winfo_rootx()+window.winfo_width(),window.winfo_rooty()+window.winfo_height())).save('/tmp/ozon165-compact.png')
-  print('PASS: six columns, no tabs, 20 variants, three-value editor, same-first, six-column Excel paste, reusable competitor window, 760px no horizontal scroll')
+  print('PASS: seven columns including inline competitor link, no tabs, 20 variants, three-value editor, same-first, six-column Excel paste, reusable competitor window, 760px no horizontal scroll')
  except Exception:errors.append(__import__('traceback').format_exc())
  root.destroy()
 root.after(400,check);root.mainloop();assert not errors,errors

@@ -13,7 +13,7 @@ class CompactVariantTests(unittest.TestCase):
    with self.subTest(text=text),self.assertRaises(ValueError):cell_values(before,'pack_dimensions',text)
    self.assertEqual(before,{'pack_length':'1','pack_width':'2','pack_height':'3'})
  def test_new_paste_order_and_legacy_full_schema(self):
-  self.assertEqual(compact_paste_keys('name',6),COMPACT_COLUMNS);self.assertEqual(compact_paste_keys('pack_dimensions',4),COMPACT_COLUMNS[2:]);self.assertEqual(compact_paste_keys('name',len(FIELDS)),tuple(k for k,_,_ in FIELDS))
+  self.assertEqual(compact_paste_keys('name',6),COMPACT_COLUMNS[:6]);self.assertEqual(compact_paste_keys('pack_dimensions',4),COMPACT_COLUMNS[2:6]);self.assertEqual(compact_paste_keys('name',len(FIELDS)),tuple(k for k,_,_ in FIELDS))
  def test_copy_dimension_group_preserves_individual_fields_and_other_values(self):
   g=VariantGrid.__new__(VariantGrid);g.rows=[{'index':1,'values':{'pack_length':'35','pack_width':'25','pack_height':'7'}},{'index':3,'values':{'pack_length':'1','pack_width':'2','pack_height':'3','color':'blue'}}];g.commit=Mock();g.refresh=Mock();g.hint=Mock();g.bulk_column('pack_dimensions');self.assertEqual(g.rows[1]['values'],{'pack_length':'35','pack_width':'25','pack_height':'7','color':'blue'});self.assertEqual(g.focus_key,'pack_dimensions')
  def test_malformed_later_excel_row_does_not_modify_any_variant(self):

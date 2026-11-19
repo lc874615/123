@@ -18,7 +18,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  coordinator=GroupService(paths,service,pricing,store)
  cached=lookup(root,('group_preview',tuple(sorted(str(p.resolve()) for p in paths))))
  if cached is not None:return cached
- dialog=remember(root,('group_preview',tuple(sorted(str(p.resolve()) for p in paths))),tk.Toplevel(root));dialog.title('整组预览 · Ozon 商品自动化 1.0.73');dialog.geometry('1280x850');dialog.minsize(950,650)
+ dialog=remember(root,('group_preview',tuple(sorted(str(p.resolve()) for p in paths))),tk.Toplevel(root));dialog.title('整组预览 · Ozon 商品自动化 1.0.74');dialog.geometry('1280x850');dialog.minsize(950,650)
  busy=False;selected=set(range(len(paths)));focus=['',''];bundles=[];token=None;rendered=None;warehouses={};photos=[];rows={};last_job=None;copy_dirty=False;displayed_copy=None;copy_timer=None;busy_since=0;operation_error='';operation_name=''
  header=ttk.Frame(dialog,padding=(16,10));header.pack(fill='x')
  ttk.Label(header,text='整组预览',style='Heading.TLabel').pack(side='left')
@@ -101,6 +101,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   if n in selected:selected.remove(n)
   else:selected.add(n)
   headings()
+ value_cache={}
  def value_for(b,row,n):
   kind,key=row
   if kind=='p':return (b.get('variant_parameters') or {}).get(key,'')
@@ -109,11 +110,14 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    if identifier==21841:return (b.get('video') or {}).get('https_url') or '8秒视频链接待托管'
    if identifier==21837:return (b.get('copy') or {}).get('title_ru','')
    state=b.get('attribute_draft') or {}
-   if not any(field_key(f)==key for f in state.get('fields',[])):return '— 此类目不适用'
+   cached=value_cache.setdefault(id(b),{})
+   keys=cached['keys']
+   if key not in keys:return '— 此类目不适用'
    values=(state.get('values') or {}).get(key) or []
    if values:return '；'.join(str(v.get('value') or v.get('dictionary_value_id')) for v in values)
    from assisted_fields import inline_references
-   reference=inline_references(b).get(key)
+   if 'references' not in cached:cached['references']=inline_references(b)
+   reference=cached['references'].get(key)
    if reference:return reference['display']+'（参考）'
    old=(state.get('migration_pending') or {}).get(key)
    return '待匹配原值：'+'；'.join(v.get('value','') for v in old) if old else ''
@@ -132,6 +136,8 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   return ''
  def grid_refresh():
   nonlocal rows
+  value_cache.clear()
+  for b in bundles:value_cache[id(b)]={'keys':{field_key(f) for f in (b.get('attribute_draft') or {}).get('fields',[])}}
   selected_row=tree.selection();expanded={iid:tree.item(iid,'open') for iid in ('basic','api','listing') if tree.exists(iid)};tree.delete(*tree.get_children());rows={}
   for key,label in [('basic','基础事实、成本与库存'),('api','官方类目参数（* 必填；按API动态调整）'),('listing','类目、自动售价、税率与仓库')]:tree.insert('','end',iid=key,text=label,open=expanded.get(key,True))
   specs=[('basic','p:'+key,('p',key),('初始库存（固定1000）' if key=='stock' and publication.initial_stock==1000 else label),False,None) for key,label,_ in FIELDS]
@@ -144,7 +150,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   for key,label in [('category','上架类目 / 商品类型'),('price','计算售价 / 促销底价基准（人民币元）'),('price_max','最高价格（基准×2）'),('price_old','划线价（基准×4）'),('price_min','促销最低限制（基准×1）'),('price_cost','平台成本（所填成本）'),('vat','实际增值税率'),('currency','店铺币种'),('warehouse','所选店铺仓库'),('media','托管链接进度'),('status','定价状态 / 待处理原因')]:specs.append(('listing','s:'+key,('s',key),label,key in ('category','vat','warehouse'),None))
   for parent,iid,row,label,required,field in specs:
    values=[value_for(b,row,n) for n,b in enumerate(bundles)];empty=any(not v for v in values)
-   if row[0]=='a':empty=any(not ((b.get('attribute_draft') or {}).get('values') or {}).get(row[1]) for b in bundles if any(field_key(f)==row[1] for f in (b.get('attribute_draft') or {}).get('fields',[])))
+   if row[0]=='a':empty=any(not ((b.get('attribute_draft') or {}).get('values') or {}).get(row[1]) for b in bundles if row[1] in value_cache[id(b)]['keys'])
    if search.get().casefold() not in label.casefold():continue
    if missing.get() and (not required or not empty):continue
    rows[iid]=(row,field);tree.insert(parent,'end',iid=iid,text=('* ' if required else '')+label,values=values,tags=('missing',) if required and empty else ('pending',) if any(str(v).startswith('待匹配') for v in values) else ())
@@ -177,6 +183,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    changed=[b['sku'] for b in bundles if b.get('regeneration_pending') or any((b.get('asset_review') or {}).get(k) for k in ('main','gallery'))]
    if any(b.get('image_regeneration_jobs') for b in bundles):status.configure(text='图片重做已排队或正在采集；进度见图片视频页，无需重新提交上架。')
    elif changed:status.configure(text='图片待核对：'+str(len(changed))+'个变体；变化项见图片视频页。图片无误请点击底部“图片无误，沿用本组”。')
+   elif any(b.get('copy_regeneration_requested') for b in bundles):status.configure(text='整组共用文案正在排队或生成，成功保存新结果前保留旧文案；未提交上架。')
    elif any((b.get('asset_review') or {}).get('copy') for b in bundles):
     from listing_bundle import copy_complete
     status.configure(text='图片已校验，完整文案已载入；提交时自动保存并同步全组，也可点击“保存并同步全组文案”。' if copy_complete(bundles[0].get('copy')) else '图片已校验，文案缺失；可填写后保存，或继续制作自动采集补全。')
@@ -196,7 +203,12 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  def refilter(*args):
   nonlocal rendered
   rendered=None;refresh()
- search.trace_add('write',refilter);missing.trace_add('write',refilter)
+ filter_timer=None
+ def schedule_filter(*args):
+  nonlocal filter_timer
+  if filter_timer:dialog.after_cancel(filter_timer)
+  filter_timer=dialog.after(180,refilter)
+ search.trace_add('write',schedule_filter);missing.trace_add('write',refilter)
  def text_editor(label,indices,initial,save,multiline=False):
   cached=lookup(dialog,('parameter_text',str(paths[0].parent.resolve()),label,tuple(indices)))
   if cached is not None:return cached
@@ -544,6 +556,13 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    if after:after()
   run(lambda:coordinator.set_copy(value,expected),saved,label='自动保存整组共用文案')
  copy_save_button=ttk.Button(copy_actions,text='保存并同步全组文案',style='Primary.TButton',command=save_copy);copy_save_button.pack(side='right')
+ def regenerate_copy():
+  if not editable():return
+  if copy_dirty:save_copy(after=regenerate_copy);return
+  if not store:messagebox.showinfo('需要本地队列','请从任务中心打开本组预览后重试',parent=dialog);return
+  from copy_pipeline import regenerate
+  run(lambda:regenerate(store,bundles[0]['sku']),lambda result:footer_note.configure(text='已安排重新生成整组共用文案；新结果保存前保留现有内容。'),label='重新生成整组共用文案')
+ copy_regenerate_button=ttk.Button(copy_actions,text='重新生成文案',command=regenerate_copy);copy_regenerate_button.pack(side='right',padx=8)
  ttk.Label(copy_actions,text='全组共用 · 编辑后自动保存',style='Muted.TLabel').pack(side='left')
  media_layout=ttk.Frame(media_tab);media_layout.pack(fill='both',expand=True);media_layout.columnconfigure(0,weight=1);media_layout.columnconfigure(1,weight=0);media_layout.rowconfigure(0,weight=1)
  media_left=ttk.Frame(media_layout,style='Card.TFrame',padding=12);media_left.grid(row=0,column=0,sticky='nsew',padx=(0,10),pady=8)
@@ -786,5 +805,5 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  try:
   publication.account_getter();dialog.after(100,load_warehouses)
  except ValueError:status.configure(text='请先连接Ozon API，再读取店铺全部仓库')
- dialog._ozon_ui={'notebook':notebook,'copy_widgets':copy_widgets,'save_copy':copy_save_button,'tree':tree,'more':more_menu,'submit':submit_button,'update_preview':update_button,'accept_images':accept_button,'footer_note':footer_note,'regeneration':regen_ui,'refresh':refresh,'media_choice':media_choice,'media_preview':media_preview,'parameter_next':next_page,'parameter_previous':previous_page,'parameter_page':page_label}
+ dialog._ozon_ui={'regenerate_copy':copy_regenerate_button,'notebook':notebook,'copy_widgets':copy_widgets,'save_copy':copy_save_button,'tree':tree,'more':more_menu,'submit':submit_button,'update_preview':update_button,'accept_images':accept_button,'footer_note':footer_note,'regeneration':regen_ui,'refresh':refresh,'media_choice':media_choice,'media_preview':media_preview,'parameter_next':next_page,'parameter_previous':previous_page,'parameter_page':page_label}
  return dialog

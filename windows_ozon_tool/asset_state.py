@@ -53,9 +53,10 @@ def mark_changes(before,after):
 
 def pending(bundle):
  state=bundle.get('asset_review') or {}
- return bool(bundle.get('image_regeneration_jobs') or bundle.get('regeneration_pending') or any(state.get(k) for k in ('main','gallery','copy')))
+ return bool(bundle.get('copy_regeneration_requested') or bundle.get('image_regeneration_jobs') or bundle.get('regeneration_pending') or any(state.get(k) for k in ('main','gallery','copy')))
 
 def blocking_reason(bundle):
+ if bundle.get('copy_regeneration_requested'):return '整组共用文案重新生成尚未完成，请等待新结果保存后再提交'
  if bundle.get('image_regeneration_jobs'):return '图片重做仍在生成或采集中，请等待自动替换完成'
  review=bundle.get('asset_review') or {};validation=bundle.get('asset_validation') or {}
  if bundle.get('regeneration_pending') or review.get('main') or review.get('gallery'):

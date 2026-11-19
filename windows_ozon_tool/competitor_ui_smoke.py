@@ -21,6 +21,7 @@ with tempfile.TemporaryDirectory() as tmp,patch('account_context.credentials',re
   for child in parent.winfo_children():yield child;yield from widgets(child)
  def check():
   try:
+   assert ui['regenerate_copy'].cget('text')=='重新生成文案'
    tree=ui['tree'];assert tree.exists('a:0:901');assert '竞品待核对' in str(tree.item('a:0:901','values'));tree.selection_set('a:0:901');button=next(x for x in widgets(w) if x.winfo_class()=='TButton' and x.cget('text')=='采用当前行参考');button.invoke();root.after(700,verify)
   except Exception:errors.append(__import__('traceback').format_exc());finish()
  def verify():

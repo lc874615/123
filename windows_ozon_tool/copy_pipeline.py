@@ -13,7 +13,7 @@ def prepare(store,body):
  if not selected:raise ValueError('货号不存在')
  sku=selected.get('copy_leader',sku);owner=next(t for t in store.tasks if t['sku']==sku);folder=store.folder/'products'/sku;path=folder/'listing_bundle.json'
  if not path.exists():raise ValueError('请先在本地准备上架草稿')
- bundles=group_bundles(store,sku);fingerprint=copy_basis(bundles);b=read(path);refresh=bool((b.get('asset_review') or {}).get('copy')) and copy_complete(b.get('copy'))
+ bundles=group_bundles(store,sku);fingerprint=copy_basis(bundles);b=read(path);refresh=bool((b.get('asset_review') or {}).get('copy') or b.get('copy_regeneration_requested')) and copy_complete(b.get('copy'))
  if refresh and owner.get('copy_mode')!='attributes':owner['copy_mode']='copy_refresh'
  dispatched=owner.get('copy_phase')=='generating' and owner.get('copy_state') in ('running','needs_attention') or owner.get('resume_mode')=='copy_inspect_only' and not owner.get('copy_phase')
  if body.get('prepare_only') and not dispatched and owner.get('copy_mode')!='attributes' and copy_complete(b.get('copy')) and not refresh:
@@ -25,7 +25,7 @@ def prepare(store,body):
   if not dispatched:owner.update(copy_phase='inspecting',copy_context_basis=fingerprint,copy_source_revision=b.get('copy_user_revision'))
   owner['copy_state']='running';store.save()
   marker=owner.get('copy_request_marker')
-  return {'id':'copy:'+sku,'sku':sku,'fingerprint':owner.get('copy_context_basis') or fingerprint,'needsRefresh':refresh,'group_skus':[row['sku'] for row in bundles],'attributesOnly':owner.get('copy_mode')=='attributes','dispatched':bool(dispatched),'copy_phase':owner.get('copy_phase'),'marker':marker,'resume_marker':bool(marker),'previous_marker':marker if owner.get('copy_context_basis')==fingerprint else None}
+  return {'id':'copy:'+sku,'sku':sku,'fingerprint':owner.get('copy_context_basis') or fingerprint,'needsRefresh':refresh,'force_new':bool(b.get('copy_regeneration_requested')),'group_skus':[row['sku'] for row in bundles],'attributesOnly':owner.get('copy_mode')=='attributes','dispatched':bool(dispatched),'copy_phase':owner.get('copy_phase'),'marker':marker,'resume_marker':bool(marker),'previous_marker':marker if owner.get('copy_context_basis')==fingerprint else None}
  read_only=bool(body.get('inspect_only'))
  previous_prompt=None;prompt_file=folder/'copy_prompt.txt'
  if not read_only and owner.get('copy_phase')=='inspecting' and owner.get('copy_request_marker') and prompt_file.exists():
@@ -57,6 +57,7 @@ def save(store,body):
   result={'ok':True}
  else:
   bundles=group_bundles(store,sku);fingerprint=copy_basis(bundles);current=read(path);refresh=owner.get('copy_mode')=='copy_refresh' or bool((current.get('asset_review') or {}).get('copy')) and copy_complete(current.get('copy'));manual=bool(body.get('manual'))
+  if not manual and current.get('copy_regeneration_requested') and owner.get('copy_phase')!='generating':raise ValueError('本次要求重新生成文案，不能沿用旧回复')
   if not manual and current.get('copy_user_revision')!=owner.get('copy_source_revision'):raise ValueError('本地共用文案已保存更新，忽略此前自动生成结果，未覆盖已保存文案')
   if not manual and owner.get('copy_context_basis') and owner['copy_context_basis']!=fingerprint:raise ValueError('文案处理期间商品参数已变化，未保存旧文案，请重新读取当前资料')
   if not manual and value.get('facts_fingerprint') and value['facts_fingerprint']!=fingerprint:raise ValueError('已有文案对应的商品参数已变化，需按最新资料生成')
@@ -68,4 +69,30 @@ def save(store,body):
  if ('variant_attributes' in value or 'category_attributes' in value) and owner.get('attribute_context'):
   from reference_prefill import save as save_attributes
   save_attributes(store,sku,value)
+ if not attributes:
+  for row in group_bundles(store,sku):
+   target=store.folder/'products'/row['sku']/'listing_bundle.json'
+   if target.exists():
+    record=read(target);record.pop('copy_regeneration_requested',None);write(target,record)
  owner.pop('copy_mode',None);owner.pop('resume_mode',None);owner['copy_phase']='done';store.sync_shared_copies();owner.update(copy_state='done',message='整组文案已自动保存并同步全部变体；视频与托管继续处理');store.save();return result
+
+
+def regenerate(store,sku):
+ """Queue an explicit new group-copy request without deleting saved content."""
+ from pricing_service import read,write
+ with store.lock:
+  task=next((t for t in store.tasks if t['sku']==sku),None)
+  if not task:raise ValueError('未找到商品任务')
+  leader=task.get('copy_leader',sku);owner=next(t for t in store.tasks if t['sku']==leader)
+  members=[t for t in store.tasks if t.get('copy_leader',t['sku'])==leader and t.get('state')!='cancelled']
+  if owner.get('copy_state') in ('running','needs_attention') and owner.get('copy_phase') in ('generating','inspecting'):raise ValueError('已有文案请求处理中，请等待采集完成，未重复发送')
+  if owner.get('state')!='saved' or store.image_jobs.active([t['sku'] for t in members]):raise ValueError('请等待本组图片制作完成后重新生成文案')
+  paths=[store.folder/'products'/t['sku']/'listing_bundle.json' for t in members];records=[read(p) for p in paths];revision=secrets.token_hex(12)
+  for path,b in zip(paths,records):
+   b['copy_regeneration_requested']=revision;b['copy_user_revision']=revision;b.setdefault('asset_review',{})['copy']=True;write(path,b)
+  for key in ('copy_phase','copy_request_marker','copy_context_basis','resume_mode','copy_source_revision'):owner.pop(key,None)
+  owner.update(copy_state='queued',copy_mode='copy_refresh',message='已安排重新生成整组共用文案，保留现有文案直至新结果保存')
+  store.set_paused(False);store.save()
+  from competitor_flow import signal
+  signal(store)
+ return {'leader':leader,'count':len(members)}

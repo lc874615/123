@@ -479,7 +479,7 @@ class Store:
    if not path.exists():continue
    try:leader=json.loads(path.read_text(encoding='utf-8-sig'))
    except (ValueError,OSError):continue
-   if not copy_complete(leader.get('copy')) or (leader.get('asset_review') or {}).get('copy'):
+   if not copy_complete(leader.get('copy')) or (leader.get('asset_review') or {}).get('copy') or leader.get('copy_regeneration_requested'):
 
     for task in self.tasks:
      if task.get('copy_leader',task['sku'])==source and task.get('copy_state')=='done':task.pop('copy_state',None);task['message']='共用文案不完整，等待整组生成并同步'
@@ -606,7 +606,7 @@ class Store:
    if not path.exists():
     if not (folder/'image_manifest.json').exists():continue
     prepare(folder,task)
-   bundle=read(path);complete=copy_complete(bundle.get('copy'));fresh=complete and not (bundle.get('asset_review') or {}).get('copy')
+   bundle=read(path);complete=copy_complete(bundle.get('copy'));fresh=complete and not (bundle.get('asset_review') or {}).get('copy') and not bundle.get('copy_regeneration_requested')
    if fresh:
     if task.get('copy_state') not in ('running','needs_attention'):task['copy_state']='done'
     continue
@@ -678,7 +678,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.73','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.74','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)

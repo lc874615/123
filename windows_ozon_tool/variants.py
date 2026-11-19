@@ -25,9 +25,9 @@ def paste_fields(section,start,width):
  return all_fields[offset:offset+width]
 
 # Creation view only; stored fields and legacy Excel order stay unchanged.
-COMPACT_COLUMNS=('name','color','pack_dimensions','pack_weight','cost','quantity')
+COMPACT_COLUMNS=('name','color','pack_dimensions','pack_weight','cost','quantity','competitor_url')
 PACK_KEYS=('pack_length','pack_width','pack_height')
-COMPACT_LABELS={'name':'名称 / 用途','color':'颜色','pack_dimensions':'包装长宽高 (cm)','pack_weight':'包装重量 (g)','cost':'成本 (元)','quantity':'件数'}
+COMPACT_LABELS={'name':'名称 / 用途','color':'颜色','pack_dimensions':'包装长宽高 (cm)','pack_weight':'包装重量 (g)','cost':'成本 (元)','quantity':'件数','competitor_url':'竞品链接 · 同首行'}
 
 def pack_display(values):
  parts=[str(values.get(k,'')).strip() for k in PACK_KEYS]
@@ -150,7 +150,6 @@ class VariantGrid:
   ttk.Style().configure('Variants.Treeview',rowheight=58);self.tree.configure(style='Variants.Treeview',height=8);self.frozen.configure(style='Variants.Treeview',height=8)
   foot=ttk.Frame(self.frame);foot.pack(side='bottom',before=holder,fill='x',pady=(6,0))
   self.summary=ttk.Label(foot,style='Muted.TLabel');self.summary.pack(side='left')
-  self.ttk.Button(foot,text='竞品链接',command=self.competitor_links,style='Compact.TButton').pack(side='right')
   self.tree.bind('<Double-1>',self.edit);self.tree.bind('<ButtonRelease-1>',self.track);self.tree.bind('<Control-v>',lambda e:self.paste());self.base.trace_add('write',lambda *_:self.refresh());self.tree.bind('<Configure>',lambda e:self.fit_columns(e.width));self.set_section();self.add()
  def set_section(self,name=None):
   # Compatibility entry point: creation now has one view, no category tabs.
@@ -163,8 +162,9 @@ class VariantGrid:
   if width<100:return
   # Give spare room to the product name; numeric columns remain compact.
   sizes={'color':105,'pack_dimensions':164,'pack_weight':102,'cost':82,'quantity':56}
-  if width<710:
-   sizes={'color':85,'pack_dimensions':150,'pack_weight':92,'cost':72,'quantity':50}
+  if width<850:
+   sizes={'color':75,'pack_dimensions':134,'pack_weight':86,'cost':68,'quantity':44}
+  sizes['competitor_url']=max(110,min(220,int(width*.22)))
   sizes['name']=max(80,width-4-sum(sizes.values()))
   for key in COMPACT_COLUMNS:self.tree.column(key,width=sizes[key],minwidth=35,stretch=(key=='name'))
  def commit(self):
