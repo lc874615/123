@@ -2,7 +2,7 @@ import copy,io,json,os,tempfile,threading,unittest
 from pathlib import Path
 from unittest.mock import patch
 from category_match import sync_group,confirm_group,repair_groups,suggest
-from category_search import commission_options
+from category_search import commission_options,commission_suggestions
 from pricing_service import write,read
 
 class CategoryFlowTests(unittest.TestCase):
@@ -56,5 +56,8 @@ class CategoryFlowTests(unittest.TestCase):
   self.assertEqual(len(commission_options({'records':rows},'корз')),2)
   self.assertEqual(len(commission_options({'records':rows},'收纳 家居')),2)
   self.assertEqual(commission_options({'records':rows},'不存在'),[])
+  suggested=commission_suggestions({'records':rows},'收纳配件')
+  self.assertEqual(len(suggested),3)
+  self.assertEqual(suggested[0]['source_row'],3)
 
 if __name__=='__main__':unittest.main()

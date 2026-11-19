@@ -678,7 +678,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.79','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.80','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
@@ -1154,7 +1154,12 @@ def main(test_mode=False,on_ready=None):
    result=(bundle.get('manual_pricing') if bundle.get('manual_price') else bundle.get('auto_pricing'))
    if result and result.get('valid') is False:
     text.insert('end','手动价无适用物流方案：'+result.get('message','')+'\n');result=None
+   category=bundle.get('category') or {}
    text.insert('end',bundle.get('pricing_status','等待定价')+'\n类目状态：'+bundle.get('category_match_status','尚未推荐')+'\n')
+   if category.get('type_id'):
+    text.insert('end','官方商品类型：'+str(category.get('name') or '未返回名称')+'（ID '+str(category['type_id'])+'）\n')
+   if '佣金表未找到' in str(bundle.get('pricing_status','')):
+    text.insert('end','\n需要处理：该官方类型在本地 rFBS 佣金表中没有精确同名行。请在下方选择一条佣金表行并确认；系统不会自动采用较低费率。\n')
    if result:
     text.insert('end',('实际手动售价：¥' if bundle.get('manual_price') else '自动建议售价：¥')+result['price_cny']+'\n预计净利润：¥'+result['profit_cny']+'\n预计净利率：'+format(float(result['net_margin'])*100,'.2f')+'%\n物流渠道：'+result['logistics_tier']+'\n')
     labels={'product_cost':'每套成本（含国内运费）','ogl_transport':'OGL运输','label':'贴单','commission':'rFBS佣金','last_mile':'尾程','withdrawal':'提现','acquiring':'收单'}
@@ -1165,11 +1170,12 @@ def main(test_mode=False,on_ready=None):
   def select_type():
    try:
     cfg=read_pricing(pricing.root/'commissions.json')
-    from category_search import commission_options
+    from category_search import commission_options,commission_suggestions
     cached=lookup(dialog,('commission_picker',str(path.resolve())))
     if cached is not None:return cached
     picker=remember(dialog,('commission_picker',str(path.resolve())),tk.Toplevel(dialog));picker.title('中文搜索官方佣金类型');picker.geometry('1100x520');picker.minsize(850,420)
-    ttk.Label(picker,text='输入中文或俄文关键词，可搜索商品类型及所属类目；中文来自官方佣金表。此处仅设置佣金对应关系。').pack(pady=6)
+    official=(read_pricing(path).get('category') or {}).get('name','')
+    ttk.Label(picker,text='当前 Ozon 官方类型：'+(official or '尚未确认')+'\n以下仅为候选佣金行，必须由你确认后才会用于 rFBS 定价；不判断 FBP。',justify='left').pack(pady=6)
     query=tk.StringVar();entry=ttk.Entry(picker,textvariable=query,width=70);entry.pack(pady=4);entry.focus_set()
     frame=ttk.Frame(picker);frame.pack(fill='both',expand=True,padx=8)
     cols=('zh','ru','category','low','mid','high')
@@ -1178,20 +1184,22 @@ def main(test_mode=False,on_ready=None):
      box.heading(col,text=label);box.column(col,width=width,anchor='center',stretch=True)
     scroll=ttk.Scrollbar(frame,orient='vertical',command=box.yview);scroll.pack(side='right',fill='y');box.configure(yscrollcommand=scroll.set);box.pack(fill='both',expand=True)
     count=ttk.Label(picker);count.pack(pady=4);choices={}
+    def rows_for_query():
+     return commission_options(cfg,query.get()) if query.get().strip() else commission_suggestions(cfg,official)
     def filter_names(*args):
      nonlocal choices
-     box.delete(*box.get_children());choices={str(r['source_row']):r for r in commission_options(cfg,query.get())}
+     box.delete(*box.get_children());choices={str(r['source_row']):r for r in rows_for_query()}
      for iid,row in choices.items():
       rates=[format(float(rate)*100,'.2f')+'%' for rate in row['rates']]
       box.insert('','end',iid=iid,values=(row.get('type_zh') or '暂无官方中文',row['type_ru'],row.get('category_zh') or row.get('category_ru',''),*rates))
-     count.configure(text='匹配 '+str(len(choices))+' 项；佣金表版本：'+cfg.get('effective_note',''))
+     count.configure(text=('候选 ' if not query.get().strip() else '搜索匹配 ')+str(len(choices))+' 项；佣金表版本：'+cfg.get('effective_note',''))
     query.trace_add('write',filter_names);filter_names()
     def apply():
      if not box.selection():messagebox.showinfo('请选择','先选择一项商品类型',parent=picker);return
      type_id=(read_pricing(path).get('category') or {}).get('type_id')
      if not type_id:show_task_error('尚未匹配上架类目','请先点击下方入口匹配并确认上架类目，再选择佣金类型。',parent=picker);return
      row=choices[box.selection()[0]]
-     pricing.map_type(type_id,row['type_ru'],row['source_row'],cfg['sha256']);picker.destroy()
+     pricing.map_type(type_id,row['type_ru'],row['source_row'],cfg['sha256'],official);picker.destroy()
      threading.Thread(target=pricing.calculate_all,daemon=True).start()
     ttk.Button(picker,text='确认所选类型及该行佣金',command=apply).pack(pady=4)
     ttk.Button(picker,text='先匹配 / 确认上架类目',command=lambda:category_editor(task)).pack(pady=4)
@@ -1209,8 +1217,10 @@ def main(test_mode=False,on_ready=None):
    except (OSError,ValueError):pass
    dialog.after(1500,update_details)
   update_details()
-  ttk.Button(dialog,text='佣金无法匹配时，选择官方商品类型',command=select_type).pack(pady=4)
+  commission_missing='佣金表未找到' in str(bundle.get('pricing_status',''))
+  ttk.Button(dialog,text=('立即匹配 rFBS 佣金行（需要确认）' if commission_missing else '查看 / 修改 rFBS 佣金类型'),style='Primary.TButton' if commission_missing else 'TButton',command=select_type).pack(pady=4)
  task_more.add_command(label='查看所选变体售价明细 / 佣金类型',command=pricing_details)
+ ttk.Button(task_actions,text='匹配 rFBS 佣金',command=pricing_details).pack(side='left',padx=4)
  task_more.add_command(label='删除选中本地记录（保留平台商品）',command=delete)
  def recollect():
   task=selected()

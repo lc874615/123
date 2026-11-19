@@ -109,6 +109,12 @@ class PricingTests(unittest.TestCase):
   with tempfile.TemporaryDirectory() as tmp:
    mapping={'123':{'type_name':'test','source_row':3,'commission_sha256':'old'}}
    with self.assertRaisesRegex(ValueError,'佣金表已更新'):PricingService(tmp).quote(self.bundle(),self.configs(),mapping)
+ def test_explicit_mapping_keeps_official_type_for_audit(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   service=PricingService(tmp);service.map_type(20,'test',3,'abc','Официальный тип')
+   value=read(service.root/'type_mapping.json')['20']
+   self.assertEqual(value['official_type_name'],'Официальный тип')
+   self.assertEqual(value['source_row'],3)
  def test_attribute_review_flag_does_not_reset_confirmed_price(self):
   with tempfile.TemporaryDirectory() as tmp:
    service=PricingService(tmp)

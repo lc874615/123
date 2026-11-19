@@ -34,7 +34,7 @@ def parse_fx(raw,today=None):
 
 def fetch(url,limit):
  from secure_http import read as verified_read
- req=urllib.request.Request(url,headers={'User-Agent':'OzonLocalPricing/1.0.79'})
+ req=urllib.request.Request(url,headers={'User-Agent':'OzonLocalPricing/1.0.80'})
  return verified_read(req,limit,timeout=12)
 
 def adopt_price(bundle):
@@ -117,9 +117,11 @@ class PricingService:
   with self.source_lock:
    config=read(self.root/'commissions.json');path=location(self.root,merchant);snapshot=read(path) if path.exists() else None
   export_table(config,snapshot,dest)
- def map_type(self,type_id,type_name,source_row=None,commission_sha256=None):
+ def map_type(self,type_id,type_name,source_row=None,commission_sha256=None,official_type_name=None):
   with self.source_lock:
-   path=self.root/'type_mapping.json';value=read(path) if path.exists() else {};value[str(type_id)]={'type_name':type_name,'source_row':source_row,'commission_sha256':commission_sha256} if source_row is not None else type_name;write(path,value)
+   path=self.root/'type_mapping.json';value=read(path) if path.exists() else {}
+   value[str(type_id)]={'type_name':type_name,'source_row':source_row,'commission_sha256':commission_sha256,'official_type_name':official_type_name} if source_row is not None else type_name
+   write(path,value)
  def quote(self,bundle,configs,mapping,selling_price=None):
   params=bundle.get('variant_parameters') or {};category=bundle.get('category') or {}
   if not category.get('type_id'):raise ValueError('尚未匹配商品类目/类型：'+bundle.get('category_match_status','请连接Ozon API重新匹配，或打开类目窗口选择') )

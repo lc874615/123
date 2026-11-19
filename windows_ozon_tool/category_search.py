@@ -1,4 +1,5 @@
 """Search the official bilingual commission workbook without translating IDs."""
+from difflib import SequenceMatcher
 def commission_options(config,query=''):
  terms=query.casefold().split();result=[];seen=set()
  for row in config.get('records',[]):
@@ -9,6 +10,27 @@ def commission_options(config,query=''):
   if key in seen:continue
   seen.add(key);result.append(row)
  return sorted(result,key=lambda row:(row.get('type_zh') or row['type_ru'],row['type_ru'],row['source_row']))
+
+def commission_suggestions(config,official_type,limit=24):
+ """Return review-only tariff-row suggestions; never select one automatically.
+
+ The Ozon catalogue type and the published commission workbook use different
+ taxonomies.  A suggestion therefore only helps the seller find a row and is
+ deliberately not used by pricing until the seller explicitly confirms it.
+ """
+ needle=str(official_type or '').strip().casefold()
+ if not needle:return commission_options(config)[:limit]
+ words=[word for word in needle.replace(',',' ').split() if len(word)>2]
+ scored=[]
+ for row in commission_options(config):
+  hay=' '.join(str(row.get(key) or '') for key in ('type_ru','type_zh','category_ru','category_zh')).casefold()
+  word_score=sum(1 for word in words if word in hay)
+  similarity=SequenceMatcher(None,needle,str(row.get('type_ru') or '').casefold()).ratio()
+  # Keep the likely rows first but retain a small, deterministic fallback list
+  # for broad official types such as "Аксессуары".
+  scored.append((word_score,similarity,row))
+ scored.sort(key=lambda item:(-item[0],-item[1],item[2]['source_row']))
+ return [row for _,_,row in scored[:limit]]
 
 def category_label(category,config):
  name=category.get('name','')
