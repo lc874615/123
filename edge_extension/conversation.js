@@ -36,8 +36,11 @@
    if(a===b)return 0;const p=a.compareDocumentPosition?.(b)||0;return p&4?-1:p&2?1:0;
   });
  }
- const USER='[data-message-author-role="user"], [data-turn="user"], [class*="group/user-message"], [data-testid="user-message"]';
- function userNodes(doc){return [...doc.querySelectorAll(USER)].filter(n=>!n.closest?.('[contenteditable="true"],textarea,[data-testid="composer"],[data-composer-root],[class*="ComposerLayout"]')&&!n.querySelector?.(USER));}
+ const USER='[data-message-author-role="user"], [data-turn="user"], [class~="group/user-message"], [data-testid="user-message"]';
+ function userNodes(doc){
+  const thread=main(doc)||doc;
+  return [...thread.querySelectorAll(USER)].filter(n=>!composerOwned(n)&&!auxiliary(n)&&!n.querySelector?.(USER));
+ }
  function requestReplies(doc,marker){
   const users=userNodes(doc);
   const start=[...users].reverse().find(n=>(String(n.innerText||'')+' '+String(n.textContent||'')).includes(marker));

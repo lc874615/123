@@ -30,7 +30,18 @@
   const files=native?null:globalThis.OzonFiles.candidates(doc,{...scoped,inventory:true});
   globalThis.__ozonDeliveryInfo.fileCount=files?.count||0;
   if(files?.present&&!files.complete){task._deliveryStable=null;return waiting(expected===1?'本任务只需1张主图，但识别到'+(files.candidateTotal||files.count)+'个文件候选，正在核对对应回复，不猜取其他变体图片':'最终文件已出现，已识别编号'+files.count+'/'+expected+'；等待完整且唯一的文件列表，不改用前面的过程图');}
-  if(!files?.present&&foundImages.count===0){globalThis.__ozonDeliveryInfo.state='waiting_result';task._deliveryStable=null;return waiting('尚未发现本任务成品图片或独立文件；原始参考附件不计入，等待助手正式交付，不重新发送');}
+  if(!files?.present&&foundImages.count===0){
+   const controls=region.root?.querySelectorAll?.('button,[role="button"],a[href]')||[];
+   const counts={outside:0,user:0,sidebar:0,inScope:0};
+   for(const el of controls){
+    if(!/\.(?:jpg|jpeg|png|webp)\b/i.test(el.textContent||el.getAttribute('aria-label')||''))continue;
+    const conv=globalThis.OzonConversation;
+    const key=conv.userOwned(el)?'user':conv.auxiliary(el)?'sidebar':region.includes(el)?'inScope':'outside';
+    counts[key]++;
+   }
+   globalThis.__ozonDeliveryInfo.exclusions=counts;globalThis.__ozonDeliveryInfo.state='waiting_result';task._deliveryStable=null;
+   return waiting('等待本任务成品：范围内文件入口 '+counts.inScope+'，范围外 '+counts.outside+'，参考附件 '+counts.user+'，侧栏 '+counts.sidebar);
+  }
   if(!files?.complete&&foundImages.overflow){task._deliveryStable=null;return waiting('生成图超过'+expected+'张；等待最终01—'+String(expected).padStart(2,'0')+'编号文件，不截取前'+expected+'张');}
   const main=globalThis.OzonConversation.main(doc);
   const signature=(files?.complete?'files:'+files.signature:'gallery:'+foundImages.signature)+'|'+(main?.innerText||main?.textContent||'');
