@@ -103,9 +103,9 @@ def _browser_rendered_rows(url,fields,timeout=35,proxy_url='',browser_path='',pr
    if not proxy_url and not profile_path:args.append('--no-proxy-server')
    if profile_path:
     Path(profile_path).mkdir(parents=True,exist_ok=True)
-    browser=playwright.chromium.launch_persistent_context(str(profile_path),headless=False,executable_path=executable,args=args,locale='ru-RU',**options)
+    browser=playwright.chromium.launch_persistent_context(str(profile_path),headless=False,chromium_sandbox=True,executable_path=executable,args=args,locale='ru-RU',**options)
    else:
-    browser=playwright.chromium.launch(headless=True,executable_path=executable,args=args,**options)
+    browser=playwright.chromium.launch(headless=True,chromium_sandbox=True,executable_path=executable,args=args,**options)
    try:
     page=browser.new_page() if profile_path else browser.new_page(viewport={'width':1440,'height':1400},locale='ru-RU')
     page.goto(normalize_url(url),wait_until='domcontentloaded',timeout=timeout*1000)
