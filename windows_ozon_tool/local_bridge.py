@@ -693,10 +693,8 @@ def server(store,token,port=8765):
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
      elif self.path=='/competitor-task':
-      # Public competitor URLs are collected by the local direct worker.
-      # Never lease an Edge tab: the browser may intentionally use a VPN for
-      # ChatGPT while Ozon is unreachable through that route.
-      value={'job':None,'collector':'local_direct'}
+      from competitor_reference import claim
+      value=claim(store)
      elif self.path=='/competitor-result':
       from competitor_reference import receive
       value=receive(store,body)
@@ -908,7 +906,7 @@ def main(test_mode=False,on_ready=None):
  None if test_mode else threading.Thread(target=attributes.worker,args=(pricing_stop,),daemon=True).start()
  from competitor_local import LocalCompetitorService
  competitor_local=LocalCompetitorService(store);store.competitor_local=competitor_local
- None if test_mode else threading.Thread(target=competitor_local.worker,args=(pricing_stop,),daemon=True).start()
+ # Competitor collection runs in the paired browser extension.
  def competitor_network_settings():
   cached=lookup(root,('competitor_network_settings',))
   if cached is not None:return cached
