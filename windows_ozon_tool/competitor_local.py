@@ -116,7 +116,7 @@ def _browser_rendered_rows(url,fields,timeout=35,proxy_url=''):
     rendered=''
     for attempt in range(8):
      rendered=page.locator('body').inner_text(timeout=5000)
-     if 'Похоже, нет соединения' in rendered:
+     if re.search(r'похоже[\s,，]*нет\s+соединения',rendered,re.I):
       route=proxy_url or '直连'
       raise CaptureError('Ozon 返回连接错误页；浏览器='+Path(executable).name+'；出口='+route,'network')
      if re.search(r'captcha|доступ ограничен|подтвердите.*человек',rendered,re.I):
@@ -153,7 +153,7 @@ def _browser_rendered_rows(url,fields,timeout=35,proxy_url=''):
     if not rows:
      title=page.title()[:100]
      widgets=page.locator('[data-widget*="Characteristics"],[data-widget*="characteristics"]').count()
-     raise CaptureError('参数提取为0；页面标题='+title+'；参数组件='+str(widgets)+'；正文长度='+str(len(rendered))+'；页面开头='+re.sub(r'\s+',' ',rendered)[:120],'transient')
+     raise CaptureError('采集版本=proxy-check-2；浏览器='+Path(executable).name+'；出口='+(proxy_url or '直连')+'；参数为0；标题='+title+'；组件='+str(widgets)+'；正文='+str(len(rendered)),'transient')
     unique={}
     for row in rows:
      key=(str(row.get('name','')).strip(),str(row.get('value','')).strip())
