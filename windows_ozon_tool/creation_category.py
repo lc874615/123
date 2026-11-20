@@ -11,6 +11,7 @@ def apply_task(task,chosen,merchant):
  if not chosen:return
  if not isinstance(chosen,dict) or chosen.get('account_id')!=str(merchant):raise ValueError('店铺已切换，请重新选择创建类目')
  checked=selection(chosen.get('category'),merchant);checked['selected_at']=chosen.get('selected_at',checked['selected_at']);task['category_selection']=checked
+ if isinstance(chosen.get('attribute_preload'),dict):task['category_selection']['attribute_preload']=copy.deepcopy(chosen['attribute_preload'])
  if chosen.get('visual_style_override'):
   from visual_plans import STYLES
   if chosen['visual_style_override'] not in STYLES:raise ValueError('未知作图风格，请重新选择')

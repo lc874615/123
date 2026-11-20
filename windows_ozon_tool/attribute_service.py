@@ -112,6 +112,23 @@ def competitor_priority(path):
 class AttributeService:
  def __init__(self,data,lock=None,caller=api,active_skus=None):
   self.data=Path(data);self.root=self.data/'attributes';self.root.mkdir(parents=True,exist_ok=True);self.lock=lock or threading.Lock();self.io_lock=threading.RLock();self.caller=caller;self.active_skus=active_skus;self.schema_cache={};self.status='等待类目确认后读取必填属性';self.wake=threading.Event();self.retry_at={}
+ def prefetch_category(self,category,force=False):
+  """Fetch and retain the official bilingual schema before task creation."""
+  if not isinstance(category,dict):raise ValueError('请选择官方类目后再读取字段')
+  try:key=(int(category['description_category_id']),int(category['type_id']))
+  except (KeyError,TypeError,ValueError):raise ValueError('官方类目ID无效') from None
+  with self.io_lock:
+   cached=self.schema_cache.get(key)
+   if not force and cached and 0<=time.time()-cached[0]<86400:
+    fields=copy.deepcopy(cached[1]);fetched=cached[0]
+   else:
+    base={'description_category_id':key[0],'type_id':key[1]}
+    zh=self.caller('/v1/description-category/attribute',{**base,'language':'ZH_HANS'})['result'];ru=self.caller('/v1/description-category/attribute',{**base,'language':'RU'})['result'];fetched=time.time()
+    russian={field_key(f):f for f in ru};fields=[{**f,'name_ru':russian.get(field_key(f),{}).get('name',f.get('name',''))} for f in zh]
+    if not fields:raise ValueError('该类目未返回属性，暂不视为校验通过')
+    self.schema_cache[key]=(fetched,copy.deepcopy(fields),copy.deepcopy([{**f,'name':f.get('name_ru',f.get('name',''))} for f in fields]))
+  digest=hashlib.sha256(json.dumps([key[0],key[1],fields],ensure_ascii=False,sort_keys=True).encode()).hexdigest()
+  return {'category_key':[key[0],key[1]],'fields':fields,'schema_hash':digest,'fetched_at':fetched}
  def dictionary(self,bundle,field,query='',last_value_id=0,force=False,language='ZH_HANS'):
   category,type_id=category_key(bundle);base={'attribute_id':field['id'],'description_category_id':category,'type_id':type_id}
   with self.io_lock:
@@ -230,9 +247,12 @@ class AttributeService:
    base={'description_category_id':category,'type_id':type_id}
    cached=self.schema_cache.get((category,type_id))
    prior=bundle.get('attribute_draft') or bundle.get('attribute_history') or {}
+   preload=bundle.get('attribute_preload') or {}
    if not force and (not cached or time.time()-cached[0]>=86400) and prior.get('category_key')==[category,type_id] and prior.get('fields') and 0<=time.time()-prior.get('fetched_at',0)<86400:
     zh=copy.deepcopy(prior['fields']);ru=[{**f,'name':f.get('name_ru',f.get('name',''))} for f in zh];cached=(prior['fetched_at'],zh,ru);self.schema_cache[(category,type_id)]=cached
-   if not force and cached and 0<=time.time()-cached[0]<86400:zh,ru=copy.deepcopy(cached[1:]);schema_time=cached[0]
+   if not force and isinstance(preload,dict) and preload.get('category_key')==[category,type_id] and preload.get('fields') and 0<=time.time()-preload.get('fetched_at',0)<86400:
+    zh=copy.deepcopy(preload['fields']);ru=[{**f,'name':f.get('name_ru',f.get('name',''))} for f in zh];schema_time=preload['fetched_at'];self.schema_cache[(category,type_id)]=(schema_time,copy.deepcopy(zh),copy.deepcopy(ru))
+   elif not force and cached and 0<=time.time()-cached[0]<86400:zh,ru=copy.deepcopy(cached[1:]);schema_time=cached[0]
    else:
     zh=self.caller('/v1/description-category/attribute',{**base,'language':'ZH_HANS'})['result'];ru=self.caller('/v1/description-category/attribute',{**base,'language':'RU'})['result'];schema_time=time.time();self.schema_cache[(category,type_id)]=(schema_time,copy.deepcopy(zh),copy.deepcopy(ru))
    russian={field_key(f):f for f in ru}

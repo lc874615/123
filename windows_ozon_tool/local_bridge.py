@@ -678,7 +678,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.89','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.90','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
@@ -817,15 +817,21 @@ def main(test_mode=False,on_ready=None):
   from creation_category import choose
   from account_context import credentials
   def saved(value):
-   category_selection.clear();category_selection.update(value);category=dict(value['category']);label=(category.get('zh_path') or category.get('name','')).split(' / ')[-1];category_button.configure(text=label[:30]+' · 正在读取官方颜色');color_catalog_note.configure(text='正在读取该类目官方颜色，完成后所有变体可直接选择…');grid.color_bundles=[{'sku':'creation-color-catalog','category':{**category,'confirmed':True}}];refresh_visual_label()
-   def load_colors():
+   category_selection.clear();category_selection.update(value);category_selection['preload_state']='loading';category=dict(value['category']);label=(category.get('zh_path') or category.get('name','')).split(' / ')[-1];category_button.configure(text=label[:30]+' · 正在读取官方字段');color_catalog_note.configure(text='正在读取官方字段与颜色；完成后即可创建队列…');grid.color_bundles=[{'sku':'creation-color-catalog','category':{**category,'confirmed':True}}];refresh_visual_label()
+   def load_official():
     try:
      from color_catalog import preload
-     result=preload(attributes,category)
-     root.after(0,lambda: (category_button.configure(text=label[:30]+' · 已选定'),color_catalog_note.configure(text='官方颜色已读取：'+str(len(result['rows']))+' 项，适用于全部变体。')))
+     fields=attributes.prefetch_category(category);result=preload(attributes,category)
+     def done():
+      if (category_selection.get('category') or {}).get('type_id')!=category.get('type_id'):return
+      category_selection['attribute_preload']=fields;category_selection['preload_state']='ready';category_button.configure(text=label[:30]+' · 已选定');color_catalog_note.configure(text='官方字段已读取：'+str(len(fields['fields']))+' 项；官方颜色：'+str(len(result['rows']))+' 项，创建后直接用于预填。')
+     root.after(0,done)
     except Exception as exc:
-     root.after(0,lambda text=str(exc): (category_button.configure(text=label[:30]+' · 已选定'),color_catalog_note.configure(text='官方颜色读取未完成：'+text[:80]+'；可稍后在颜色选择器刷新。')))
-   threading.Thread(target=load_colors,daemon=True).start()
+     def failed(text=str(exc)):
+      if (category_selection.get('category') or {}).get('type_id')!=category.get('type_id'):return
+      category_selection['preload_state']='failed';category_button.configure(text=label[:30]+' · 重试读取');color_catalog_note.configure(text='官方字段读取未完成：'+text[:100]+'；请重新选择类目后重试。')
+     root.after(0,failed)
+   threading.Thread(target=load_official,daemon=True).start()
   return choose(root,attributes,lambda:credentials()[0],saved)
  category_button=ttk.Button(category_row,text='选择官方类目（可选）',style='Compact.TButton',command=choose_creation_category);category_button.pack(side='left',fill='x',expand=True)
  def clear_creation_category():category_selection.clear();grid.color_bundles=None;category_button.configure(text='选择官方类目（可选）');color_catalog_note.configure(text='');refresh_visual_label()
@@ -1007,6 +1013,8 @@ def main(test_mode=False,on_ready=None):
    from account_context import credentials
    current_account=credentials()[0]
    if category_selection and category_selection.get('account_id')!=current_account:raise ValueError('店铺已切换，请重新选择商品类目')
+   if category_selection.get('preload_state')=='loading':raise ValueError('正在读取所选类目的官方字段，请等待完成后再创建队列')
+   if category_selection.get('preload_state')=='failed':raise ValueError('所选类目的官方字段读取失败，请重新选择类目后重试')
    if len(records)>100:raise ValueError('每组最多100个变体，请拆分后创建')
    if not shared_refs:raise ValueError('请选择共用详情图参考')
    if len(shared_refs)>8:raise ValueError('共用详情参考最多8张')

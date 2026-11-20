@@ -35,6 +35,8 @@ def prepare(folder,task):
  selected_category=category_for_task(task)
  if selected_category:
   bundle['category']=selected_category;bundle['category_selection']=task['category_selection'];bundle['category_match_status']='创建时已确认类目，必填参数自动匹配中' if selected_category.get('confirmed') else '店铺已变化，请核对类目'
+  preload=(task.get('category_selection') or {}).get('attribute_preload')
+  if isinstance(preload,dict):bundle['attribute_preload']=preload;bundle['category_match_status']='创建时已读取官方字段，必填参数自动匹配中'
  target=folder/'listing_bundle.json'
  if target.exists():raise ValueError('上架草稿已存在，保留已有编辑，未覆盖')
  bundle['export_settings']={'vat':'0','currency_code':'CNY','currency_confirmed':False}
