@@ -20,7 +20,18 @@
  }
  async function open(token){
   const element=document.querySelector('[data-ozon-download="'+token+'"]');
-  if(!globalThis.OzonFiles?.allowedElement(element))throw Error('图片文件入口已变化或不是允许的图片链接');
+  const filename=element?.getAttribute('data-ozon-filename')||'';
+  const row=element?.closest?.('[class~="group/resource-row"],[data-testid="resource-row"]');
+  const rowNames=new Set();
+  for(const node of row?.querySelectorAll?.('span,[aria-label],[download]')||[]){
+   for(const text of [node.textContent,node.getAttribute('aria-label'),node.getAttribute('download')]){
+    const value=String(text||'').trim();
+    if(/^[^/\\\n]+\.(?:jpg|jpeg|png|webp)$/i.test(value))rowNames.add(value);
+   }
+  }
+  const verifiedCard=element?.isConnected&&rowNames.size===1&&rowNames.has(filename)&&
+   !globalThis.OzonConversation?.userOwned(element)&&!globalThis.OzonConversation?.auxiliary(element);
+  if(!verifiedCard&&!globalThis.OzonFiles?.allowedElement(element))throw Error('图片文件入口校验失败：目标='+filename+'；文件卡='+[...rowNames].join('、'));
   const before=new Set(controls());const fingerprint=n=>(n.textContent||'')+'|'+[...n.querySelectorAll('img')].map(i=>i.currentSrc||i.src).join('|');
   const beforeDialogs=new Map(containers().map(n=>[n,fingerprint(n)]));
   globalThis.__ozonDownloadInfo={phase:'opening_file',previewContainers:0,downloadControls:0};
