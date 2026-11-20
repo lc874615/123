@@ -62,6 +62,16 @@ def describe(bundle,task=None):
  url=(bundle.get('variant_parameters') or {}).get('competitor_url') or ((task or {}).get('variant_parameters') or {}).get('competitor_url')
  empty={'state':'none','label':'未填写链接','configured':False,'matched':0,'prefilled':0,'applied':0,'detail':'未填写竞品链接，不读取竞品参数。'}
  if not url:return empty
+ # Images are intentionally not required for the creation-time schema fetch.
+ # Before listing_bundle.json exists, expose the task-held official cache
+ # rather than misleadingly reporting “待官方字段”.
+ preload=((task or {}).get('category_selection') or {}).get('attribute_preload') or {}
+ if isinstance(preload,dict) and isinstance(preload.get('fields'),list) and preload.get('fields') and not (bundle.get('attribute_draft') or {}).get('fields'):
+  from competitor_reference import normalize_url
+  try:normalize_url(url)
+  except ValueError as exc:return {**empty,'configured':True,'state':'invalid','label':'链接无效 / 未预填','detail':str(exc)}
+  official=sum(eligible(f) for f in preload['fields'] if isinstance(f,dict))
+  return {'state':'preloaded','label':'官方字段已读'+str(official)+'项 · 待图片后预填','configured':True,'matched':0,'prefilled':0,'applied':0,'detail':str(url)+'\n创建时已读取 Ozon 官方字段 '+str(official)+' 项；图片完成后会直接复用该缓存进行参数预填和竞品采集，不会再次等待官方字段接口。\n当前尚未生成商品草稿，因此不读取竞品参数，也不预填任何商品值。'}
  try:c=context(bundle,credentials()[0])
  except ValueError as exc:return {**empty,'configured':True,'state':'invalid','label':'链接无效 / 未预填','detail':str(exc)}
  snap=current_snapshot(bundle);gate=(task or {}).get('competitor_wait') or {}

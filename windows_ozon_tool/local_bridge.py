@@ -678,7 +678,7 @@ def server(store,token,port=8765):
      return self.reply(200,value)
     with store.lock:
      store.client['last_seen']=time.time()
-     if self.path=='/health':value={'protocol':'1.0.91','paired':True}
+     if self.path=='/health':value={'protocol':'1.0.92','paired':True}
      elif self.path=='/plugin-status':
       from task_alerts import save_plugin_status
       value=save_plugin_status(store,body)
@@ -791,6 +791,12 @@ def main(test_mode=False,on_ready=None):
   return messagebox.showerror(title,render([issue('本地工具',title,error)]),**({'parent':root}|options))
  from ui_layout import build
  notebook,pages,connection=build(root);win=pages['product_body'];settings_page=pages['settings_body'];tasks_page=pages['tasks']
+ def set_connection(summary,detail=''):
+  """Keep the persistent status bar to one line; full errors are opt-in."""
+  compact=' '.join(str(summary or '').split())
+  connection.configure(text=(compact[:160]+'…') if len(compact)>160 else compact)
+  setter=getattr(connection,'_ozon_set_detail',None)
+  if setter:setter(detail,hashlib.sha256(str(detail or '').encode()).hexdigest() if detail else '')
  account_panel=ttk.LabelFrame(settings_page,text='账户与配对',padding=16);account_panel.pack(fill='x',pady=(0,16))
  ttk.Label(account_panel,text='连接与来源设置',font=('TkDefaultFont',13,'bold')).pack(anchor='w',pady=8)
  ttk.Label(account_panel,text='插件配对信息仅保存在本机；首次安装或重置后复制到插件，重启后无需重复配对。',wraplength=1050).pack(anchor='w',pady=6)
@@ -1105,13 +1111,14 @@ def main(test_mode=False,on_ready=None):
   nonlocal visible,last_view,refresh_timer,row_notes,group_members
   if refresh_timer is not None:root.after_cancel(refresh_timer);refresh_timer=None
   if not store.lock.acquire(blocking=False):
-   connection.configure(text='后台正在保存/校验素材，界面稍后自动刷新');schedule_refresh(300);return
+   set_connection('后台正在保存/校验素材，界面稍后自动刷新');schedule_refresh(300);return
   try:visible=[dict(t) for t in store.tasks];image_snapshot=[dict(j) for j in store.image_jobs.jobs];reason=store.queue_reason();plugin_online=time.time()-store.client.get('last_seen',0)<75
   finally:store.lock.release()
   from ui_state import task_summary,matches,task_bucket,partition_task_rows
   from pipeline_status import stage,group_summary
   import os
-  merchant=os.environ.get('OZON_CLIENT_ID','');connection.configure(text=('店铺 '+merchant if merchant else 'Ozon未连接')+' · 插件'+('在线' if plugin_online else '待连接')+' · COS'+('已配置' if (DATA/'hosting'/'config.json').exists() else '待配置')+' · 定价来源'+('已配置' if all((DATA/'pricing'/(name+'.json')).exists() for name in ('ogl','commissions','fx')) else '待配置')+' | '+reason)
+  merchant=os.environ.get('OZON_CLIENT_ID','');connection_summary=('店铺 '+merchant if merchant else 'Ozon未连接')+' · 插件'+('在线' if plugin_online else '待连接')+' · COS'+('已配置' if (DATA/'hosting'/'config.json').exists() else '待配置')+' · 定价来源'+('已配置' if all((DATA/'pricing'/(name+'.json')).exists() for name in ('ogl','commissions','fx')) else '待配置')
+  set_connection(connection_summary+' | '+reason,reason if len(str(reason))>120 else '')
   try:fx=read_pricing(pricing.root/'fx.json');fx_note=' | '+fx['date']+'：1元='+fx['rub_per_cny']+'卢布'
   except (OSError,ValueError,KeyError):fx_note=''
   pricing_label.configure(text='自动定价：'+pricing.status+fx_note);hosting_label.configure(text='图片托管：'+hosting.status);video_label.configure(text='视频托管：'+video_hosting.status)

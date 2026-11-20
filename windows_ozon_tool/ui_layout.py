@@ -6,7 +6,7 @@ def build(root):
  import tkinter as tk
  from tkinter import ttk
  from ui_components import RoundedCard
- c=PALETTE;root.title('Ozon 商品自动化 · 1.0.91');root.geometry('1440x900');root.minsize(1080,700);root.configure(background=c['bg'])
+ c=PALETTE;root.title('Ozon 商品自动化 · 1.0.92');root.geometry('1440x900');root.minsize(1080,700);root.configure(background=c['bg'])
  style=ttk.Style(root);style.theme_use('clam')
  font='Microsoft YaHei UI' if os.name=='nt' else 'Noto Sans CJK SC'
  style.configure('.',font=(font,10),background=c['bg'],foreground=c['ink'])
@@ -51,8 +51,27 @@ def build(root):
  banner=ttk.Frame(root,padding=(24,12));banner.pack(fill='x')
  ttk.Label(banner,text='Ozon 工作台',style='Heading.TLabel').pack(side='left')
  ttk.Label(banner,text='商品与素材自动化工作空间',style='Muted.TLabel').pack(side='left',padx=22)
- ttk.Label(banner,text='DESKTOP   ·   1.0.91',style='Chip.TLabel').pack(side='right')
- connection=ttk.Label(root,text='正在检查本地连接…',padding=(24,6),wraplength=1360,style='Status.TLabel');connection.pack(fill='x',padx=24,pady=(0,4))
+ ttk.Label(banner,text='DESKTOP   ·   1.0.92',style='Chip.TLabel').pack(side='right')
+ # Connection/errors used to share one wrapping label; a long GPT response
+ # could push the task list almost entirely off screen.  Keep one compact
+ # line and let the operator open or dismiss the full diagnostic explicitly.
+ connection_bar=ttk.Frame(root);connection_bar.pack(fill='x',padx=24,pady=(0,4))
+ connection=ttk.Label(connection_bar,text='正在检查本地连接…',padding=(14,6),style='Status.TLabel');connection.pack(side='left',fill='x',expand=True)
+ detail={'text':'','signature':'','dismissed':False}
+ def show_connection_detail():
+  if not detail['text']:return
+  from tkinter import messagebox
+  messagebox.showinfo('当前任务完整原因',detail['text'],parent=root)
+ def dismiss_connection_detail():
+  detail['dismissed']=True;connection._ozon_detail_close.configure(state='disabled');connection._ozon_detail_open.configure(state='normal')
+ def set_connection_detail(text,signature=None):
+  detail['text']=str(text or '');key=str(signature or detail['text'])
+  if key!=detail['signature']:detail['signature']=key;detail['dismissed']=False
+  connection._ozon_detail_open.configure(state='normal' if detail['text'] else 'disabled')
+  connection._ozon_detail_close.configure(state='normal' if detail['text'] and not detail['dismissed'] else 'disabled')
+ connection._ozon_set_detail=set_connection_detail
+ connection._ozon_detail_open=ttk.Button(connection_bar,text='查看原因',style='Compact.TButton',command=show_connection_detail,state='disabled');connection._ozon_detail_open.pack(side='right',padx=(6,0))
+ connection._ozon_detail_close=ttk.Button(connection_bar,text='关闭提示',style='Compact.TButton',command=dismiss_connection_detail,state='disabled');connection._ozon_detail_close.pack(side='right')
  workspace=ttk.Frame(root);workspace.pack(fill='both',expand=True,padx=16,pady=(8,16))
  rail=ttk.Frame(workspace,style='Rail.TFrame',padding=(12,20));rail.pack(side='left',fill='y',padx=(0,16))
  ttk.Label(rail,text='OZON / STUDIO',style='RailTitle.TLabel').pack(anchor='w',padx=14,pady=(2,14))
@@ -99,9 +118,6 @@ def build(root):
   for key,button in buttons.items():button.configure(style='NavActive.TButton' if str(pages[key])==selected else 'Nav.TButton')
  notebook.bind('<<NotebookTabChanged>>',sync_nav);sync_nav()
  for n,key in enumerate(('product','tasks','settings'),1):root.bind('<Control-Key-'+str(n)+'>',lambda e,k=key:navigate(k))
- def fit(event):
-  if event.widget is root:connection.configure(wraplength=max(400,event.width-64))
- root.bind('<Configure>',fit,add='+')
  return notebook,pages,connection
 
 def dialog_footer(window,width=850,height=650):

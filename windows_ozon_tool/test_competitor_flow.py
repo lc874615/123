@@ -19,6 +19,10 @@ class CompetitorFlowTests(unittest.TestCase):
   with tempfile.TemporaryDirectory() as tmp:
    store,path=self.setup_store(tmp);self.assertEqual(describe(read(path))['state'],'queued');job=claim(store)['job'];self.assertEqual(describe(read(path))['state'],'reading');receive(store,{'token':job['token'],'url':fixtures.URL,'rows':[{'name':'Тип разъема','value':'USB-C'}]});b=read(path);r=describe(b);self.assertEqual((r['matched'],r['prefilled'],r['applied']),(1,1,0));self.assertIn('预填1',r['label']);self.assertEqual(b['attribute_draft']['values'],{})
    b['attribute_draft']['values']['0:901']=[{'dictionary_value_id':101,'value':'USB-C'}];values=copy.deepcopy(b['attribute_draft']['values']['0:901']);b['reference_decisions']={'0:901':{'source':b['competitor_reference']['fingerprint']+':'+b['competitor_reference']['result_hash'],'action':'accepted','accepted_values':values}};write(path,b);self.assertEqual(describe(b)['applied'],1);self.assertEqual(describe(b)['prefilled'],0);self.assertIn('已读1/1',group_label([describe(b)]))
+ def test_creation_prefetch_is_visible_before_images_create_a_bundle(self):
+  task={'variant_parameters':{'competitor_url':fixtures.URL},'category_selection':{'attribute_preload':{'fields':copy.deepcopy(fixtures.FIELDS),'category_key':[10,20],'schema_hash':'synthetic-schema'}}}
+  result=describe({},task)
+  self.assertEqual(result['state'],'preloaded');self.assertIn('官方字段已读',result['label']);self.assertIn('不会再次等待官方字段接口',result['detail'])
  def test_copy_waits_for_schema_and_capture_but_failed_or_empty_match_finishes(self):
   with tempfile.TemporaryDirectory() as tmp:
    store,path=self.setup_store(tmp);owner=store.tasks[0];self.assertFalse(before_copy(store,owner,now=100));store.attributes.wake.set.assert_called();self.assertNotIn('copy_state',owner);self.collect(store);self.assertTrue(before_copy(store,owner,now=101));self.assertNotIn('competitor_wait',owner)
