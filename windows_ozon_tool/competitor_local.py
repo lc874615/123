@@ -89,7 +89,7 @@ def _visible_rows(text,fields):
    rows.append({'name':labels[key],'value':value});break
  return rows
 
-def _browser_rendered_rows(url,fields,timeout=35,proxy_url='',browser_path=''):
+def _browser_rendered_rows(url,fields,timeout=35,proxy_url='',browser_path='',profile_path=None):
  """Read rendered Ozon characteristics through the installed Playwright stack."""
  try:from playwright.sync_api import sync_playwright
  except ImportError as exc:raise CaptureError('本机缺少浏览器渲染依赖，请运行“修复依赖.bat”后重试。','network') from exc
@@ -100,12 +100,21 @@ def _browser_rendered_rows(url,fields,timeout=35,proxy_url='',browser_path=''):
    proxy_url=_proxy_url(proxy_url)
    options={'proxy':{'server':proxy_url}} if proxy_url else {}
    args=['--disable-gpu','--no-first-run']
-   if not proxy_url:args.append('--no-proxy-server')
-   browser=playwright.chromium.launch(headless=True,executable_path=executable,args=args,**options)
+   if not proxy_url and not profile_path:args.append('--no-proxy-server')
+   if profile_path:
+    Path(profile_path).mkdir(parents=True,exist_ok=True)
+    browser=playwright.chromium.launch_persistent_context(str(profile_path),headless=False,executable_path=executable,args=args,locale='ru-RU',**options)
+   else:
+    browser=playwright.chromium.launch(headless=True,executable_path=executable,args=args,**options)
    try:
-    page=browser.new_page(viewport={'width':1440,'height':1400},locale='ru-RU')
+    page=browser.new_page() if profile_path else browser.new_page(viewport={'width':1440,'height':1400},locale='ru-RU')
     page.goto(normalize_url(url),wait_until='domcontentloaded',timeout=timeout*1000)
     page.wait_for_timeout(5000)
+    if profile_path:
+     for check in range(60):
+      text=page.locator('body').inner_text(timeout=5000)
+      if not re.search(r'похоже[\s,，]*нет\s+соединения|captcha|доступ ограничен|подтвердите.*человек',text,re.I):break
+      page.wait_for_timeout(2000)
     for label in ('Все характеристики','Характеристики'):
      try:
       page.get_by_text(label,exact=False).first.click(timeout=1200)
@@ -324,7 +333,8 @@ class LocalCompetitorService:
    # lacks the current category's fields.
    if not rows:
     try:
-     rows=_browser_rendered_rows(job['url'],job['fields'],**self.network_settings());collector='local_browser_rendered'
+     self.status='正在打开专用采集浏览器；首次请在窗口中确认 Ozon 页面可访问或完成验证'
+     rows=_browser_rendered_rows(job['url'],job['fields'],profile_path=Path(self.store.folder)/'competitor_browser_profile',**self.network_settings());collector='local_browser_rendered'
      attempts.append({'stage':collector,'matched':len(rows)})
     except CaptureError as exc:
      attempts.append({'stage':'local_browser_rendered','error':str(exc),'code':exc.code})
