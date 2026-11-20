@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parent
-DEPENDENCIES=(('PIL','Pillow'),('imageio_ffmpeg','imageio-ffmpeg'),('openpyxl','openpyxl'),('certifi','certifi'))
+DEPENDENCIES=(('PIL','Pillow'),('imageio_ffmpeg','imageio-ffmpeg'),('openpyxl','openpyxl'),('certifi','certifi'),('playwright.sync_api','playwright'))
 PACKAGE_SOURCES=(
  ('阿里云镜像','https://mirrors.aliyun.com/pypi/simple/'),
  ('清华镜像','https://pypi.tuna.tsinghua.edu.cn/simple/'),
