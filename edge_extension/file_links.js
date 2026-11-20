@@ -22,7 +22,13 @@
   const row=resourceRow(element);
   const own=element.getAttribute('download')||element.getAttribute('aria-label')||element.textContent||'';
   const rowName=row?.querySelector?.('button[aria-label],a[download]')?.getAttribute('aria-label')||'';
-  return own.trim()+' '+(row?.innerText||row?.textContent||'')+' '+rowName;
+  const names=new Set();
+  const parts=[own,row?.innerText||'',rowName];
+  for(const label of row?.querySelectorAll?.('[aria-label],[download],span')||[]){
+   parts.push(label.getAttribute('aria-label')||label.getAttribute('download')||label.textContent||'');
+  }
+  for(const part of parts)for(const name of String(part).match(FILE_NAMES)||[])names.add(name);
+  return names.size?[...names].join(' '):own.trim();
  }
  function directTarget(element){
   const row=resourceRow(element);if(!row)return null;
