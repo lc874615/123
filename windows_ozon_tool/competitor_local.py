@@ -46,10 +46,11 @@ def _product_api_url(canonical):
 def _browser_executable():
  candidates=[]
  for root in (os.environ.get('PROGRAMFILES',''),os.environ.get('PROGRAMFILES(X86)',''),os.environ.get('LOCALAPPDATA','')):
-  if root:candidates.extend([Path(root)/'Microsoft'/'Edge'/'Application'/'msedge.exe',Path(root)/'Google'/'Chrome'/'Application'/'chrome.exe'])
+  if root:candidates.extend([Path(root)/'Google'/'Chrome'/'Application'/'chrome.exe',Path(root)/'Microsoft'/'Edge'/'Application'/'msedge.exe'])
+ candidates.sort(key=lambda path:path.name!='chrome.exe')
  for path in candidates:
   if path.is_file():return str(path)
- return next((shutil.which(name) for name in ('msedge','microsoft-edge','chrome','google-chrome','chromium') if shutil.which(name)),None)
+ return next((shutil.which(name) for name in ('chrome','google-chrome','chromium','msedge','microsoft-edge') if shutil.which(name)),None)
 
 def _browser_read(url,timeout=30):
  """Use an isolated local Chromium process only after public HTTP fails.
@@ -112,7 +113,7 @@ def _browser_rendered_rows(url,fields,timeout=35):
      if re.search(r'captcha|доступ ограничен|подтвердите.*человек',rendered,re.I):
       raise CaptureError('Ozon 页面要求验证，参数区尚未加载。','verification')
      # Read semantic name/value pairs before applying official-name matching.
-     pairs=page.evaluate("""() => {
+     pairs=page.evaluate(r"""() => {
       const rows=[];
       for(const term of document.querySelectorAll('dt')){
        const value=term.nextElementSibling||term.parentElement?.querySelector('dd');
@@ -153,7 +154,9 @@ def _browser_rendered_rows(url,fields,timeout=35):
     browser.close()
    # Ozon often places the full characteristics behind this expandable block.
  except CaptureError:raise
- except Exception as exc:raise CaptureError('本机浏览器渲染 Ozon 页面失败：'+str(exc)[:180],'network') from exc
+ except Exception as exc:
+  code='script' if 'SyntaxError' in str(exc) else 'network'
+  raise CaptureError('本机浏览器渲染 Ozon 页面失败：'+str(exc)[:180],code) from exc
 
 def _direct_read(url,limit=3_000_000,timeout=18,proxy_url=''):
  """HTTPS only, with global proxy variables intentionally disabled.
