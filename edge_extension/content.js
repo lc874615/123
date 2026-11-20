@@ -122,52 +122,9 @@ async function saveImage(task,index,image_b64){
  const result=await chrome.runtime.sendMessage({kind:'set-result',task_id:task.id,index,image_b64});
  if(result?.error){const e=Error(result.error);e.code=result.code;throw e;}
 }
-async function selectRecoveryGroup(task){
- if(task.saved_count||task.orderRepairPending)throw Error('此入口用于尚未保存图片的任务；已有素材请使用原恢复流程');
- const expected=task.expected_images||8;
- const message='展开目标文件组，再点击组内 01 主图文件卡。按 Esc 取消。';
- await tell(task,'waiting',message);
- const banner=document.createElement('div');
- banner.textContent=message;
- banner.style.cssText='position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2147483647;background:#17243b;color:white;padding:12px;border-radius:8px;pointer-events:none';
- document.body.append(banner);
- return new Promise((resolve,reject)=>{
-  function finish(error,group){
-   clearInterval(timer);banner.remove();
-   document.removeEventListener('click',choose,true);
-   document.removeEventListener('keydown',cancel,true);
-   if(error)reject(Error(error));else resolve(group);
-  }
-  function cancel(event){if(event.key==='Escape')finish('已取消文件组选取');}
-  function choose(event){
-   const row=event.target.closest?.('[class~="group/resource-row"],[data-testid="resource-row"]');
-   const conv=globalThis.OzonConversation;
-   if(!row||!conv.main(document)?.contains(row)||conv.userOwned(row)||conv.auxiliary(row))return;
-   const group=row.parentElement;
-   event.preventDefault();event.stopImmediatePropagation();
-   try{
-    const files=globalThis.OzonFiles.candidates(document,{fileGroup:group,expected,inventory:true});
-    if(!files?.complete||files.candidateTotal!==expected){banner.textContent='这组没有完整且唯一的编号文件。请展开全部文件后重选。';return;}
-    if(window.confirm('将以下文件保存到 '+task.sku+'？\n'+files.images.map(file=>file.name).join('\n')))finish(null,group);
-   }catch(error){banner.textContent=error.message;}
-  }
-  const deadline=Date.now()+120000;
-  const timer=setInterval(()=>{if(stop||Date.now()>deadline)finish('文件组选取已结束');},250);
-  document.addEventListener('click',choose,true);
-  document.addEventListener('keydown',cancel,true);
- });
-}
 async function recover(task){
  if(running)throw Error('本页正在执行任务');running=true;activeImageTaskId=task.id;stop=false;
  try{
-  if(task.selectFileGroup){
-   const fileGroup=await selectRecoveryGroup(task);
-   const expected=task.expected_images||8;
-   const images=await globalThis.OzonFiles.collect(document,{task,fileGroup,expected,stopped:()=>stop,report:message=>tell(task,'waiting',message)});
-   if(images?.length!==expected)throw Error('选中的文件组读取不完整，请检查网页下载入口');
-   for(let index=0;index<images.length;index++)await saveImage(task,index,images[index]);
-   return;
-  }
   if(task.automaticRecovery){
    const exactSku=task.sku&&!task.image_job&&!task.orderRepairPending&&!task.recovery_marker?'OZON_OWN_REFERENCE:'+task.sku:null;
    const markers=[...(task.recovery_markers||[])];

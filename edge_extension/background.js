@@ -190,9 +190,8 @@ chrome.runtime.onMessage.addListener((m,sender,reply)=>{(async()=>{
   await api('/automation-control',{paused:false});await chrome.storage.local.set({autoEnabled:true});await chrome.alarms.create?.('ozon-poll',{periodInMinutes:0.5});
   current=await api('/recover',{sku:m.sku,as_sheet:!!m.as_sheet});runTab=tab.id;busy=true;current.startedAt=Date.now();await persist();
   await inject(tab.id);
-  const selectFileGroup=!current.saved_count&&!current.orderRepairPending;
-  await chrome.tabs.sendMessage(tab.id,{kind:'recover',task:{...current,selectFileGroup}});
-  return {status:selectFileGroup?'请回到作图页，展开文件组并点击其中的 01 主图文件卡':'正在恢复已有素材'};
+  await chrome.tabs.sendMessage(tab.id,{kind:'recover',task:{...current,automaticRecovery:true}});
+  return {status:'正在自动定位本货号的已有图片并采集'};
  }
  if(m.kind==='repair-order'){
   if(sender.tab?.id!==runTab||!current||m.task_id!==current.id)throw Error('自动重采集任务不匹配');
