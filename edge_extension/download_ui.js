@@ -26,6 +26,10 @@
   globalThis.__ozonDownloadInfo={phase:'opening_file',previewContainers:0,downloadControls:0};
   const record={token,name:element.getAttribute('data-ozon-filename'),dialog:null,close:null};active=record;
   element.scrollIntoView?.({block:'center'});element.click();
+  if(element.getAttribute('data-ozon-direct-download')==='true'){
+   globalThis.__ozonDownloadInfo.phase='clicked_download';
+   return {ok:true,directDownload:true};
+  }
   const until=Date.now()+10000;
   while(Date.now()<until&&active===record){
    await pause(150);if(active!==record)return {ok:true};

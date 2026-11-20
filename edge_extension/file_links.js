@@ -18,7 +18,12 @@
   }
   return null;
  }
- function fileLabel(element){return (element.getAttribute('download')||element.getAttribute('aria-label')||element.textContent||'').trim()+' '+(resourceRow(element)?.textContent||'');}
+ function fileLabel(element){
+  const row=resourceRow(element);
+  const own=element.getAttribute('download')||element.getAttribute('aria-label')||element.textContent||'';
+  const rowName=row?.querySelector?.('button[aria-label],a[download]')?.getAttribute('aria-label')||'';
+  return own.trim()+' '+(row?.innerText||row?.textContent||'')+' '+rowName;
+ }
  function directTarget(element){
   const row=resourceRow(element);if(!row)return null;
   if(/^(?:下载|下载文件|下载图片|download|download file|download image)$/i.test((element.getAttribute?.('aria-label')||element.getAttribute?.('title')||element.textContent||'').trim()))return element;
@@ -55,8 +60,8 @@
   if(count)await new Promise(resolve=>setTimeout(resolve,350));
   return count;
  }
- function candidates(doc,{marker='',expected=8,allowPartial=false,manual=false,onlyVisible=false,inventory=false,continuations=false,task=null}={}){
-  const main=globalThis.OzonConversation.main(doc);if(!main)return null;
+ function candidates(doc,{marker='',expected=8,allowPartial=false,manual=false,onlyVisible=false,inventory=false,continuations=false,task=null,fileGroup=null}={}){
+  const main=fileGroup||globalThis.OzonConversation.main(doc);if(!main||fileGroup&&!fileGroup.isConnected)return null;
   const anchor=globalThis.OzonConversation.requestAnchor(doc,marker);
   if(allowPartial&&marker&&!anchor)return null;
   const nextUser=anchor?globalThis.OzonConversation.nextUser(doc,anchor,{continuations}):null;
@@ -121,7 +126,7 @@
  }
  async function collect(doc,options={}){
   if(globalThis.OzonConversation.generating(doc))return null;
-  const expanded=await expandFiles(doc,options);
+  const expanded=options.fileGroup?0:await expandFiles(doc,options);
   let found=candidates(doc,options);
   const until=Date.now()+(expanded?5000:100);
   while(!found&&Date.now()<until){if(options.stopped?.())throw Error('已暂停');await new Promise(resolve=>setTimeout(resolve,200));found=candidates(doc,options);}
