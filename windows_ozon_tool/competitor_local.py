@@ -52,7 +52,7 @@ def _browser_executable():
   if path.is_file():return str(path)
  return next((shutil.which(name) for name in ('chrome','google-chrome','chromium','msedge','microsoft-edge') if shutil.which(name)),None)
 
-def _browser_read(url,timeout=30):
+def _browser_read(url,timeout=30,proxy_url=''):
  """Use an isolated local Chromium process only after public HTTP fails.
 
  It never attaches to the ChatGPT tab or a user's browser profile.  The goal is
@@ -64,6 +64,8 @@ def _browser_read(url,timeout=30):
  canonical=normalize_url(url)
  with tempfile.TemporaryDirectory(prefix='ozon-competitor-browser-') as profile:
   command=[executable,'--headless=new','--disable-gpu','--no-first-run','--no-default-browser-check','--disable-background-networking','--disable-crash-reporter','--virtual-time-budget=8000','--user-data-dir='+profile,'--dump-dom',canonical]
+  proxy_url=_proxy_url(proxy_url)
+  command.insert(1,'--proxy-server='+proxy_url if proxy_url else '--no-proxy-server')
   if os.name!='nt':command.insert(1,'--no-sandbox')
   try:result=subprocess.run(command,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=timeout,check=False)
   except (OSError,subprocess.SubprocessError) as exc:raise CaptureError('本机浏览器读取 Ozon 失败：'+str(exc)[:160],'network') from exc
@@ -87,7 +89,7 @@ def _visible_rows(text,fields):
    rows.append({'name':labels[key],'value':value});break
  return rows
 
-def _browser_rendered_rows(url,fields,timeout=35):
+def _browser_rendered_rows(url,fields,timeout=35,proxy_url=''):
  """Read rendered Ozon characteristics through the installed Playwright stack."""
  try:from playwright.sync_api import sync_playwright
  except ImportError as exc:raise CaptureError('本机缺少浏览器渲染依赖，请运行“修复依赖.bat”后重试。','network') from exc
@@ -95,7 +97,11 @@ def _browser_rendered_rows(url,fields,timeout=35):
  if not executable:raise CaptureError('未找到 Microsoft Edge 或 Chrome，无法读取渲染后的 Ozon 特征。','network')
  try:
   with sync_playwright() as playwright:
-   browser=playwright.chromium.launch(headless=True,executable_path=executable,args=['--disable-gpu','--no-first-run','--no-proxy-server'])
+   proxy_url=_proxy_url(proxy_url)
+   options={'proxy':{'server':proxy_url}} if proxy_url else {}
+   args=['--disable-gpu','--no-first-run']
+   if not proxy_url:args.append('--no-proxy-server')
+   browser=playwright.chromium.launch(headless=True,executable_path=executable,args=args,**options)
    try:
     page=browser.new_page(viewport={'width':1440,'height':1400},locale='ru-RU')
     page.goto(normalize_url(url),wait_until='domcontentloaded',timeout=timeout*1000)
@@ -110,6 +116,9 @@ def _browser_rendered_rows(url,fields,timeout=35):
     rendered=''
     for attempt in range(8):
      rendered=page.locator('body').inner_text(timeout=5000)
+     if 'Похоже, нет соединения' in rendered:
+      route=proxy_url or '直连'
+      raise CaptureError('Ozon 返回连接错误页；浏览器='+Path(executable).name+'；出口='+route,'network')
      if re.search(r'captcha|доступ ограничен|подтвердите.*человек',rendered,re.I):
       raise CaptureError('Ozon 页面要求验证，参数区尚未加载。','verification')
      # Read semantic name/value pairs before applying official-name matching.
@@ -274,7 +283,7 @@ class LocalCompetitorService:
   try:return self.read_page(url),'local_direct'
   except CaptureError as direct_error:
    if direct_error.code!='network':raise
-   return _browser_read(url),'local_browser_fallback'
+   return _browser_read(url,proxy_url=self.network_settings()['proxy_url']),'local_browser_fallback'
  def proxy_candidates(self):return discover_local_proxies()
  def run_once(self):
   with self.store.lock:job=claim(self.store).get('job')
@@ -294,7 +303,7 @@ class LocalCompetitorService:
    # lacks the current category's fields.
    if not rows:
     try:
-     rows=_browser_rendered_rows(job['url'],job['fields']);collector='local_browser_rendered'
+     rows=_browser_rendered_rows(job['url'],job['fields'],proxy_url=self.network_settings()['proxy_url']);collector='local_browser_rendered'
      attempts.append({'stage':collector,'matched':len(rows)})
     except CaptureError as exc:
      attempts.append({'stage':'local_browser_rendered','error':str(exc),'code':exc.code})
