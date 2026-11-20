@@ -37,8 +37,7 @@
   });
  }
  const USER='[data-message-author-role="user"], [data-turn="user"], [class~="group/user-message"], [data-testid="user-message"]';
- function userNodes(doc){
-  const thread=main(doc)||doc;
+ function userNodes(doc,thread=main(doc)||doc){
   return [...thread.querySelectorAll(USER)].filter(n=>!composerOwned(n)&&!auxiliary(n)&&!n.querySelector?.(USER));
  }
  function requestReplies(doc,marker){
@@ -72,7 +71,10 @@
  function generating(doc){
   return !!doc.querySelector('[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop streaming"],button[aria-label="停止生成"],button[aria-label="停止流式传输"],main [data-is-streaming="true"],[role="main"] [data-is-streaming="true"]');
  }
- function nextUser(doc,anchor,{continuations=false}={}){return userNodes(doc).find(n=>!!(anchor.compareDocumentPosition(n)&4)&&(!continuations||/【OZON_(?:TASK|COPY):/.test(String(n.innerText||'')+' '+String(n.textContent||''))));}
+ function nextUser(doc,anchor,{continuations=false}={}){
+  const thread=main(doc);
+  return userNodes(doc,thread?.contains(anchor)?thread:doc).find(n=>!!(anchor.compareDocumentPosition(n)&4)&&(!continuations||/【OZON_(?:TASK|COPY):/.test(String(n.innerText||'')+' '+String(n.textContent||''))));
+ }
  function region(doc,{marker='',allowPartial=false,continuations=false}={}){
   const root=main(doc),anchor=requestAnchor(doc,marker);
   const next=anchor?nextUser(doc,anchor,{continuations}):null;
@@ -80,9 +82,14 @@
  }
  function requestAnchor(doc,marker){
   if(!marker)return null;
-  const user=userNodes(doc).find(n=>(String(n.innerText||'')+' '+String(n.textContent||'')).includes(marker));
-  if(user)return user;
-   return null;
+  const matches=n=>(String(n.innerText||'')+' '+String(n.textContent||'')).includes(marker);
+  const local=userNodes(doc).filter(matches);
+  if(local.length)return local.length===1?local[0]:null;
+  // Some layouts mount the request and its reply in sibling regions.
+  const thread=main(doc);
+  if(!thread)return null;
+  const outside=userNodes(doc,doc).filter(n=>matches(n)&&!!(n.compareDocumentPosition(thread)&4));
+  return outside.length===1?outside[0]:null;
  }
  async function expandUserPrompts(doc,{sleep=ms=>new Promise(r=>setTimeout(r,ms)),stopped=()=>false}={}){
   let changed=false;
@@ -99,7 +106,7 @@
   async function expandPrompts(){let changed=false;for(const user of userNodes(doc))for(const b of user.querySelectorAll('button,[role="button"]')){const label=(b.textContent||b.getAttribute('aria-label')||'').trim();if(!expanded.has(b)&&/^(?:展开|显示更多|查看更多|read more|show more)$/i.test(label)&&b.getAttribute('aria-expanded')!=='true'){expanded.add(b);b.click();changed=true;}}if(changed)await sleep(300);}
   async function found(wanted){
    await expandPrompts();
-   for(const candidate of wanted){const node=userNodes(doc).find(n=>(String(n.innerText||'')+' '+String(n.textContent||'')).includes(candidate));if(!node)continue;
+   for(const candidate of wanted){const node=requestAnchor(doc,candidate);if(!node)continue;
     node.scrollIntoView?.({block:'center',behavior:'instant'});await sleep(500);
     if(requestAnchor(doc,candidate)){globalThis.__ozonRecoveryInfo={...globalThis.__ozonRecoveryInfo,phase:'located',historical:candidate!==marker};onMarker(candidate);return true;}
    }return false;
