@@ -105,7 +105,7 @@ def before_copy(store,leader,now=None):
   if t.get('state')=='cancelled' or t.get('copy_leader',t['sku'])!=leader['sku']:continue
   path=store.folder/'products'/t['sku']/'listing_bundle.json'
   if not path.exists():
-   if (t.get('variant_parameters') or {}).get('competitor_url'):pending.append('等待变体草稿')
+   if t['sku']==leader['sku'] and (t.get('variant_parameters') or {}).get('competitor_url'):pending.append('等待首变体草稿')
    continue
   b=read(path)
   if not (b.get('variant_parameters') or {}).get('competitor_url'):continue
@@ -113,7 +113,7 @@ def before_copy(store,leader,now=None):
   try:c=context(b,account)
   except ValueError:continue  # Invalid link is shown in the status column.
   s=current_snapshot(b)
-  if c and (s.get('state')=='ready' or s.get('state')=='failed' and not s.get('retryable')):continue
+  if c and s.get('state')=='ready':continue
   pending.append('等待官方字段' if c is None else '等待竞品采集')
  if not pending:
   if leader.pop('competitor_wait',None):store.save()
@@ -121,7 +121,7 @@ def before_copy(store,leader,now=None):
  basis=hashlib.sha256(json.dumps([account,basis_rows],sort_keys=True,ensure_ascii=False).encode()).hexdigest()
  prior=leader.get('competitor_wait') or {};started=prior.get('started_at',now) if prior.get('basis')==basis else now
  if now-started>=150:
-  leader['competitor_wait']={'state':'timeout','basis':basis,'started_at':started,'message':'竞品参数读取超时，未获取字段留空；文案只使用已有已核实事实'};store.save();return True
+  leader['competitor_wait']={'state':'waiting','basis':basis,'started_at':started,'message':'等待竞品参数采集成功；失败时请重启竞品采集，成功后自动生成共用文案'};store.save();return False
  leader['competitor_wait']={'state':'waiting','basis':basis,'started_at':started,'message':'文案前参数准备：'+'、'.join(dict.fromkeys(pending))+'；未获取字段留空'}
  service=getattr(store,'attributes',None)
  if service is not None:service.wake.set()

@@ -407,6 +407,7 @@ class Store:
  def claim(self):
   if self.control.get('paused'):raise ValueError('制作已暂停')
   if self.blockers():raise ValueError('请先审核上一任务或处理异常，不能继续发送')
+  if self.shared_copy_pending():raise ValueError('等待首变体竞品参数及共用文案完成，再制作后续变体')
   if hasattr(self,'image_jobs') and self.image_jobs.next():return self.image_jobs.claim()
   t=next((t for t in self.tasks if t['state']=='queued'),None)
   if not t:raise ValueError('没有排队任务，请在本地窗口创建商品')
@@ -573,6 +574,15 @@ class Store:
    if task.get('state')=='needs_attention' and not task.get('pause_requested') and any(str(task.get('message','')).startswith(m) for m in known):
     if task.get('resume_mode')!='inspect_only':task['resume_mode']='inspect_only';changed=True
   if changed:self.save()
+ def shared_copy_pending(self):
+  from listing_bundle import copy_complete
+  from pricing_service import read
+  for task in self.tasks:
+   if not task.get('set_mode') or task.get('copy_leader',task['sku'])!=task['sku'] or task['state']!='saved':continue
+   try:bundle=read(self.folder/'products'/task['sku']/'listing_bundle.json')
+   except (OSError,ValueError):return True
+   if not copy_complete(bundle.get('copy')) or bundle.get('copy_regeneration_requested') or (bundle.get('asset_review') or {}).get('copy'):return True
+  return False
  def poll_state(self,extension_idle=False):
   from asset_reconcile import reconcile
   if extension_idle is True:
@@ -587,9 +597,10 @@ class Store:
   # Missing shared copy has priority over queued image work; active requests still block.
   copy_task=self.next_copy() if not active else None
   image_pending=bool(self.image_jobs.next())
+  shared_pending=self.shared_copy_pending()
   recovery=self.next_recollection()
   copy_waiting=next(((t.get('competitor_wait') or {}).get('message') for t in self.tasks if (t.get('competitor_wait') or {}).get('state')=='waiting'),None)
-  return {'copy_waiting':copy_waiting,'recovery_sku':recovery['sku'] if recovery else None,'ready':not active and not copy_task and (image_pending or any(t['state']=='queued' and t.get('auto_batch') for t in self.tasks)),'copy_sku':copy_task['sku'] if copy_task else None,'blocked_reason':self.queue_reason() if active else None,'blockers':self.blockers(),'summary':self.queue_summary()}
+  return {'copy_waiting':copy_waiting,'recovery_sku':recovery['sku'] if recovery else None,'ready':not active and not shared_pending and not copy_task and (image_pending or any(t['state']=='queued' and t.get('auto_batch') for t in self.tasks)),'copy_sku':copy_task['sku'] if copy_task else None,'blocked_reason':self.queue_reason() if active else '等待首变体竞品参数及共用文案' if shared_pending else None,'blockers':self.blockers(),'summary':self.queue_summary()}
  def next_copy(self):
   from asset_reconcile import reconcile
   from listing_bundle import prepare,copy_complete
