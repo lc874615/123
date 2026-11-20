@@ -275,12 +275,21 @@ class LocalCompetitorService:
   except (OSError,ValueError):value={}
   return {'proxy_url':_proxy_url(value.get('proxy_url','')) if value.get('proxy_url') else '','browser_path':str(value.get('browser_path') or '')}
  def configure_browser(self,path):
-  path=str(path or '').strip()
-  if path and (not Path(path).is_file() or Path(path).name.lower() not in ('chrome.exe','msedge.exe','chromium.exe','chrome','chromium','google-chrome','msedge')):
-   raise ValueError('请选择 Chrome、Edge 或 Chromium 的浏览器程序文件')
+  path=os.path.expandvars(str(path or '').strip().strip('"'))
+  if path:
+   target=Path(path)
+   if target.is_dir():
+    names=('chrome.exe','msedge.exe','chromium.exe','UCBrowser.exe','UC.exe')
+    matches=[target/name for name in names if (target/name).is_file()]
+    if len(matches)!=1:raise ValueError('当前选择的是文件夹，请打开文件夹后选择浏览器的 .exe 文件')
+    target=matches[0]
+   if not target.is_file():raise ValueError('浏览器程序不存在，请重新选择完整的 .exe 文件路径')
+   if os.name=='nt' and target.suffix.lower()!='.exe':raise ValueError('请选择浏览器的 .exe 程序文件')
+   path=str(target.resolve())
   settings=self.network_settings();settings['browser_path']=path
   self.network_path.write_text(json.dumps(settings,ensure_ascii=False),encoding='utf-8')
   self.wake.set()
+  return path
  def configure_proxy(self,proxy_url):
   proxy_url=_proxy_url(proxy_url)
   settings=self.network_settings();settings['proxy_url']=proxy_url

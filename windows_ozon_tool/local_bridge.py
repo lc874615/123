@@ -922,8 +922,8 @@ def main(test_mode=False,on_ready=None):
    path=filedialog.askopenfilename(parent=dialog,title='选择本机浏览器程序',filetypes=[('浏览器程序','*.exe'),('所有文件','*')])
    if not path:return
    try:
-    competitor_local.configure_browser(path);browser.set(path)
-   except ValueError as exc:show_task_error('浏览器未保存',str(exc),parent=dialog)
+    browser.set(competitor_local.configure_browser(path))
+   except ValueError as exc:messagebox.showwarning('浏览器路径需要调整',str(exc),parent=dialog)
   ttk.Button(browser_row,text='添加 / 选择浏览器',command=choose_browser).pack(side='right',padx=(8,0))
   ttk.Label(dialog,text='使用所选程序的独立采集窗口。普通浏览器的扩展和登录会话不会随程序路径自动载入。',wraplength=690).pack(padx=16,anchor='w')
   ttk.Label(dialog,text='竞品参数默认由本地工具直连 Ozon 公开页读取，不使用浏览器插件或 ChatGPT 页面。\n直连重复跳转时会自动用本机 Edge/Chrome 的隔离后台窗口回退读取；只有两者都失败时，才填写单独的 Ozon 网络出口。').pack(padx=16,pady=(16,8),anchor='w')
@@ -935,8 +935,8 @@ def main(test_mode=False,on_ready=None):
   state=ttk.Label(dialog,text=competitor_local.status,wraplength=650);state.pack(padx=16,pady=6,anchor='w')
   buttons=ttk.Frame(dialog);buttons.pack(pady=8)
   def save():
-   try:competitor_local.configure_browser(browser.get())
-   except ValueError as exc:show_task_error('浏览器未保存',str(exc),parent=dialog);return
+   try:browser.set(competitor_local.configure_browser(browser.get()))
+   except ValueError as exc:messagebox.showwarning('浏览器路径需要调整',str(exc),parent=dialog);return
    try:competitor_local.configure_proxy(proxy.get());state.configure(text=competitor_local.status+'；设置已保存。')
    except ValueError as exc:show_task_error('网络出口未保存',str(exc),parent=dialog)
   def probe():
