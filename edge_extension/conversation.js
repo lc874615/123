@@ -38,7 +38,8 @@
  }
  const USER='[data-message-author-role="user"], [data-turn="user"], [class~="group/user-message"], [data-testid="user-message"]';
  function userNodes(doc,thread=main(doc)||doc){
-  return [...thread.querySelectorAll(USER)].filter(n=>!composerOwned(n)&&!auxiliary(n)&&!n.querySelector?.(USER));
+  const nodes=[...thread.querySelectorAll(USER)].filter(n=>!composerOwned(n)&&!auxiliary(n));
+  return nodes.filter(n=>!nodes.some(other=>other!==n&&other.contains(n)));
  }
  function requestReplies(doc,marker){
   const users=userNodes(doc);
@@ -82,13 +83,19 @@
  }
  function requestAnchor(doc,marker){
   if(!marker)return null;
-  const matches=n=>(String(n.innerText||'')+' '+String(n.textContent||'')).includes(marker);
-  const local=userNodes(doc).filter(matches);
+  const matches=n=>[n.innerText,n.textContent].some(text=>String(text||'').replace(/[\s\u200B-\u200D\uFEFF]/g,'').includes(marker));
+  // A nested user-message element may contain only the attachment controls.
+  // Filter by marker before pruning nested wrappers.
+  function marked(root){
+   const nodes=[...root.querySelectorAll(USER)].filter(n=>matches(n)&&!composerOwned(n)&&!auxiliary(n));
+   return nodes.filter(n=>!nodes.some(other=>other!==n&&n.contains(other)));
+  }
+  const local=marked(main(doc)||doc);
   if(local.length)return local.length===1?local[0]:null;
   // Some layouts mount the request and its reply in sibling regions.
   const thread=main(doc);
   if(!thread)return null;
-  const outside=userNodes(doc,doc).filter(n=>matches(n)&&!!(n.compareDocumentPosition(thread)&4));
+  const outside=marked(doc).filter(n=>!!(n.compareDocumentPosition(thread)&4));
   return outside.length===1?outside[0]:null;
  }
  async function expandUserPrompts(doc,{sleep=ms=>new Promise(r=>setTimeout(r,ms)),stopped=()=>false}={}){
