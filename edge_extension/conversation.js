@@ -65,7 +65,13 @@
   }
   return roots;
  }
- function auxiliary(node){return !!node.closest?.('aside,[role="complementary"],[class*="summary-panel"],[class*="summary-card"]');}
+ function auxiliary(node){
+  const panel=node.closest?.('aside,[role="complementary"],.summary-panel,.summary-card');
+  if(!panel)return false;
+  const thread=node.closest('main,[role="main"]');
+  // The application can mount the whole conversation inside an auxiliary shell.
+  return !thread||thread.contains(panel)&&thread!==panel;
+ }
  function assistantImages(root){
   return [...root.querySelectorAll('img')].filter(i=>!userOwned(i)&&!auxiliary(i)&&!i.closest?.('#prompt-textarea'));
  }

@@ -33,7 +33,7 @@
  function gallery(doc,{expected=8,marker='',allowPartial=false,continuations=false}={}){
   const structural=structuralGallery(doc,{expected,marker,allowPartial,continuations});if(structural)return structural;
   const main=globalThis.OzonConversation.main(doc);if(!main)return null;
-  const all=[...main.querySelectorAll('img')].filter(i=>visibleImage(i)&&!globalThis.OzonConversation.userOwned(i)&&!globalThis.OzonConversation.auxiliary(i)&&!i.closest('aside,[role="complementary"],#prompt-textarea'));
+  const all=[...main.querySelectorAll('img')].filter(i=>visibleImage(i)&&!globalThis.OzonConversation.userOwned(i)&&!globalThis.OzonConversation.auxiliary(i));
   const anchor=globalThis.OzonConversation.requestAnchor(doc,marker);
   if(allowPartial&&marker&&!anchor)return null;
   const images=anchor?all.filter(i=>!!(anchor.compareDocumentPosition(i)&4)):all;
