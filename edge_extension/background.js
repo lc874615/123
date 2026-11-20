@@ -17,7 +17,12 @@ function workPage(url){try{const u=new URL(url);return u.origin==='https://chatg
 async function workTab(fallback){
  const {autoTab,autoUrl}=await chrome.storage.local.get(['autoTab','autoUrl']);
  let tab=null;try{tab=await chrome.tabs.get(autoTab??fallback);}catch{}
- if(tab?.url&&new URL(tab.url).origin==='https://chatgpt.com'&&(!autoUrl||tab.url.split('#')[0]===autoUrl))return tab;
+ const sameConversation=(a,b)=>{try{const x=new URL(a),y=new URL(b);return x.origin===y.origin&&x.pathname.replace(/\/$/,'')===y.pathname.replace(/\/$/,'');}catch{return false;}};
+ if(tab?.url&&new URL(tab.url).origin==='https://chatgpt.com'&&(!autoUrl||sameConversation(tab.url,autoUrl)))return tab;
+ if(tab?.url&&autoUrl&&new URL(autoUrl).pathname==='/'&&/^\/c\//.test(new URL(tab.url).pathname)){
+  const check=await chrome.tabs.sendMessage(tab.id,{kind:'preflight'});
+  if(current?.id&&check?.imageTaskId===current.id){await chrome.storage.local.set({autoUrl:tab.url.split('#')[0]});return tab;}
+ }
  if(autoUrl){const candidates=(await chrome.tabs.query({url:'https://chatgpt.com/*'})).filter(t=>t.url?.split('#')[0]===autoUrl);if(candidates.length===1){await chrome.storage.local.set({autoTab:candidates[0].id});return candidates[0];}}
  throw Error('已绑定作图页关闭或已切换对话，请打开原对话后重新绑定；不会向其他页面发送');
 }
@@ -184,7 +189,10 @@ chrome.runtime.onMessage.addListener((m,sender,reply)=>{(async()=>{
   const tab=await workTab(m.tabId);if(!tab.url||new URL(tab.url).origin!=='https://chatgpt.com')throw Error('请打开已生成图片的商品对话');
   await api('/automation-control',{paused:false});await chrome.storage.local.set({autoEnabled:true});await chrome.alarms.create?.('ozon-poll',{periodInMinutes:0.5});
   current=await api('/recover',{sku:m.sku,as_sheet:!!m.as_sheet});runTab=tab.id;busy=true;current.startedAt=Date.now();await persist();
-  await chrome.scripting.executeScript({target:{tabId:tab.id},files:['diagnostics.js','conversation.js','composer.js','uploads.js','copy_parser.js','images.js','file_links.js','download_ui.js','delivery.js','generation_failure.js','composer_cleanup.js','content.js']});await chrome.tabs.sendMessage(tab.id,{kind:'recover',task:current});return {status:'正在核对并采集最终图片，完成后继续文案；不重新作图'};
+  await inject(tab.id);
+  const selectFileGroup=!current.saved_count&&!current.orderRepairPending;
+  await chrome.tabs.sendMessage(tab.id,{kind:'recover',task:{...current,selectFileGroup}});
+  return {status:selectFileGroup?'请回到作图页，展开文件组并点击其中的 01 主图文件卡':'正在恢复已有素材'};
  }
  if(m.kind==='repair-order'){
   if(sender.tab?.id!==runTab||!current||m.task_id!==current.id)throw Error('自动重采集任务不匹配');

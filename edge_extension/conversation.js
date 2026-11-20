@@ -76,7 +76,13 @@
   return [...root.querySelectorAll('img')].filter(i=>!userOwned(i)&&!auxiliary(i)&&!i.closest?.('#prompt-textarea'));
  }
  function generating(doc){
-  return !!doc.querySelector('[data-testid="stop-button"],button[aria-label="Stop generating"],button[aria-label="Stop streaming"],button[aria-label="停止生成"],button[aria-label="停止流式传输"],main [data-is-streaming="true"],[role="main"] [data-is-streaming="true"]');
+  if(doc.querySelector('[data-testid="stop-button"],[data-testid="stop-generating-button"],button[aria-label="Stop generating"],button[aria-label="Stop streaming"],button[aria-label="停止生成"],button[aria-label="停止流式传输"],button[aria-label="停止回复"],main [data-is-streaming="true"],[role="main"] [data-is-streaming="true"]'))return true;
+  const buttons=doc.querySelectorAll?.('button[aria-label],button[title]')||[];
+  return [...buttons].some(button=>{
+   if(button.getClientRects&&!button.getClientRects().length)return false;
+   const label=button.getAttribute('aria-label')||button.getAttribute('title')||'';
+   return /^(?:stop|stop response|stop generating|停止|停止回答|停止响应|停止生成|停止流式传输)$/i.test(label.trim());
+  });
  }
  function nextUser(doc,anchor,{continuations=false}={}){
   const thread=main(doc);
