@@ -87,9 +87,9 @@
   const elements=[...new Set([...basic,...wrappers])].filter(element=>!globalThis.OzonConversation.userOwned(element)&&(!anchor||!!(anchor.compareDocumentPosition(element)&4))&&(!nextUser||!!(element.compareDocumentPosition(nextUser)&4)));
   const resourceElements=elements.filter(element=>resourceRow(element)&&allowedElement(element));
   const skuMatches=resourceElements.filter(e=>task?.sku&&fileLabel(e).includes(task.sku));
-  const candidates=expected===1&&skuMatches.length?skuMatches:resourceElements.length?resourceElements:elements;
+  const selectedElements=expected===1&&skuMatches.length?skuMatches:resourceElements.length?resourceElements:elements;
   // The final downloadable file cards outrank earlier prose links and image attempts.
-  for(const element of candidates){
+  for(const element of selectedElements){
    if(globalThis.OzonConversation.userOwned(element)||anchor&&!(anchor.compareDocumentPosition(element)&4)||nextUser&&!(element.compareDocumentPosition(nextUser)&4))continue;
    if(onlyVisible||manual&&!anchor){const r=element.getBoundingClientRect();if(!r.width||!r.height||r.bottom<=0||r.top>=doc.defaultView.innerHeight)continue;}
    let source=element,href=element.getAttribute('href');
