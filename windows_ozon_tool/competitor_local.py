@@ -115,8 +115,17 @@ def _browser_rendered_rows(url,fields,timeout=35):
      pairs=page.evaluate("""() => {
       const rows=[];
       for(const term of document.querySelectorAll('dt')){
-       const value=term.nextElementSibling;
+       const value=term.nextElementSibling||term.parentElement?.querySelector('dd');
        if(value?.tagName==='DD')rows.push({name:term.innerText,value:value.innerText});
+      }
+      for(const section of document.querySelectorAll('[data-widget*="Characteristics"],[data-widget*="characteristics"]')){
+       for(const name of section.querySelectorAll('span')){
+        const label=name.innerText?.trim();
+        const parent=name.parentElement?.parentElement;
+        if(!label||label.length>180||!parent)continue;
+        const lines=parent.innerText.split('\n').map(s=>s.trim()).filter(Boolean);
+        if(lines.length===2&&lines[0]===label)rows.push({name:label,value:lines[1]});
+       }
       }
       for(const row of document.querySelectorAll('table tr')){
        const cells=row.querySelectorAll('th,td');
@@ -131,7 +140,10 @@ def _browser_rendered_rows(url,fields,timeout=35):
      page.wait_for_timeout(1500)
     if not rows and re.search(r'captcha|доступ ограничен|подтвердите.*человек',rendered,re.I):
      raise CaptureError('Ozon 页面要求验证，公开参数尚未返回。','verification')
-    if not rows:raise CaptureError('页面已打开，但参数区尚未提取到名称与数值；请重试或核对页面是否显示完整参数。','transient')
+    if not rows:
+     title=page.title()[:100]
+     widgets=page.locator('[data-widget*="Characteristics"],[data-widget*="characteristics"]').count()
+     raise CaptureError('参数提取为0；页面标题='+title+'；参数组件='+str(widgets)+'；正文长度='+str(len(rendered))+'；页面开头='+re.sub(r'\s+',' ',rendered)[:120],'transient')
     unique={}
     for row in rows:
      key=(str(row.get('name','')).strip(),str(row.get('value','')).strip())
@@ -287,7 +299,7 @@ class LocalCompetitorService:
    body={'token':job['token'],'url':job['url'],'rows':rows,'diagnostics':{'collector':collector,'full_sections':1,'attempts':attempts}}
    if not rows:body.update(error='参数区未成功提取名称与数值，尚未进行官方字段匹配',error_code='transient')
   except CaptureError as exc:
-   self.status='本地竞品采集失败：'+str(exc);body={'token':job['token'],'error':str(exc),'error_code':exc.code}
+   self.status='本地竞品采集失败：'+str(exc);body={'token':job['token'],'error':str(exc),'error_code':exc.code,'diagnostics':{'collector':'local_browser_rendered' if attempts else collector,'attempts':attempts}}
   except Exception as exc:body={'token':job['token'],'error':'本地采集异常：'+str(exc)[:160],'error_code':'transient'}
   with self.store.lock:receive(self.store,body)
   if not body.get('error'):self.status='本地竞品采集正常：已读取公开 Ozon 页面'+('（本机浏览器回退）' if body.get('diagnostics',{}).get('collector')=='local_browser_fallback' else '')
