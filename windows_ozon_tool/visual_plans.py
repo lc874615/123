@@ -145,7 +145,7 @@ def render(plan,facts='',group_facts='',scope='full'):
   fallback=page.get('fallback_if_unproven')
   alternative=('；证据不足改为'+fallback[1]+'或尚未覆盖的更强图证主题，文件编号与名称保持本清单不变') if fallback else ''
   composition=COMPOSITIONS.get(page['requested_topic'],'用当前原始视角组织大幅实物摄影，与其他编号区分。')
-  role='主图任务：以完整商品识别为中心。' if page['requested_topic']=='main' else '详情任务：先选本页专属视觉证据与景别，产品大合集主图构图不作为默认布局。'
+  role=('主图卖点分析：读取本变体主图及适用详情原始参考，内部列出卖点、出处与购买价值，合并并排序。画面用自然俄语短句清楚罗列通常2—4条不同的有依据卖点，突出最重要一条；证据不足按实际条数。保留尺寸，卖点分层清晰。') if page['requested_topic']=='main' else '详情任务：先选本页专属视觉证据与景别，产品大合集主图构图不作为默认布局。'
   rows.append(name+'：建议'+page['title']+'。'+role+composition+rule+alternative+'。同一张只讲一个核心主题，详情按证据分配规则调整。')
  limits={'full':'只能交付8张独立成品，01为当前变体主图，02—08为全组共用详情。','main':'只能生成和交付1张本变体主图，文件名固定01_main.jpg；不制作其他变体主图与详情。','shared':'只重做7张共用详情；本次01—07分别对应商品详情位置02—08，不生成或修改任何主图。'}
  category=plan.get('category') or {};label=category.get('zh_path') or category.get('name') or '未明确识别的类目'
