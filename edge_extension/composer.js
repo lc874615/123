@@ -82,7 +82,9 @@
    }
   }
   if(accepted())return true;
-  throw Error('发送结果尚未确认，已保留当前任务；请核对页面回执，不会启动下一任务或重复生成');
+  const error=Error('发送结果尚未确认，已保留当前任务；请核对页面回执，不会启动下一任务或重复生成');
+  if(actions>0)error.code='SEND_RECEIPT_PENDING';
+  throw error;
  }
  function sameDraft(a,b){const text=v=>String(v||'').replace(/[\u200b\ufeff]/g,'').replace(/\s+/g,' ').trim();return !!text(b)&&text(a)===text(b);}
  globalThis.OzonComposer={submitOwned,findSend,visible,enabled,waitSend,sameDraft,sendOwnedByEnter};

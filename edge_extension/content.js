@@ -28,9 +28,23 @@ async function run(task){
   oldReplies=new Set(globalThis.OzonConversation.assistantNodes(document));before=oldReplies.size;
   editor=findEditor();if(!editor)throw Error('上传后输入框变化，请刷新对话；未发送');
   editor.focus();
-  if(editor instanceof HTMLTextAreaElement){Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(editor,task.prompt+'\n【OZON_TASK:'+task.id+'】');editor.dispatchEvent(new Event('input',{bubbles:true}));}
-  else{document.execCommand('insertText',false,task.prompt+'\n【OZON_TASK:'+task.id+'】');editor.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:task.prompt}));}
-  await globalThis.OzonComposer.submitOwned({doc:document,getEditor:findEditor,references:task.references||[],expected:task.prompt+'\n【OZON_TASK:'+task.id+'】',marker:'【OZON_TASK:'+task.id+'】',sleep,stopped:()=>stop,report:message=>tell(task,'sending',message)});
+  const requestMarker='【OZON_TASK:'+task.id+'】';
+  const requestText=requestMarker+'\n'+task.prompt;
+  if(editor instanceof HTMLTextAreaElement){Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(editor,requestText);editor.dispatchEvent(new Event('input',{bubbles:true}));}
+  else{document.execCommand('insertText',false,requestText);editor.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:requestText}));}
+  try{
+   await globalThis.OzonComposer.submitOwned({doc:document,getEditor:findEditor,references:task.references||[],expected:requestText,marker:requestMarker,sleep,stopped:()=>stop,report:message=>tell(task,'sending',message)});
+  }catch(error){
+   if(error.code!=='SEND_RECEIPT_PENDING'||!task.set_mode)throw error;
+   await tell(task,'waiting','已尝试发送，正在自动核对本次请求回执');
+   const conversation=globalThis.OzonConversation;
+   const until=Date.now()+120000;
+   while(!stop&&!conversation.requestAnchor(document,requestMarker)&&Date.now()<until){
+    await conversation.expandUserPrompts(document,{sleep,stopped:()=>stop});
+    await sleep(1000);
+   }
+   if(stop||!conversation.requestAnchor(document,requestMarker))throw error;
+  }
   await tell(task,'waiting','发送已执行，等待本任务回复和生成图片');
   }else{task.recovery_marker=prepared.marker;await tell(task,'waiting','本任务已经发送，自动采集已有结果，不重复发送');}
   let deadline=Date.now()+20*60*1000;let lastReport=0;
