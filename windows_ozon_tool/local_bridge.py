@@ -556,6 +556,12 @@ class Store:
   if complete==len(group):return f'{complete}个变体素材已完成：8图、视频、共用俄语文案；待上架审核'
   return f'素材处理中：已完成{complete}/{len(group)}个变体，等待图片、视频或文案完成'
  def repair_unsent_copy(self):
+  quota_recovery=False
+  for task in self.tasks:
+   if task.get('copy_mode')=='attributes' and task.get('copy_state')=='needs_attention' and 'kQuotaBytes' in task.get('message','') and not task.get('quota_recovery_requested'):
+    task.update(resume_mode='copy_inspect_only',quota_recovery_requested=True,message='插件存储修复后，正在自动核对原属性回复')
+    quota_recovery=True
+  if quota_recovery:self.save()
   known={'未找到可用发送按钮','图片回复尚未结束，文案等待下一次自动继续','上一条回复仍在生成','未找到输入框','文案任务已暂停，未点击发送'};changed=False
   for task in self.tasks:
    if task.get('copy_state')=='needs_attention' and task.get('message') in known and task.get('copy_phase') in (None,'inspecting'):
