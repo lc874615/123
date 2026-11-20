@@ -65,6 +65,15 @@
   const anchor=globalThis.OzonConversation.requestAnchor(doc,marker);
   if(allowPartial&&marker&&!anchor)return null;
   const nextUser=anchor?globalThis.OzonConversation.nextUser(doc,anchor,{continuations}):null;
+  if(expected===1&&anchor&&!fileGroup){
+   const replies=globalThis.OzonConversation.assistantNodes(doc).filter(node=>
+    !!(anchor.compareDocumentPosition(node)&4)&&(!nextUser||!!(node.compareDocumentPosition(nextUser)&4)));
+   for(const reply of replies.reverse()){
+    const found=candidates(doc,{marker,expected,allowPartial,inventory:true,continuations,task,fileGroup:reply});
+    if(found?.complete)return inventory?found:{images:found.images};
+    if(found?.present)break;
+   }
+  }
   const images=new Map(),unnumbered=new Map();
   const basic=[...main.querySelectorAll('a[href],button,[role="link"],[role="button"]')];
   // Modern resource cards can be non-semantic wrappers.  Add only short,
