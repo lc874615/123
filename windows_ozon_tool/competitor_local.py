@@ -94,18 +94,28 @@ def _browser_rendered_rows(url,fields,timeout=35):
  if not executable:raise CaptureError('未找到 Microsoft Edge 或 Chrome，无法读取渲染后的 Ozon 特征。','network')
  try:
   with sync_playwright() as playwright:
-   browser=playwright.chromium.launch(headless=True,executable_path=executable,args=['--disable-gpu','--no-first-run'])
-   page=browser.new_page(viewport={'width':1440,'height':1400},locale='ru-RU')
-   page.goto(normalize_url(url),wait_until='domcontentloaded',timeout=timeout*1000)
-   page.wait_for_timeout(5000)
+   browser=playwright.chromium.launch(headless=True,executable_path=executable,args=['--disable-gpu','--no-first-run','--no-proxy-server'])
+   try:
+    page=browser.new_page(viewport={'width':1440,'height':1400},locale='ru-RU')
+    page.goto(normalize_url(url),wait_until='domcontentloaded',timeout=timeout*1000)
+    page.wait_for_timeout(5000)
+    for label in ('Все характеристики','Характеристики'):
+     try:
+      page.get_by_text(label,exact=False).first.click(timeout=1200)
+      page.wait_for_timeout(1200)
+      break
+     except Exception:pass
+    rendered=page.locator('body').inner_text(timeout=5000)
+    structured=extract(page.content(),fields)
+    rows=structured or _visible_rows(rendered,fields)
+    if not rows and re.search(r'captcha|доступ ограничен|подтвердите.*человек',rendered,re.I):
+     raise CaptureError('Ozon 页面要求验证，公开参数尚未返回。','verification')
+    return rows
+   finally:
+    browser.close()
    # Ozon often places the full characteristics behind this expandable block.
-   for label in ('Все характеристики','Характеристики'):
-    try:page.get_by_text(label,exact=False).first.click(timeout=1200);page.wait_for_timeout(1200);break
-    except Exception:pass
-   rendered=page.locator('body').inner_text(timeout=5000)
-   browser.close()
+ except CaptureError:raise
  except Exception as exc:raise CaptureError('本机浏览器渲染 Ozon 页面失败：'+str(exc)[:180],'network') from exc
- return _visible_rows(rendered,fields)
 
 def _direct_read(url,limit=3_000_000,timeout=18,proxy_url=''):
  """HTTPS only, with global proxy variables intentionally disabled.
@@ -229,14 +239,26 @@ class LocalCompetitorService:
   with self.store.lock:job=claim(self.store).get('job')
   if not job:return False
   try:
-   page,collector=self.read_with_fallback(job['url'])
-   rows=extract(page,job['fields'])
+   attempts=[]
+   rows=[]
+   collector='local_direct'
+   try:
+    page,collector=self.read_with_fallback(job['url'])
+    rows=extract(page,job['fields'])
+    attempts.append({'stage':collector,'matched':len(rows)})
+   except CaptureError as exc:
+    attempts.append({'stage':'http_browser','error':str(exc),'code':exc.code})
    # A plain HTTP response can be a location shell with no characteristics.
    # Render it once through the local browser before declaring that the page
    # lacks the current category's fields.
    if not rows:
-    rows=_browser_rendered_rows(job['url'],job['fields']);collector='local_browser_rendered'
-   body={'token':job['token'],'url':job['url'],'rows':rows,'diagnostics':{'collector':collector,'full_sections':1}}
+    try:
+     rows=_browser_rendered_rows(job['url'],job['fields']);collector='local_browser_rendered'
+     attempts.append({'stage':collector,'matched':len(rows)})
+    except CaptureError as exc:
+     attempts.append({'stage':'local_browser_rendered','error':str(exc),'code':exc.code})
+     raise CaptureError('；'.join(str(item.get('error')) for item in attempts if item.get('error')),exc.code) from exc
+   body={'token':job['token'],'url':job['url'],'rows':rows,'diagnostics':{'collector':collector,'full_sections':1,'attempts':attempts}}
    if not rows:body.update(error='本地公开页未找到与当前类目相同名称的参数，未预填',error_code='empty')
   except CaptureError as exc:
    self.status='本地竞品采集失败：'+str(exc);body={'token':job['token'],'error':str(exc),'error_code':exc.code}
