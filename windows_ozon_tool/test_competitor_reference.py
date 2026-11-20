@@ -19,53 +19,6 @@ class CompetitorTests(unittest.TestCase):
   self.assertEqual(normalize_url(URL+'?x=tracking#foo'),URL)
   for v in ['http://www.ozon.ru/product/123/','https://www.ozon.ru.attacker.com/product/123/','https://127.0.0.1/product/123/','https://name@www.ozon.ru/product/123/','https://www.ozon.ru:99/product/123/','https://www.ozon.ru/my/order','https://www.ozon.ru/product/../123/']:
    with self.subTest(v=v),self.assertRaises(ValueError):normalize_url(v)
- def test_local_collector_reads_only_exact_official_labels_without_browser(self):
-  import threading
-  from competitor_local import LocalCompetitorService,extract
-  markup='''<script type="application/ld+json">{"name":"ignored"}</script><script>{"characteristics":[{"name":"Тип разъема","value":"USB-C"},{"name":"Основной материал","value":"Пластик"},{"name":"Длина упаковки, см","value":"99"}]}</script>'''
-  rows=extract(markup,FIELDS);self.assertEqual({r['name'] for r in rows},{'Тип разъема','Основной материал','Длина упаковки, см'})
-  with tempfile.TemporaryDirectory() as tmp:
-   store=self.store(tmp,1);store.lock=threading.RLock();store.save=lambda:None
-   with patch('competitor_local._direct_read',return_value=markup):self.assertTrue(LocalCompetitorService(store).run_once())
-   saved=read(store.folder/'products'/'A'/'listing_bundle.json');self.assertEqual(saved['competitor_reference']['state'],'ready');self.assertIn('0:901',saved['competitor_reference']['suggestions']);self.assertNotIn('0:904',saved['competitor_reference']['suggestions'])
- def test_local_collector_extracts_nested_public_page_json(self):
-  from competitor_local import extract
-  payload={'widgetStates':{'characteristics':json.dumps({'items':[{'name':'Тип разъема','value':'USB-C'},{'name':'Длина упаковки, см','value':'99'}]})}}
-  rows=extract(json.dumps(payload),FIELDS)
-  self.assertEqual({r['name'] for r in rows},{'Тип разъема','Длина упаковки, см'})
- def test_local_collector_falls_back_to_isolated_browser_after_network_redirect(self):
-  import threading
-  from competitor_local import LocalCompetitorService,CaptureError
-  markup='<script>{"items":[{"name":"Тип разъема","value":"USB-C"}]}</script>'
-  with tempfile.TemporaryDirectory() as tmp:
-   store=self.store(tmp,1);store.lock=threading.RLock();store.save=lambda:None
-   with patch('competitor_local._direct_read',side_effect=CaptureError('redirect','network')),patch('competitor_local._browser_read',return_value=markup) as browser:
-    self.assertTrue(LocalCompetitorService(store).run_once());browser.assert_called_once_with(URL)
-   saved=read(store.folder/'products'/'A'/'listing_bundle.json');self.assertEqual(saved['competitor_reference']['state'],'ready');self.assertIn('0:901',saved['competitor_reference']['suggestions'])
- def test_local_collector_renders_browser_when_direct_page_has_no_fields(self):
-  import threading
-  from competitor_local import LocalCompetitorService
-  direct='<html><body>location shell</body></html>';markup='<script>{"items":[{"name":"Тип разъема","value":"USB-C"}]}</script>'
-  with tempfile.TemporaryDirectory() as tmp:
-   store=self.store(tmp,1);store.lock=threading.RLock();store.save=lambda:None
-   with patch('competitor_local._direct_read',return_value=direct),patch('competitor_local._browser_rendered_rows',return_value=[{'name':'Тип разъема','value':'USB-C'}]) as browser:
-    self.assertTrue(LocalCompetitorService(store).run_once());browser.assert_called_once();self.assertEqual(browser.call_args.args[0],URL);self.assertEqual(len(browser.call_args.args[1]),3)
-   saved=read(store.folder/'products'/'A'/'listing_bundle.json');self.assertEqual(saved['competitor_reference']['collector'],'local_browser_rendered');self.assertIn('0:901',saved['competitor_reference']['suggestions'])
- def test_rendered_visible_text_uses_only_exact_official_label_pairs(self):
-  from competitor_local import _visible_rows
-  text='Характеристики\nТип разъема\nUSB-C\nНеизвестное поле\n猜测值\nОсновной материал\nПластик'
-  rows=_visible_rows(text,FIELDS);self.assertEqual(rows,[{'name':'Тип разъема','value':'USB-C'},{'name':'Основной материал','value':'Пластик'}])
- def test_local_collector_uses_only_explicit_ozon_network_fallback(self):
-  import threading
-  from competitor_local import LocalCompetitorService,_proxy_url
-  self.assertEqual(_proxy_url('http://127.0.0.1:7890/'),'http://127.0.0.1:7890')
-  for bad in ('socks5://127.0.0.1:7890','http://user:pass@127.0.0.1:7890','http://127.0.0.1:7890/path'):
-   with self.subTest(bad=bad):
-    with self.assertRaises(ValueError):_proxy_url(bad)
-  with tempfile.TemporaryDirectory() as tmp:
-   store=self.store(tmp,1);store.lock=threading.RLock();store.save=lambda:None;service=LocalCompetitorService(store);service.configure_proxy('http://127.0.0.1:7890')
-   with patch('competitor_local._direct_read',return_value='ok') as request:
-    self.assertEqual(service.read_page(URL),'ok');self.assertEqual(request.call_args.kwargs['proxy_url'],'http://127.0.0.1:7890')
  def test_local_empty_result_is_terminal_not_a_browser_retry(self):
   with tempfile.TemporaryDirectory() as tmp:
    store=self.store(tmp,1);job=claim(store)['job'];receive(store,{'token':job['token'],'error':'本地公开页未找到字段','error_code':'empty'})

@@ -3,5 +3,4 @@ imageio-ffmpeg>=0.5,<1
 
 openpyxl>=3.1,<4
 certifi>=2025.1.31
-playwright>=1.49,<2
 truststore>=0.10,<1; sys_platform == "win32"
