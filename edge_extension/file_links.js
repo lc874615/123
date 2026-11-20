@@ -4,10 +4,24 @@
    return u.protocol==='sandbox:'||u.protocol==='https:'&&(u.hostname==='chatgpt.com'||u.hostname.endsWith('.oaiusercontent.com'))||u.protocol==='blob:'&&u.origin==='https://chatgpt.com'||/^data:(?:image\/(?:png|jpeg|webp)|application\/octet-stream);/i.test(href);
   }catch{return false;}
  }
- function resourceRow(element){return element.closest('[class*="group/resource-row"],[data-testid="resource-row"]');}
+ const FILE_NAME=/\b[^\s/\\]+?\.(?:jpe?g|png|webp)\b/i,FILE_NAMES=/\b[^\s/\\]+?\.(?:jpe?g|png|webp)\b/gi;
+ function oneFile(text){return new Set(String(text||'').match(FILE_NAMES)||[]).size===1;}
+ // Work's current file card is often a plain div and no longer carries the
+ // historical group/resource-row class.  Keep the card bounded to one file.
+ function resourceRow(element){
+  const known=element.closest?.('[class*="group/resource-row"],[class*="resource-row"],[class*="resourceRow"],[data-testid="resource-row"],[data-testid*="resource"],[data-testid*="attachment"],[class*="attachment"]');
+  if(known)return known;
+  for(let node=element,depth=0;node&&depth<6;node=node.parentElement,depth++){
+   // At depth zero a compact, one-file card is itself a safe resource even
+   // before its hover-only download button has been mounted.
+   if(oneFile(node.textContent)&&(depth===0||(node.matches?.('a,button,[role="link"],[role="button"]'))||node.querySelector?.('a[href],button,[role="link"],[role="button"]')))return node;
+  }
+  return null;
+ }
  function fileLabel(element){return (element.getAttribute('download')||element.getAttribute('aria-label')||element.textContent||'').trim()+' '+(resourceRow(element)?.textContent||'');}
  function directTarget(element){
   const row=resourceRow(element);if(!row)return null;
+  if(/^(?:下载|下载文件|下载图片|download|download file|download image)$/i.test((element.getAttribute?.('aria-label')||element.getAttribute?.('title')||element.textContent||'').trim()))return element;
   const buttons=[...row.querySelectorAll('button,[role="button"]')];
   const labelled=buttons.filter(b=>/^(?:下载|下载文件|下载图片|download|download file|download image)$/i.test((b.getAttribute('aria-label')||b.getAttribute('title')||b.textContent||'').trim()));
   if(labelled.length===1)return labelled[0];
@@ -18,7 +32,7 @@
   if(!element||globalThis.OzonConversation.userOwned(element)||globalThis.OzonConversation.auxiliary(element)||/\.zip\b/i.test(fileLabel(element)))return false;
   const href=element.getAttribute('href');const label=(element.getAttribute('aria-label')||element.textContent||'');if(/\.zip(?:[?#]|$)/i.test(href||'')||/(?:下载|download).*zip/i.test(label))return false;if(href)return allowed(href);
   const text=fileLabel(element);
-  return element.matches('button,[role="link"],[role="button"]')&&(/\b[^\s/\\]+\.(?:jpe?g|png|webp)\b/i.test(text));
+  return !!FILE_NAME.test(text)&&oneFile(text)&&(element.matches('button,[role="link"],[role="button"],a')||!!resourceRow(element));
  }
  async function expandFiles(doc,{report=async()=>{},stopped=()=>false,marker='',manual=false,allowPartial=false,continuations=false}={}){
   const main=globalThis.OzonConversation.main(doc);if(!main)return 0;let count=0;
@@ -34,7 +48,7 @@
    if(!/^(?:(?:另有|还有|另外|其余)\s*\d+\s*(?:个|项|个文件)|(?:show\s+)?\d+\s+more(?:\s+files)?|show more(?:\s+files)?|展开(?:全部|更多)?(?:文件|图片)?|显示全部文件)$/i.test(text))continue;
    if(button.getAttribute('aria-expanded')==='true'||button.tagName==='SUMMARY'&&button.parentElement.open)continue;
    let files=false;
-   for(let parent=button.parentElement,level=0;parent&&parent!==main&&level<5;parent=parent.parentElement,level++)if(/\.(?:jpe?g|png|webp)\b/i.test(parent.textContent||'')){files=true;break;}
+   for(let parent=button.parentElement,level=0;parent&&parent!==main&&level<7;parent=parent.parentElement,level++)if(/\.(?:jpe?g|png|webp)\b/i.test(parent.textContent||'')){files=true;break;}
    if(!files)continue;
    await report('正在自动展开生成图片文件列表');button.click();count++;
   }
@@ -47,7 +61,16 @@
   if(allowPartial&&marker&&!anchor)return null;
   const nextUser=anchor?globalThis.OzonConversation.nextUser(doc,anchor,{continuations}):null;
   const images=new Map(),unnumbered=new Map();
-  const elements=[...main.querySelectorAll('a[href],button,[role="link"],[role="button"]')].filter(element=>!globalThis.OzonConversation.userOwned(element)&&(!anchor||!!(anchor.compareDocumentPosition(element)&4))&&(!nextUser||!!(element.compareDocumentPosition(nextUser)&4)));
+  const basic=[...main.querySelectorAll('a[href],button,[role="link"],[role="button"]')];
+  // Modern resource cards can be non-semantic wrappers.  Add only short,
+  // one-file wrappers so normal answer prose can never become a candidate.
+  const wrappers=[...main.querySelectorAll('[data-testid],[class*="resource"],[class*="attachment"],div,span')].filter(node=>{
+   const text=node.textContent||'';if(!(text.length<220&&oneFile(text)&&!!FILE_NAME.test(text)&&!!resourceRow(node)))return false;
+   // Retain only the outer card, never both it and its filename label.
+   for(let parent=node.parentElement,depth=0;parent&&parent!==main&&depth<5;parent=parent.parentElement,depth++)if((parent.textContent||'').length<220&&oneFile(parent.textContent))return false;
+   return true;
+  });
+  const elements=[...new Set([...basic,...wrappers])].filter(element=>!globalThis.OzonConversation.userOwned(element)&&(!anchor||!!(anchor.compareDocumentPosition(element)&4))&&(!nextUser||!!(element.compareDocumentPosition(nextUser)&4)));
   const resourceElements=elements.filter(element=>resourceRow(element)&&allowedElement(element));
   const skuMatches=resourceElements.filter(e=>task?.sku&&fileLabel(e).includes(task.sku));
   const candidates=expected===1&&skuMatches.length?skuMatches:resourceElements.length?resourceElements:elements;
@@ -55,12 +78,14 @@
   for(const element of candidates){
    if(globalThis.OzonConversation.userOwned(element)||anchor&&!(anchor.compareDocumentPosition(element)&4)||nextUser&&!(element.compareDocumentPosition(nextUser)&4))continue;
    if(onlyVisible||manual&&!anchor){const r=element.getBoundingClientRect();if(!r.width||!r.height||r.bottom<=0||r.top>=doc.defaultView.innerHeight)continue;}
-   const href=element.getAttribute('href');if(!allowedElement(element))continue;let pathname='';try{pathname=decodeURIComponent(new URL(href,location.href).pathname);}catch{}
+   let source=element,href=element.getAttribute('href');
+   if(!href){const links=[...(resourceRow(element)?.querySelectorAll?.('a[href],[role="link"][href]')||[])].filter(link=>oneFile(fileLabel(link))&&allowedElement(link));if(links.length===1){source=links[0];href=source.getAttribute('href');}}
+   if(!allowedElement(element))continue;let pathname='';try{pathname=decodeURIComponent(new URL(href,location.href).pathname);}catch{}
    const label=fileLabel(element);
-   if(new Set(label.match(/[^\s/\\]+\.(?:jpe?g|png|webp)\b/gi)||[]).size>1)continue;
-   const name=(label.match(/[^\s/\\]+\.(?:jpe?g|png|webp)\b/i)?.[0]||pathname.split('/').at(-1)||'').split(/[?#]/)[0];
+   if(new Set(label.match(FILE_NAMES)||[]).size>1)continue;
+   const name=(label.match(FILE_NAME)?.[0]||pathname.split('/').at(-1)||'').split(/[?#]/)[0];
    const ext=name.match(/\.(jpe?g|png|webp)$/i)?.[1]?.toLowerCase();if(!ext)continue;
-   const target=directTarget(element);const link={element:target||element,href:target?target.getAttribute('href'):href,name,extension:ext,direct:!!target};
+   const target=directTarget(source)||directTarget(element);const link={element:target||source,href:target?target.getAttribute('href'):href,name,extension:ext,direct:!!target};
    const match=name.match(/^0*(\d{1,3})(?:[_ .-])/);if(!match){unnumbered.set(name,link);continue;}
    const index=Number(match[1]);
    if(images.has(index)&&images.get(index).name!==name)throw Error('同一图片编号出现多个不同下载链接，无法确认顺序');
