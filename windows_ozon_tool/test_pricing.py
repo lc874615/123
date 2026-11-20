@@ -32,7 +32,8 @@ class PricingTests(unittest.TestCase):
   raw=b'<ValCurs Date="07.11.2026"><Valute><CharCode>CNY</CharCode><Nominal>10</Nominal><Value>115,0000</Value></Valute></ValCurs>'
   result=parse_fx(raw,dt.date(2026,11,8));self.assertEqual(result['rub_per_cny'],'11.5000');self.assertEqual(result['url'],FX_URL);self.assertEqual(result['date'],'2026-11-07')
   with self.assertRaises(ValueError):parse_fx(raw,dt.date(2026,11,15))
-  with self.assertRaises(ValueError):parse_fx(raw,dt.date(2026,11,6))
+  self.assertTrue(parse_fx(raw,dt.date(2026,11,6)))
+  with self.assertRaises(ValueError):parse_fx(raw,dt.date(2026,11,5))
  def configs(self):
   tier=self.tier();row={k:str(v) if k not in ('volumetric',) else v for k,v in tier.__dict__.items()};row['_labels']=dict(row)
   return {'ogl':{'tiers':[row],'boundary_policy':'uploaded_labels','workbook_sha256':'test'},'commissions':{'records':[{'type_ru':'test','brand':'All','rates':['.1','.1','.1'],'source_row':3}],'filename':'synthetic.xlsx','sha256':'test','effective_note':'synthetic'},'fx':{'rub_per_cny':'12','date':dt.datetime.now(dt.timezone.utc).date().isoformat(),'source':'fixture'}}

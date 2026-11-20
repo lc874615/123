@@ -25,7 +25,9 @@ def parse_fx(raw,today=None):
  root=ET.fromstring(raw)
  date=dt.datetime.strptime(root.attrib['Date'],'%d.%m.%Y').date()
  today=today or dt.datetime.now(dt.timezone.utc).date()
- if not 0<=(today-date).days<=7:raise ValueError('央行参考汇率日期异常或超过7天')
+ age=(today-date).days
+ # CBR publishes the next effective day's rate in advance.
+ if not -1<=age<=7:raise ValueError('央行汇率生效日 '+date.isoformat()+'，电脑UTC日期 '+today.isoformat()+'；日期超出允许范围（提前1天至历史7天），请核对电脑时间和来源响应')
  item=next((v for v in root.findall('Valute') if v.findtext('CharCode')=='CNY'),None)
  if item is None:raise ValueError('央行响应未包含人民币')
  rate=D(item.findtext('Value').replace(',','.'))/D(item.findtext('Nominal'))
@@ -80,7 +82,7 @@ class PricingService:
   merchant=credentials()[0];live=location(self.root,merchant)
   if merchant and live.exists():configs['shop_commissions']=read(live)
   date=dt.date.fromisoformat(configs['fx']['date'])
-  if not 0<=(dt.datetime.now(dt.timezone.utc).date()-date).days<=7:raise ValueError('央行汇率超过7天，请更新后定价')
+  if not -1<=(dt.datetime.now(dt.timezone.utc).date()-date).days<=7:raise ValueError('央行汇率日期超出允许范围，请核对电脑日期并更新汇率后定价')
   return configs,overrides
  def sync_commissions(self,force=False,caller=None):
   import time
