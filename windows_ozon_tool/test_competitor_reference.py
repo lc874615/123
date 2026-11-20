@@ -42,6 +42,15 @@ class CompetitorTests(unittest.TestCase):
    with patch('competitor_local._direct_read',side_effect=CaptureError('redirect','network')),patch('competitor_local._browser_read',return_value=markup) as browser:
     self.assertTrue(LocalCompetitorService(store).run_once());browser.assert_called_once_with(URL)
    saved=read(store.folder/'products'/'A'/'listing_bundle.json');self.assertEqual(saved['competitor_reference']['state'],'ready');self.assertIn('0:901',saved['competitor_reference']['suggestions'])
+ def test_local_collector_renders_browser_when_direct_page_has_no_fields(self):
+  import threading
+  from competitor_local import LocalCompetitorService
+  direct='<html><body>location shell</body></html>';markup='<script>{"items":[{"name":"Тип разъема","value":"USB-C"}]}</script>'
+  with tempfile.TemporaryDirectory() as tmp:
+   store=self.store(tmp,1);store.lock=threading.RLock();store.save=lambda:None
+   with patch('competitor_local._direct_read',return_value=direct),patch('competitor_local._browser_read',return_value=markup) as browser:
+    self.assertTrue(LocalCompetitorService(store).run_once());browser.assert_called_once_with(URL)
+   saved=read(store.folder/'products'/'A'/'listing_bundle.json');self.assertEqual(saved['competitor_reference']['collector'],'local_browser_after_empty');self.assertIn('0:901',saved['competitor_reference']['suggestions'])
  def test_local_collector_uses_only_explicit_ozon_network_fallback(self):
   import threading
   from competitor_local import LocalCompetitorService,_proxy_url

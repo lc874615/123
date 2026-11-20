@@ -195,6 +195,11 @@ class LocalCompetitorService:
   try:
    page,collector=self.read_with_fallback(job['url'])
    rows=extract(page,job['fields'])
+   # A plain HTTP response can be a location shell with no characteristics.
+   # Render it once through the local browser before declaring that the page
+   # lacks the current category's fields.
+   if not rows and collector!='local_browser_fallback':
+    page=_browser_read(job['url']);collector='local_browser_after_empty';rows=extract(page,job['fields'])
    body={'token':job['token'],'url':job['url'],'rows':rows,'diagnostics':{'collector':collector,'full_sections':1}}
    if not rows:body.update(error='本地公开页未找到与当前类目相同名称的参数，未预填',error_code='empty')
   except CaptureError as exc:
