@@ -48,9 +48,13 @@ class CompetitorTests(unittest.TestCase):
   direct='<html><body>location shell</body></html>';markup='<script>{"items":[{"name":"Тип разъема","value":"USB-C"}]}</script>'
   with tempfile.TemporaryDirectory() as tmp:
    store=self.store(tmp,1);store.lock=threading.RLock();store.save=lambda:None
-   with patch('competitor_local._direct_read',return_value=direct),patch('competitor_local._browser_read',return_value=markup) as browser:
-    self.assertTrue(LocalCompetitorService(store).run_once());browser.assert_called_once_with(URL)
-   saved=read(store.folder/'products'/'A'/'listing_bundle.json');self.assertEqual(saved['competitor_reference']['collector'],'local_browser_after_empty');self.assertIn('0:901',saved['competitor_reference']['suggestions'])
+   with patch('competitor_local._direct_read',return_value=direct),patch('competitor_local._browser_rendered_rows',return_value=[{'name':'Тип разъема','value':'USB-C'}]) as browser:
+    self.assertTrue(LocalCompetitorService(store).run_once());browser.assert_called_once();self.assertEqual(browser.call_args.args[0],URL);self.assertEqual(len(browser.call_args.args[1]),3)
+   saved=read(store.folder/'products'/'A'/'listing_bundle.json');self.assertEqual(saved['competitor_reference']['collector'],'local_browser_rendered');self.assertIn('0:901',saved['competitor_reference']['suggestions'])
+ def test_rendered_visible_text_uses_only_exact_official_label_pairs(self):
+  from competitor_local import _visible_rows
+  text='Характеристики\nТип разъема\nUSB-C\nНеизвестное поле\n猜测值\nОсновной материал\nПластик'
+  rows=_visible_rows(text,FIELDS);self.assertEqual(rows,[{'name':'Тип разъема','value':'USB-C'},{'name':'Основной материал','value':'Пластик'}])
  def test_local_collector_uses_only_explicit_ozon_network_fallback(self):
   import threading
   from competitor_local import LocalCompetitorService,_proxy_url

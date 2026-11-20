@@ -71,6 +71,42 @@ def _browser_read(url,timeout=30):
  if len(page)<200:raise CaptureError('本机浏览器未返回可解析的 Ozon 页面。','network')
  return page
 
+def _visible_rows(text,fields):
+ """Extract only an exact official label followed by its rendered value."""
+ labels={_key(f.get(k)):str(f.get(k)) for f in fields for k in ('name_ru','name') if f.get(k)}
+ lines=[' '.join(line.split()) for line in str(text).splitlines() if line.strip()]
+ rows=[]
+ for index,line in enumerate(lines):
+  key=_key(line)
+  if key not in labels:continue
+  for value in lines[index+1:index+5]:
+   value_key=_key(value)
+   if not value_key or value_key in labels:continue
+   if len(value)>800 or value.casefold() in ('характеристики','все характеристики','показать все'):continue
+   rows.append({'name':labels[key],'value':value});break
+ return rows
+
+def _browser_rendered_rows(url,fields,timeout=35):
+ """Read rendered Ozon characteristics through the installed Playwright stack."""
+ try:from playwright.sync_api import sync_playwright
+ except ImportError as exc:raise CaptureError('本机缺少浏览器渲染依赖，请运行“修复依赖.bat”后重试。','network') from exc
+ executable=_browser_executable()
+ if not executable:raise CaptureError('未找到 Microsoft Edge 或 Chrome，无法读取渲染后的 Ozon 特征。','network')
+ try:
+  with sync_playwright() as playwright:
+   browser=playwright.chromium.launch(headless=True,executable_path=executable,args=['--disable-gpu','--no-first-run'])
+   page=browser.new_page(viewport={'width':1440,'height':1400},locale='ru-RU')
+   page.goto(normalize_url(url),wait_until='domcontentloaded',timeout=timeout*1000)
+   page.wait_for_timeout(5000)
+   # Ozon often places the full characteristics behind this expandable block.
+   for label in ('Все характеристики','Характеристики'):
+    try:page.get_by_text(label,exact=False).first.click(timeout=1200);page.wait_for_timeout(1200);break
+    except Exception:pass
+   rendered=page.locator('body').inner_text(timeout=5000)
+   browser.close()
+ except Exception as exc:raise CaptureError('本机浏览器渲染 Ozon 页面失败：'+str(exc)[:180],'network') from exc
+ return _visible_rows(rendered,fields)
+
 def _direct_read(url,limit=3_000_000,timeout=18,proxy_url=''):
  """HTTPS only, with global proxy variables intentionally disabled.
 
@@ -198,8 +234,8 @@ class LocalCompetitorService:
    # A plain HTTP response can be a location shell with no characteristics.
    # Render it once through the local browser before declaring that the page
    # lacks the current category's fields.
-   if not rows and collector!='local_browser_fallback':
-    page=_browser_read(job['url']);collector='local_browser_after_empty';rows=extract(page,job['fields'])
+   if not rows:
+    rows=_browser_rendered_rows(job['url'],job['fields']);collector='local_browser_rendered'
    body={'token':job['token'],'url':job['url'],'rows':rows,'diagnostics':{'collector':collector,'full_sections':1}}
    if not rows:body.update(error='本地公开页未找到与当前类目相同名称的参数，未预填',error_code='empty')
   except CaptureError as exc:
