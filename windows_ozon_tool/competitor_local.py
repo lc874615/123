@@ -52,14 +52,14 @@ def _browser_executable():
   if path.is_file():return str(path)
  return next((shutil.which(name) for name in ('chrome','google-chrome','chromium','msedge','microsoft-edge') if shutil.which(name)),None)
 
-def _browser_read(url,timeout=30,proxy_url=''):
+def _browser_read(url,timeout=30,proxy_url='',browser_path=''):
  """Use an isolated local Chromium process only after public HTTP fails.
 
  It never attaches to the ChatGPT tab or a user's browser profile.  The goal is
  to use the same normal browser network stack that can open Ozon on the local
  machine, while keeping collection in the desktop background service.
  """
- executable=_browser_executable()
+ executable=browser_path or _browser_executable()
  if not executable:raise CaptureError('未找到 Microsoft Edge 或 Chrome，无法使用本机浏览器回退读取 Ozon。','network')
  canonical=normalize_url(url)
  with tempfile.TemporaryDirectory(prefix='ozon-competitor-browser-') as profile:
@@ -89,11 +89,11 @@ def _visible_rows(text,fields):
    rows.append({'name':labels[key],'value':value});break
  return rows
 
-def _browser_rendered_rows(url,fields,timeout=35,proxy_url=''):
+def _browser_rendered_rows(url,fields,timeout=35,proxy_url='',browser_path=''):
  """Read rendered Ozon characteristics through the installed Playwright stack."""
  try:from playwright.sync_api import sync_playwright
  except ImportError as exc:raise CaptureError('本机缺少浏览器渲染依赖，请运行“修复依赖.bat”后重试。','network') from exc
- executable=_browser_executable()
+ executable=browser_path or _browser_executable()
  if not executable:raise CaptureError('未找到 Microsoft Edge 或 Chrome，无法读取渲染后的 Ozon 特征。','network')
  try:
   with sync_playwright() as playwright:
@@ -273,17 +273,29 @@ class LocalCompetitorService:
  def network_settings(self):
   try:value=json.loads(self.network_path.read_text(encoding='utf-8'))
   except (OSError,ValueError):value={}
-  return {'proxy_url':_proxy_url(value.get('proxy_url','')) if value.get('proxy_url') else ''}
+  return {'proxy_url':_proxy_url(value.get('proxy_url','')) if value.get('proxy_url') else '','browser_path':str(value.get('browser_path') or '')}
+ def configure_browser(self,path):
+  path=str(path or '').strip()
+  if path and (not Path(path).is_file() or Path(path).name.lower() not in ('chrome.exe','msedge.exe','chromium.exe','chrome','chromium','google-chrome','msedge')):
+   raise ValueError('请选择 Chrome、Edge 或 Chromium 的浏览器程序文件')
+  settings=self.network_settings();settings['browser_path']=path
+  self.network_path.write_text(json.dumps(settings,ensure_ascii=False),encoding='utf-8')
+  self.wake.set()
  def configure_proxy(self,proxy_url):
   proxy_url=_proxy_url(proxy_url)
-  self.network_path.write_text(json.dumps({'proxy_url':proxy_url},ensure_ascii=False),encoding='utf-8')
+  settings=self.network_settings();settings['proxy_url']=proxy_url
+  self.network_path.write_text(json.dumps(settings,ensure_ascii=False),encoding='utf-8')
   self.status=('本地 Ozon 采集：使用独立备用出口' if proxy_url else '本地直连 Ozon（不使用插件或 ChatGPT VPN）');self.wake.set()
  def read_page(self,url):return _direct_read(url,proxy_url=self.network_settings()['proxy_url'])
  def read_with_fallback(self,url):
+  settings=self.network_settings()
+  if settings['browser_path']:
+   return _browser_read(url,**settings),'local_browser_fallback'
   try:return self.read_page(url),'local_direct'
   except CaptureError as direct_error:
    if direct_error.code!='network':raise
-   return _browser_read(url,proxy_url=self.network_settings()['proxy_url']),'local_browser_fallback'
+   settings=self.network_settings()
+   return _browser_read(url,**settings),'local_browser_fallback'
  def proxy_candidates(self):return discover_local_proxies()
  def run_once(self):
   with self.store.lock:job=claim(self.store).get('job')
@@ -303,7 +315,7 @@ class LocalCompetitorService:
    # lacks the current category's fields.
    if not rows:
     try:
-     rows=_browser_rendered_rows(job['url'],job['fields'],proxy_url=self.network_settings()['proxy_url']);collector='local_browser_rendered'
+     rows=_browser_rendered_rows(job['url'],job['fields'],**self.network_settings());collector='local_browser_rendered'
      attempts.append({'stage':collector,'matched':len(rows)})
     except CaptureError as exc:
      attempts.append({'stage':'local_browser_rendered','error':str(exc),'code':exc.code})

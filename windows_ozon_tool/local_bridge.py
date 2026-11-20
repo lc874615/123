@@ -912,8 +912,20 @@ def main(test_mode=False,on_ready=None):
  def competitor_network_settings():
   cached=lookup(root,('competitor_network_settings',))
   if cached is not None:return cached
-  dialog=remember(root,('competitor_network_settings',),tk.Toplevel(root));dialog.title('本地竞品采集网络');dialog.geometry('700x360');dialog.minsize(600,300)
+  dialog=remember(root,('competitor_network_settings',),tk.Toplevel(root));dialog.title('本地竞品采集网络');dialog.geometry('740x480');dialog.minsize(640,440)
   current=competitor_local.network_settings()
+  browser=tk.StringVar(value=current.get('browser_path',''))
+  ttk.Label(dialog,text='竞品采集浏览器（Chrome / Edge / Chromium，留空自动查找）').pack(padx=16,pady=(12,0),anchor='w')
+  browser_row=ttk.Frame(dialog);browser_row.pack(fill='x',padx=16,pady=4)
+  ttk.Entry(browser_row,textvariable=browser).pack(side='left',fill='x',expand=True)
+  def choose_browser():
+   path=filedialog.askopenfilename(parent=dialog,title='选择本机浏览器程序',filetypes=[('浏览器程序','*.exe'),('所有文件','*')])
+   if not path:return
+   try:
+    competitor_local.configure_browser(path);browser.set(path)
+   except ValueError as exc:show_task_error('浏览器未保存',str(exc),parent=dialog)
+  ttk.Button(browser_row,text='添加 / 选择浏览器',command=choose_browser).pack(side='right',padx=(8,0))
+  ttk.Label(dialog,text='使用所选程序的独立采集窗口。普通浏览器的扩展和登录会话不会随程序路径自动载入。',wraplength=690).pack(padx=16,anchor='w')
   ttk.Label(dialog,text='竞品参数默认由本地工具直连 Ozon 公开页读取，不使用浏览器插件或 ChatGPT 页面。\n直连重复跳转时会自动用本机 Edge/Chrome 的隔离后台窗口回退读取；只有两者都失败时，才填写单独的 Ozon 网络出口。').pack(padx=16,pady=(16,8),anchor='w')
   proxy=tk.StringVar(value=current['proxy_url']);url=tk.StringVar()
   ttk.Label(dialog,text='备用 Ozon 网络出口（可留空，例如 http://127.0.0.1:7890）').pack(padx=16,anchor='w')
@@ -923,9 +935,13 @@ def main(test_mode=False,on_ready=None):
   state=ttk.Label(dialog,text=competitor_local.status,wraplength=650);state.pack(padx=16,pady=6,anchor='w')
   buttons=ttk.Frame(dialog);buttons.pack(pady=8)
   def save():
+   try:competitor_local.configure_browser(browser.get())
+   except ValueError as exc:show_task_error('浏览器未保存',str(exc),parent=dialog);return
    try:competitor_local.configure_proxy(proxy.get());state.configure(text=competitor_local.status+'；设置已保存。')
    except ValueError as exc:show_task_error('网络出口未保存',str(exc),parent=dialog)
   def probe():
+   try:competitor_local.configure_browser(browser.get())
+   except ValueError as exc:show_task_error('浏览器未保存',str(exc),parent=dialog);return
    if not url.get().strip():show_task_error('缺少测试链接','请粘贴一个 https://www.ozon.ru/product/... 商品链接。',parent=dialog);return
    test_button.configure(state='disabled');state.configure(text='正在测试本地 Ozon 连接，请稍候…')
    def work():
