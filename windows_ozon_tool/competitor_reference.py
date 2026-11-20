@@ -139,7 +139,7 @@ def claim(store):
   if not c:continue
   previous=b.get('competitor_reference') or {}
   if previous.get('fingerprint')==c['fingerprint']:
-   if previous.get('state')=='ready':continue
+   if previous.get('state')=='ready' and previous.get('read_scope')!='summary':continue
    if previous.get('state')=='failed':
     if previous.get('attempts',0)>=3 or previous.get('error_code') in ('verification','redirect','network'):continue
     if previous.get('attempts') and previous.get('retry_at',0)>now:continue
@@ -155,7 +155,7 @@ def claim(store):
  cached=None
  for _,b in _bundles(store):
   s=b.get('competitor_reference') or {}
-  if s.get('fingerprint')==target['fingerprint'] and (s.get('state')=='ready' or (s.get('state')=='reading' and s.get('retry_at',0)>now)):cached=s;break
+  if s.get('fingerprint')==target['fingerprint'] and (s.get('state')=='ready' and s.get('read_scope')!='summary' or (s.get('state')=='reading' and s.get('retry_at',0)>now)):cached=s;break
  for path,b,c in candidates:
   if c['fingerprint']!=target['fingerprint']:continue
   b['competitor_reference']=dict(cached) if cached else {'fingerprint':c['fingerprint'],'url':c['url'],'state':'reading','token':token,'attempts':(int((b.get('competitor_reference') or {}).get('attempts',0)) if (b.get('competitor_reference') or {}).get('fingerprint')==c['fingerprint'] else 0)+1,'retry_at':now+180,'message':'正在读取竞品公开参数，按已选类目官方字段匹配'}

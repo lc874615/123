@@ -4,7 +4,12 @@
  globalThis.__ozonCompetitorPrepare=()=>{
   const visible=el=>!!el.getClientRects().length&&getComputedStyle(el).visibility!=='hidden';
   const section=[...document.querySelectorAll(selectors)].find(visible);
-  if(section){section.scrollIntoView({block:'center'});const button=[...section.querySelectorAll('button,a')].find(el=>visible(el)&&/^(развернуть|показать все|все характеристики|показать полностью)$/i.test(el.innerText.trim()));if(button)button.click();return;}
+  if(section){
+   section.scrollIntoView({block:'center'});
+   const buttons=[...section.querySelectorAll('button,a,[role="button"]')].filter(el=>visible(el)&&/^(развернуть|показать все|все характеристики|показать полностью)(\s+\d+)?$/i.test(el.innerText.trim()));
+   for(const button of buttons)button.click();
+   return;
+  }
   const direct=document.querySelector('[data-widget="webShortCharacteristics"] [title="Перейти к характеристикам"]');
   if(direct&&visible(direct)){direct.click();return;}
   const tab=[...document.querySelectorAll('button,a,[role="tab"],[data-widget="webShortCharacteristics"] [title], [data-widget="webShortCharacteristics"] div')].find(el=>visible(el)&&/^(характеристики|все характеристики|перейти к характеристикам)$/i.test(el.innerText.trim())&&(el.tagName!=='A'||(el.getAttribute('href')||'').startsWith('#')));

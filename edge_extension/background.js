@@ -406,8 +406,8 @@ async function competitorPoll(){
    lease.tabId=tab.id;await chrome.storage.local.set({competitorActive:lease});
   }
   if(lease.tabId==null||Date.now()-lease.createdAt>150000)throw Error('竞品读取被中断，可在预览中重新读取');
-  let result=null;
-  const deadline=Date.now()+45000;
+  let result=null,stableSignature='',stableCount=0;
+  const deadline=Date.now()+90000;
   while(Date.now()<deadline){
    const tab=await chrome.tabs.get(lease.tabId);
    if(tab.status==='complete'){
@@ -415,11 +415,17 @@ async function competitorPoll(){
     await chrome.scripting.executeScript({target:{tabId:lease.tabId},files:['competitor_page.js']});
     const [{result:page}]=await chrome.scripting.executeScript({target:{tabId:lease.tabId},args:[lease.job.fields||[]],func:fields=>{globalThis.__ozonCompetitorPrepare?.();return globalThis.__ozonCompetitorRead(fields);}});
     if(page?.error_code==='verification'){errorCode='verification';throw Error('竞品页要求人工验证；已保留页面，完成验证后点击重新读取');}
-    if(page?.rows?.length){result=page;if(page.diagnostics?.full_sections!==0)break;}
+    if(page?.rows?.length&&page.diagnostics?.full_sections>0){
+     result=page;
+     const signature=JSON.stringify(page.rows);
+     stableCount=signature===stableSignature?stableCount+1:0;
+     stableSignature=signature;
+     if(stableCount>=3)break;
+    }
    }
    await new Promise(resolve=>setTimeout(resolve,1000));
   }
-  if(!result)throw Error('竞品页面未返回公开参数，可能需要验证或尚未加载；请在预览中打开原链接核对');
+  if(!result||stableCount<3)throw Error('竞品完整参数区尚未展开或加载稳定，暂不将简要参数当作完整结果；请检查保留的竞品页面');
   await api('/competitor-result',{token:lease.job.token,...result});completed=true;
  }catch(e){
   if(lease?.job)await api('/competitor-result',{token:lease.job.token,error:String(e.message||e).slice(0,200),error_code:errorCode}).catch(()=>{});
