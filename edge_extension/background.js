@@ -263,7 +263,7 @@ async function inspectCopy(){
   if(current?.id!==task.id)return;
   if(extracted?.copy&&!extracted.generating){
    const signature=JSON.stringify(extracted.copy);
-   if(task.signature!==signature){current.signature=signature;await chrome.storage.local.set({activeTask:{...current,tabId:runTab}});return;}
+   if(task.signature!==signature){current.signature=signature;await persist();return;}
    await api('/copy-result',{sku:task.sku,copy:extracted.copy});
    busy=false;current=null;await persist();await status('整组文案已自动采集并同步保存到全部变体');return;
   }
