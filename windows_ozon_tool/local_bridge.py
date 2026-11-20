@@ -1085,7 +1085,9 @@ def main(test_mode=False,on_ready=None):
   details.insert('1.0',note_full[0]);details.configure(state='disabled')
  def close_task_note():
   ids=view.selection();note_closed[0]=ids[0] if ids else ''
+  saved=note_full[0]
   set_task_note('详情已关闭。点击“查看完整原因”可重新查看。')
+  note_full[0]=saved
  ttk.Button(note_controls,text='查看完整原因',command=open_task_note).pack(fill='x')
  ttk.Button(note_controls,text='关闭提示',command=close_task_note).pack(fill='x')
  def show_task_note(event=None):
