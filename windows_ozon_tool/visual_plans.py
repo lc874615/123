@@ -131,7 +131,7 @@ def context(store,task):
 
 def render(plan,facts='',group_facts='',scope='full'):
  from selling_plan import EXTRACTION,VALUE_SELECTION,STORYBOARD,VISUAL_PROOF,render_profile,selection_for_scope,storyboard_for_scope
- from original_image_policy import SOURCE_POLICY,EVIDENCE_PASS,PRODUCT_LOCK,ART_DIRECTION,DIMENSIONS,DELIVERY,FINAL_CHECK,GATES,COMPOSITIONS,DIGITAL_DIRECTION
+ from original_image_policy import SOURCE_POLICY,EVIDENCE_PASS,PRODUCT_LOCK,ART_DIRECTION,DIMENSIONS,DELIVERY,FINAL_CHECK,GATES,COMPOSITIONS,DIGITAL_DIRECTION,PAGE_EXECUTION
  if scope not in ('full','main','shared'):raise ValueError('未知作图范围')
  # Old saved plans are never trusted as product evidence; rebuild presentation
  # from their category/override rather than carrying parameter-based fallbacks.
@@ -145,10 +145,11 @@ def render(plan,facts='',group_facts='',scope='full'):
   fallback=page.get('fallback_if_unproven')
   alternative=('；证据不足改为'+fallback[1]+'或尚未覆盖的更强图证主题，文件编号与名称保持本清单不变') if fallback else ''
   composition=COMPOSITIONS.get(page['requested_topic'],'用当前原始视角组织大幅实物摄影，与其他编号区分。')
-  rows.append(name+'：建议'+page['title']+'。'+composition+rule+alternative+'。同一张只讲一个核心主题，详情按证据分配规则调整。')
+  role='主图任务：以完整商品识别为中心。' if page['requested_topic']=='main' else '详情任务：先选本页专属视觉证据与景别，产品大合集主图构图不作为默认布局。'
+  rows.append(name+'：建议'+page['title']+'。'+role+composition+rule+alternative+'。同一张只讲一个核心主题，详情按证据分配规则调整。')
  limits={'full':'只能交付8张独立成品，01为当前变体主图，02—08为全组共用详情。','main':'只能生成和交付1张本变体主图，文件名固定01_main.jpg；不制作其他变体主图与详情。','shared':'只重做7张共用详情；本次01—07分别对应商品详情位置02—08，不生成或修改任何主图。'}
  category=plan.get('category') or {};label=category.get('zh_path') or category.get('name') or '未明确识别的类目'
- return '\n'.join([SOURCE_POLICY,limits[scope],DELIVERY,
+ return '\n'.join([SOURCE_POLICY,limits[scope],DELIVERY,PAGE_EXECUTION,
   '【已选类目，仅设计路由】'+str(label)+'；'+plan['style_name']+' / '+plan['subtype']+'。类目与原图商品明显冲突时说明，不照类目改造实物。',
   EXTRACTION,selection_for_scope(scope),render_profile(plan['style'],scope),storyboard_for_scope(scope),PRODUCT_LOCK,'【本类摄影方向】'+STYLES[plan['style']][1]+(DIGITAL_DIRECTION if plan['style']=='digital' else ''),ART_DIRECTION,VISUAL_PROOF,
   DIMENSIONS,
