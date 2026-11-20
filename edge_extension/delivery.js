@@ -4,7 +4,8 @@
   const {task,expected=8,report=async()=>{},stopped=()=>false,quietMs=5000}=options;
   if(!task)throw Error('缺少当前采集任务');
   if(stopped())throw Error('已暂停，已有图片保留');
-  const scoped={...options,allowPartial:!options.manual};
+  const skuRecovery=options.marker?.startsWith('OZON_OWN_REFERENCE:');
+  const scoped={...options,allowPartial:!options.manual,continuations:!skuRecovery&&options.continuations};
   async function waiting(message){
    if(task._deliveryNotice!==message||Date.now()-(task._deliveryNoticeAt||0)>5000){task._deliveryNotice=message;task._deliveryNoticeAt=Date.now();await report(message);}
    return null;
@@ -24,11 +25,12 @@
    task._deliveryStable=null;
    return waiting('已发现'+foundImages.count+'张候选图；回复仍在生成，等待最终01—'+String(expected).padStart(2,'0')+'交付，不截取前'+expected+'张');
   }
-  const native=task.delivery_policy==='generated_originals'||task.delivery_policy==='independent_images'&&foundImages.count===expected;
+  const native=!skuRecovery&&(task.delivery_policy==='generated_originals'||task.delivery_policy==='independent_images'&&foundImages.count===expected);
   if(native&&foundImages.count!==expected){task._deliveryStable=null;return waiting('独立生成原图 '+foundImages.count+'/'+expected+'；等待逐张完成，不采集整套预览图或后续重制下载文件');}
   if(!native)await globalThis.OzonFiles.expandFiles(doc,scoped);
   const files=native?null:globalThis.OzonFiles.candidates(doc,{...scoped,inventory:true});
   globalThis.__ozonDeliveryInfo.fileCount=files?.count||0;
+  if(skuRecovery&&!files?.complete)return waiting('已定位本货号的原始请求，等待该回复的完整编号下载文件 '+(files?.count||0)+'/'+expected);
   if(files?.present&&!files.complete){task._deliveryStable=null;return waiting(expected===1?'本任务只需1张主图，但识别到'+(files.candidateTotal||files.count)+'个文件候选，正在核对对应回复，不猜取其他变体图片':'最终文件已出现，已识别编号'+files.count+'/'+expected+'；等待完整且唯一的文件列表，不改用前面的过程图');}
   if(!files?.present&&foundImages.count===0){
    const controls=region.root?.querySelectorAll?.('button,[role="button"],a[href]')||[];

@@ -83,6 +83,15 @@
  }
  function requestAnchor(doc,marker){
   if(!marker)return null;
+  if(marker.startsWith('OZON_OWN_REFERENCE:')){
+   const sku=marker.slice('OZON_OWN_REFERENCE:'.length);
+   const matches=userNodes(doc).filter(node=>[node.innerText,node.textContent].some(value=>{
+    const text=value||'';
+    const first=text.match(/(?:^|\n)1[：:]\s*[^\n]*?[；;]\s*货号\s+([^；;\n]+)[；;]\s*用途/m);
+    return first?.[1].trim()===sku&&text.includes('【任务清单')&&text.includes('01_main.jpg');
+   }));
+   return matches.length===1?matches[0]:null;
+  }
   const matches=n=>[n.innerText,n.textContent].some(text=>String(text||'').replace(/[\s\u200B-\u200D\uFEFF]/g,'').includes(marker));
   // A nested user-message element may contain only the attachment controls.
   // Filter by marker before pruning nested wrappers.
