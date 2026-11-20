@@ -16,7 +16,7 @@ class PromptStyleTests(unittest.TestCase):
   plan=build(cat('Наушники'));full=generation_prompt(visual_plan=plan);main=generation_prompt(expected=1,visual_plan=plan);shared=shared_prompt(visual_plan=plan)
   self.assertIn('只能交付8张',full);self.assertIn('01_main.jpg',full);self.assertIn('08_contents.jpg',full)
   self.assertIn('只能生成和交付1张',main);self.assertIn('01_main.jpg',main);self.assertNotIn('02_wear.jpg',main)
-  self.assertIn('01—07',shared);self.assertIn('01_wear.jpg',shared);self.assertIn('07_contents.jpg',shared);self.assertNotIn('01_main.jpg',shared);self.assertNotIn(DIMENSIONS,shared)
+  self.assertIn('01—07',shared);self.assertIn('01_wear.jpg',shared);self.assertIn('07_contents.jpg',shared);self.assertNotIn('01_main.jpg',shared);self.assertIn(DIMENSIONS,shared)
  def test_main_preserves_original_dimensions_and_does_not_import_packaging(self):
   for expected in (1,8):
    text=generation_prompt('包装长999',expected=expected);self.assertIn(DIMENSIONS,text);self.assertNotIn('包装长999',text);self.assertIn('全部不重复的数字',text);self.assertIn('不混包装尺寸',text);self.assertIn('有冲突的数字',text)

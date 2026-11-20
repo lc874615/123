@@ -151,7 +151,7 @@ def render(plan,facts='',group_facts='',scope='full'):
  return '\n'.join([SOURCE_POLICY,limits[scope],DELIVERY,
   '【已选类目，仅设计路由】'+str(label)+'；'+plan['style_name']+' / '+plan['subtype']+'。类目与原图商品明显冲突时说明，不照类目改造实物。',
   EXTRACTION,selection_for_scope(scope),render_profile(plan['style'],scope),storyboard_for_scope(scope),PRODUCT_LOCK,'【本类摄影方向】'+STYLES[plan['style']][1]+(DIGITAL_DIRECTION if plan['style']=='digital' else ''),ART_DIRECTION,VISUAL_PROOF,
-  DIMENSIONS if scope!='shared' else '共用详情以全部有对应原图的变体为范围，差异须标选项，不把其他变体外观、结构或参数混成一件商品。',
+  DIMENSIONS,
   '【范围隔离】当前主图只用当前变体的原始外观；共用原始详情只补能核实适用的信息。重做不以旧AI成图为外观或参数依据。只保留本次范围内的编号，重做与首次执行同一证据和质量规则。',
   '【任务清单，不是一张图的分区】',*rows,FINAL_CHECK])
 
