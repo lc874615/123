@@ -1063,10 +1063,38 @@ def main(test_mode=False,on_ready=None):
  view.bind('<Configure>',fit_task_columns)
 
  task_actions=ttk.Frame(tasks_page);task_actions.pack(side='bottom',before=task_table,fill='x',pady=10);task_more=tk.Menu(root,tearoff=False);more_button=ttk.Menubutton(task_actions,text='更多操作',menu=task_more);more_button.pack(side='right')
- task_note=ttk.Label(tasks_page,text='选中具体变体后，在这里查看完整的当前阶段与原因。',style='Status.TLabel',wraplength=1000)
- task_note.pack(side='bottom',before=task_table,fill='x',pady=4)
+ note_panel=ttk.Frame(tasks_page)
+ note_panel.pack(side='bottom',before=task_table,fill='x',pady=4)
+ note_full=['']
+ note_closed=[None]
+ note_text=tk.Text(note_panel,height=3,wrap='word',state='disabled')
+ note_text.pack(side='left',fill='x',expand=True)
+ note_controls=ttk.Frame(note_panel);note_controls.pack(side='right',fill='y')
+ def set_task_note(value):
+  note_full[0]=str(value)
+  note_text.configure(state='normal')
+  note_text.delete('1.0','end')
+  note_text.insert('1.0',note_full[0])
+  note_text.configure(state='disabled')
+ def open_task_note():
+  from tkinter.scrolledtext import ScrolledText
+  dialog=tk.Toplevel(root);dialog.title('任务完整原因');dialog.geometry('850x540')
+  bar=ttk.Frame(dialog);bar.pack(side='bottom',fill='x')
+  ttk.Button(bar,text='关闭',command=dialog.destroy).pack(side='right',padx=12,pady=8)
+  details=ScrolledText(dialog,wrap='word');details.pack(fill='both',expand=True,padx=12,pady=8)
+  details.insert('1.0',note_full[0]);details.configure(state='disabled')
+ def close_task_note():
+  ids=view.selection();note_closed[0]=ids[0] if ids else ''
+  set_task_note('详情已关闭。点击“查看完整原因”可重新查看。')
+ ttk.Button(note_controls,text='查看完整原因',command=open_task_note).pack(fill='x')
+ ttk.Button(note_controls,text='关闭提示',command=close_task_note).pack(fill='x')
  def show_task_note(event=None):
-  ids=view.selection();task_note.configure(text=row_notes.get(ids[0],'请展开商品组，选择具体变体查看状态。') if ids else '选中具体变体后，在这里查看完整的当前阶段与原因。')
+  ids=view.selection();key=ids[0] if ids else ''
+  value=row_notes.get(key,'请展开商品组，选择具体变体查看状态。')
+  if note_closed[0]==key:
+   note_full[0]=value
+   return
+  set_task_note(value)
  view.bind('<<TreeviewSelect>>',show_task_note)
  from task_alerts import AlertPopup,ProgressWatch,collect as collect_alerts,issue as make_alert
  alert_popup=AlertPopup(root,DATA/'task_alert_state.json',lambda:notebook.select(pages['tasks']));alert_watch=ProgressWatch()
@@ -1348,7 +1376,7 @@ def main(test_mode=False,on_ready=None):
     else:targets=[task['sku']]
    from competitor_reference import restart
    result=restart(store,targets)
-   task_note.configure(text='已重启竞品采集：'+('、'.join(result['restarted']) or '无可重启变体')+('；链接不可用或尚无草稿：'+'、'.join(result['skipped']) if result['skipped'] else '')+'。已填写参数保留。')
+   set_task_note('已重启竞品采集：'+('、'.join(result['restarted']) or '无可重启变体')+('；链接不可用或尚无草稿：'+'、'.join(result['skipped']) if result['skipped'] else '')+'。已填写参数保留。')
    schedule_refresh(100)
   except Exception as exc:messagebox.showerror('竞品采集未重启',str(exc),parent=root)
  ttk.Button(task_actions,text='重启竞品采集',command=restart_competitor_selected).pack(side='left',padx=4)
