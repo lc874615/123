@@ -243,15 +243,30 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   panel=ttk.Frame(targets);expanded=[False]
   def toggle_targets():
    expanded[0]=not expanded[0]
-   if expanded[0]:panel.pack(fill='x',pady=(4,0))
-   else:panel.pack_forget()
+   if expanded[0]:
+    panel.pack(fill='x',pady=(4,0));panel.after_idle(layout_targets)
+   else:
+    panel.pack_forget();window.minsize(760,420)
    expand_button.configure(text='收起 ▴' if expanded[0] else '选择变体 ▾')
   expand_button=ttk.Button(controls,text='选择变体 ▾',command=toggle_targets);expand_button.pack(side='right')
   ttk.Button(controls,text='清空',width=5,command=lambda:[v.set(False) for v in checks.values()]).pack(side='right',padx=3)
   ttk.Button(controls,text='全选',width=5,command=lambda:[v.set(True) for v in checks.values()]).pack(side='right',padx=3)
-  canvas=tk.Canvas(panel,height=64,highlightthickness=0);scroll=ttk.Scrollbar(panel,orient='vertical',command=canvas.yview);scroll.pack(side='right',fill='y');canvas.pack(fill='x',expand=True);canvas.configure(yscrollcommand=scroll.set)
-  options=ttk.Frame(canvas);canvas.create_window((0,0),window=options,anchor='nw');options.bind('<Configure>',lambda e:canvas.configure(scrollregion=canvas.bbox('all')))
-  for pos,n in enumerate(original):ttk.Checkbutton(options,text=paths[n].parent.name,variable=checks[n]).grid(row=pos//4,column=pos%4,sticky='w',padx=6)
+  variant_buttons=[ttk.Checkbutton(panel,text=paths[n].parent.name,variable=checks[n]) for n in original]
+  target_columns=[0];target_layout=[None]
+  def layout_targets(event=None):
+   if not expanded[0] or not variant_buttons:return
+   width=event.width if event else max(1,targets.winfo_width())
+   cell_width=max(button.winfo_reqwidth() for button in variant_buttons)+12
+   columns=max(1,min(len(variant_buttons),width//cell_width));stamp=(width,columns)
+   if stamp==target_layout[0]:return
+   target_layout[0]=stamp
+   for col in range(max(target_columns[0],columns)):panel.columnconfigure(col,weight=1 if col<columns else 0,uniform='variant' if col<columns else '')
+   target_columns[0]=columns
+   for pos,button in enumerate(variant_buttons):button.grid(row=pos//columns,column=pos%columns,sticky='ew',padx=3,pady=1)
+   height=420+((len(variant_buttons)+columns-1)//columns)*(max(button.winfo_reqheight() for button in variant_buttons)+2)+4
+   window.minsize(760,height)
+   if window.winfo_height()<height:window.geometry(str(max(760,window.winfo_width()))+'x'+str(height))
+  panel.bind('<Configure>',layout_targets)
   text=ScrolledText(window,height=12);text.pack(fill='both',expand=True,padx=8);text.insert('1.0',initial)
   ttk.Label(window,text='一行表示全部目标填相同值；多行按目标顺序逐项填写。集合属性内多个值用中文分号；分隔。').pack(pady=4)
   def apply():
