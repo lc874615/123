@@ -65,9 +65,10 @@ class GroupService:
   if isinstance(expected,dict) and expected.get('edit_scope'):
    if edit_guard(bundles,expected['indices'],expected['kind'],expected['key'])!=expected:raise EditConflict('正在编辑的参数或类目已更新；本次输入尚未保存，请核对最新值后重新打开编辑。')
   elif expected is not None and revision(bundles)!=expected:raise ValueError('预览内容已更新，请先核对最新表格再操作')
- def _invalidate(self,bundle):
-  bundle.pop('pricing_fingerprint',None);bundle.pop('pricing_confirmed_fingerprint',None)
-  if not bundle.get('manual_price'):bundle['price_cny']=None
+ def _invalidate(self,bundle,reprice=False):
+  if reprice:
+   bundle.pop('pricing_fingerprint',None);bundle.pop('pricing_confirmed_fingerprint',None)
+   if not bundle.get('manual_price'):bundle['price_cny']=None
   state=bundle.get('attribute_draft')
   if state:state['confirmed']=False
  def _write(self,bundles):
@@ -90,7 +91,7 @@ class GroupService:
    from asset_reconcile import reconcile
    with self.lock:return reconcile(self.store)
   return 0
- def after_edit(self,indices,refresh=True,force=False):
+ def after_edit(self,indices,refresh=True,force=False,reprice=False):
   errors=[]
   if refresh:
    forced=set()
@@ -99,9 +100,10 @@ class GroupService:
      self.status=self.paths[n].parent.name+'：同步官方属性与已填内容'
      key=category_key(read(self.paths[n]));self.attributes.refresh(self.paths[n],force=force and key not in forced);forced.add(key)
     except ValueError as exc:errors.append(self.paths[n].parent.name+'：'+str(exc))
-  self.status='正在重新计算售价'
-  if callable(getattr(type(self.pricing),'calculate_paths',None)):self.pricing.calculate_paths([self.paths[n] for n in indices])
-  else:self.pricing.calculate_all()
+  if reprice:
+   self.status='正在重新计算售价'
+   if callable(getattr(type(self.pricing),'calculate_paths',None)):self.pricing.calculate_paths([self.paths[n] for n in indices])
+   else:self.pricing.calculate_all()
   self.attributes.wake.set();self.status='部分属性未同步：'+'；'.join(errors) if errors else '参数和自动售价已同步'
  def refresh_preview(self):
   with self.mutex:
@@ -121,11 +123,11 @@ class GroupService:
       from color_selection import is_color_field
       if (binding(field) and binding(field)[0]==key) or (key=='color' and is_color_field(field)):
        state=b['attribute_draft'];state.get('values',{}).pop(field_key(field),None);state['manual_keys']=[k for k in state.get('manual_keys',[]) if k!=field_key(field)]
-     if key!='competitor_url':self._invalidate(b)
+     if key!='competitor_url':self._invalidate(b,reprice=key in ('cost','margin'))
     from asset_state import mark_changes
     mark_changes(before,bundles);self._write(bundles)
    if key=='competitor_url':self.status='竞品链接已保存，等待插件读取官方字段对应的公开参数';return
-   self.after_edit(indices,refresh=key not in ('cost','margin','stock'))
+   self.after_edit(indices,refresh=key not in ('cost','margin','stock'),reprice=key in ('cost','margin'))
  def set_attributes(self,indices,key,values,expected=None):
   if len(indices)!=len(values) or len(set(indices))!=len(indices):raise ValueError('批量目标与输入数量不一致')
   # Common text has one owner regardless of the editor used.
@@ -263,7 +265,7 @@ class GroupService:
     for n in indices:
      bundles[n]['category']['confirmed']=True;bundles[n]['category_match_status']='预览页已确认当前类目'
     self._write(bundles)
-   self.after_edit(indices)
+   self.after_edit(indices,reprice=True)
  def change_category(self,indices,category,expected=None):
   if not all(type(category.get(k)) is int and category[k]>0 for k in ('description_category_id','type_id')):raise ValueError('请选择官方类目与类型')
   with self.mutex:
@@ -272,9 +274,9 @@ class GroupService:
     for n in indices:
      b=bundles[n];old=b.get('attribute_draft') or {}
      if old:b['attribute_history']=old
-     b.pop('attribute_draft',None);b['category']={**category,'confirmed':True,'attributes_revalidation_required':True};b['category_match_status']='预览页已选择类目';self._invalidate(b)
+     b.pop('attribute_draft',None);b['category']={**category,'confirmed':True,'attributes_revalidation_required':True};b['category_match_status']='预览页已选择类目';self._invalidate(b,reprice=True)
     self._write(bundles)
-   self.after_edit(indices)
+   self.after_edit(indices,reprice=True)
  def set_settings(self,indices,key,value,expected=None):return self.set_settings_many(indices,key,[value]*len(indices),expected)
  def set_settings_many(self,indices,key,values,expected=None):
   if not indices or len(indices)!=len(values):raise ValueError('请选择变体并填写对应的值')

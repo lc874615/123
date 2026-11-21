@@ -220,21 +220,33 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   if filter_timer:dialog.after_cancel(filter_timer)
   filter_timer=dialog.after(180,refilter)
  search.trace_add('write',schedule_filter);missing.trace_add('write',refilter)
- def text_editor(label,indices,initial,save,multiline=False):
+ def text_editor(label,indices,initial,save,multiline=False,guard=None):
   cached=lookup(dialog,('parameter_text',str(paths[0].parent.resolve()),label,tuple(indices)))
   if cached is not None:return cached
   window=remember(dialog,('parameter_text',str(paths[0].parent.resolve()),label,tuple(indices)),tk.Toplevel(dialog));window.title(label);window.geometry('760x420')
   from ui_layout import dialog_footer
   footer=dialog_footer(window,760,420)
-  ttk.Label(window,text='目标：'+'、'.join(paths[n].parent.name for n in indices),wraplength=720).pack(pady=7)
+  original=list(indices);guard_rows=dict(zip(guard['indices'],guard['rows'])) if isinstance(guard,dict) and guard.get('edit_scope') else {};checks={n:tk.BooleanVar(value=True) for n in original}
+  targets=ttk.LabelFrame(window,text='勾选本次要修改的变体（未勾选的不修改）');targets.pack(fill='x',padx=8,pady=5)
+  controls=ttk.Frame(targets);controls.pack(fill='x')
+  ttk.Button(controls,text='全选',command=lambda:[v.set(True) for v in checks.values()]).pack(side='left')
+  ttk.Button(controls,text='清空勾选',command=lambda:[v.set(False) for v in checks.values()]).pack(side='left')
+  canvas=tk.Canvas(targets,height=92,highlightthickness=0);scroll=ttk.Scrollbar(targets,orient='vertical',command=canvas.yview);scroll.pack(side='right',fill='y');canvas.pack(fill='x',expand=True);canvas.configure(yscrollcommand=scroll.set)
+  options=ttk.Frame(canvas);canvas.create_window((0,0),window=options,anchor='nw');options.bind('<Configure>',lambda e:canvas.configure(scrollregion=canvas.bbox('all')))
+  for pos,n in enumerate(original):ttk.Checkbutton(options,text=paths[n].parent.name,variable=checks[n]).grid(row=pos//4,column=pos%4,sticky='w',padx=6)
   text=ScrolledText(window,height=12);text.pack(fill='both',expand=True,padx=8);text.insert('1.0',initial)
   ttk.Label(window,text='一行表示全部目标填相同值；多行按目标顺序逐项填写。集合属性内多个值用中文分号；分隔。').pack(pady=4)
   def apply():
+   targets=[n for n in original if checks[n].get()]
+   if not targets:messagebox.showinfo('未修改','请至少勾选一个变体',parent=window);return
    content=text.get('1.0','end-1c')
-   try:values=column_updates(content,len(indices)) if not multiline else [content]
+   try:values=column_updates(content,len(targets)) if not multiline else [content]
    except ValueError as exc:messagebox.showerror('未修改',str(exc),parent=window);return
+   indices[:]=targets
+   if isinstance(guard,dict) and guard.get('edit_scope'):
+    guard['indices']=list(targets);guard['rows']=[guard_rows[n] for n in targets]
    run(lambda:save(values),lambda result:window.destroy() if window.winfo_exists() else None)
-  ttk.Button(footer,text='保存并同步属性与售价',command=apply).pack(pady=7)
+  ttk.Button(footer,text='保存所选变体参数',command=apply).pack(pady=7)
  def edit_row(indices,iid):
   if iid in rows and indices:
    current_row,current_field=rows[iid];kind_now,key_now=current_row
@@ -267,7 +279,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    if key=='category':choose_category(indices);return
    if key=='warehouse':choose_warehouse(indices);return
    if key=='price':
-    text_editor('修改售价（人民币元；手动修改后优先采用）',indices,str(bundles[indices[0]].get('price_cny') or ''),lambda values:coordinator.set_prices(indices,values,expected));return
+    text_editor('修改售价（人民币元；手动修改后优先采用）',indices,str(bundles[indices[0]].get('price_cny') or ''),lambda values:coordinator.set_prices(indices,values,expected),guard=expected);return
    if key=='currency':text_editor('输入CNY确认店铺结算币种',indices,'CNY',lambda values:settings_batch(indices,'currency',values,expected));return
    if key=='vat':detail.configure(text='实际增值税率按你的固定规则自动填写0。');return
    return
@@ -283,7 +295,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    from color_selection import choose
    def save_color(value):run(lambda:coordinator.set_parameters(indices,'color',[value]*len(indices),expected),lambda result:color_window.destroy() if color_window.winfo_exists() else None)
    color_window=choose(dialog,str(initial),save_color,title='选择颜色 · '+str(len(indices))+'个变体（可多选）',close_on_save=False,window_key=('group',tuple(str(paths[n].resolve()) for n in indices)),service=service,bundles=[bundles[n] for n in indices]);return
-  if kind=='p':text_editor('修改 '+iid,indices,str(initial),lambda values:coordinator.set_parameters(indices,key,values,expected));return
+  if kind=='p':text_editor('修改 '+iid,indices,str(initial),lambda values:coordinator.set_parameters(indices,key,values,expected),guard=expected);return
   from color_selection import is_color_field
   if kind=='a' and field.get('dictionary_id') and is_color_field(field,False):
    from color_selection import choose
@@ -292,7 +304,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   if field.get('dictionary_id'):dictionary_editor(indices,key,field,expected);return
   def save(values):
    resolved=[coordinator.resolve_text(n,key,v) for n,v in zip(indices,values)];coordinator.set_attributes(indices,key,resolved,expected)
-  text_editor('修改官方属性：'+field.get('name',''),indices,str(initial) if len(indices)==1 else '',save)
+  text_editor('修改官方属性：'+field.get('name',''),indices,str(initial) if len(indices)==1 else '',save,guard=expected)
  def settings_batch(indices,key,values,expected):
   # Validate all selected tax values before any write; identical values can be applied together.
   if key=='vat' and any(v!='0' for v in values):raise ValueError('实际增值税率固定为0')
@@ -495,7 +507,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    try:values=model.values()
    except ValueError as exc:messagebox.showerror('未保存',str(exc),parent=window);return
    run(lambda:coordinator.set_attributes(indices,key,values,expected),lambda result:window.destroy() if window.winfo_exists() else None)
-  save_button=ttk.Button(footer,text='保存所选官方选项并重算售价',command=save);save_button.pack(pady=7);render();fetch()
+  save_button=ttk.Button(footer,text='保存所选官方选项',command=save);save_button.pack(pady=7);render();fetch()
  def choose_category(indices):
   # Show the known category immediately. A click no longer fetches both full trees.
   cached=lookup(dialog,('category_picker',tuple(str(paths[n].resolve()) for n in indices)))

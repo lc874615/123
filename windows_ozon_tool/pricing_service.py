@@ -188,7 +188,7 @@ class PricingService:
     from commission_sync import MAX_AGE
     import time
     live=configs.get('shop_commissions') if configs else None
-    fingerprint_inputs={'commission_observation_fresh':[(c['description_category_id'],c['type_id'],c['band'],0<=time.time()-c.get('fetched_at',live.get('fetched_at',0))<=MAX_AGE) for c in (live or {}).get('cells',[])],**inputs,'selected_manual_price':str(bundle.get('price_cny')) if bundle.get('manual_price') else None,'category':{k:v for k,v in (bundle.get('category') or {}).items() if k!='attributes_revalidation_required'}}
+    fingerprint_inputs={'commission_observation_fresh':[(c['description_category_id'],c['type_id'],c['band'],0<=time.time()-c.get('fetched_at',live.get('fetched_at',0))<=MAX_AGE) for c in (live or {}).get('cells',[])],**inputs,'variant_parameters':{k:(bundle.get('variant_parameters') or {}).get(k) for k in ('cost','margin')},'selected_manual_price':str(bundle.get('price_cny')) if bundle.get('manual_price') else None,'category':{k:v for k,v in (bundle.get('category') or {}).items() if k!='attributes_revalidation_required'}}
     fingerprint=hashlib.sha256(json.dumps([fingerprint_inputs,configs,mapping,source_error],sort_keys=True,default=str).encode()).hexdigest()
     if bundle.get('pricing_fingerprint')==fingerprint:
      with self.lock:

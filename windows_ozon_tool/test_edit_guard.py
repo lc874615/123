@@ -3,6 +3,23 @@ from group_service import edit_guard,EditConflict
 from pricing_service import read,write
 import test_group_publication as fixtures
 class EditGuardTests(unittest.TestCase):
+ def test_nonpricing_edit_preserves_price_and_unselected_parameters(self):
+  from unittest.mock import patch
+  with tempfile.TemporaryDirectory() as tmp:
+   group,api,pub=fixtures.GroupTests().setup_group(tmp,True);before=group.load()
+   with patch.object(group.pricing,'calculate_paths') as calculate:
+    group.set_parameters([0],'size',['新规格'])
+   calculate.assert_not_called();after=group.load()
+   self.assertEqual(after[0]['price_cny'],before[0]['price_cny'])
+   self.assertEqual(after[0].get('pricing_fingerprint'),before[0].get('pricing_fingerprint'))
+   for a,b in zip(after[1:],before[1:]):self.assertEqual(a['variant_parameters'],b['variant_parameters'])
+ def test_cost_and_margin_request_only_selected_repricing(self):
+  from unittest.mock import patch
+  with tempfile.TemporaryDirectory() as tmp:
+   group,api,pub=fixtures.GroupTests().setup_group(tmp,True)
+   for key,value in [('cost','100'),('margin','30')]:
+    with patch.object(group.pricing,'calculate_paths') as calculate:group.set_parameters([0],key,[value])
+    calculate.assert_called_once_with([group.paths[0]])
  def test_background_price_media_and_other_parameter_updates_do_not_block_save(self):
   with tempfile.TemporaryDirectory() as tmp:
    group,api,pub=fixtures.GroupTests().setup_group(tmp,True);before=group.load();guard=edit_guard(before,[0],'p','color')
