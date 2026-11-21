@@ -162,13 +162,13 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   reference_cache[0]=list(reference_cells())
   headings();badges.schedule()
  grid_stamp=[None]
- def refresh():
+ def refresh(snapshot=None):
   nonlocal bundles,token,rendered,last_job,displayed_copy
   if not dialog.winfo_exists():return
   try:
-   current=coordinator.try_load()
+   current=snapshot[0] if snapshot is not None else coordinator.try_load()
    if current is None:status.configure(text='后台正在保存/校验素材，界面稍后自动刷新');return
-   current_token=revision(current)
+   current_token=snapshot[1] if snapshot is not None else revision(current)
    if current_token!=rendered:
     media_changed=[[r.get('sha256') for r in b.get('images') or []] for b in bundles]!=[[r.get('sha256') for r in b.get('images') or []] for b in current]
     bundles=current;token=current_token;rendered=current_token
@@ -286,7 +286,9 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   initial=value_for(bundles[indices[0]],row,indices[0])
   if kind=='a':
    from assisted_fields import inline_references
-   reference=inline_references(bundles[indices[0]]).get(key)
+   cached=value_cache.setdefault(id(bundles[indices[0]]),{})
+   if 'references' not in cached:cached['references']=inline_references(bundles[indices[0]])
+   reference=cached['references'].get(key)
    if reference:initial=reference['suggested']
   if str(initial).startswith('待匹配原值：'):initial=initial.split('：',1)[1]
   if kind=='p' and key=='stock' and publication.initial_stock is not None:
@@ -319,7 +321,9 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    if row[0]=='a':
     from assisted_fields import inline_references
     n=focus[1] if isinstance(focus[1],int) else 0
-    reference=((bundles[n].get('attribute_draft') or {}).get('auto_references') or {}).get(row[1]) or inline_references(bundles[n]).get(row[1])
+    cached=value_cache.setdefault(id(bundles[n]),{})
+    if 'references' not in cached:cached['references']=inline_references(bundles[n])
+    reference=((bundles[n].get('attribute_draft') or {}).get('auto_references') or {}).get(row[1]) or cached['references'].get(row[1])
     note=((bundles[n].get('attribute_draft') or {}).get('prefill_notes') or {}).get(row[1])
     if note:detail.configure(text=note+'；请手动选择符合实际的官方选项')
     if reference:detail.configure(text=('竞品待核对：' if reference.get('kind')=='competitor' else '参考依据：')+reference['confidence']+'；'+reference['evidence']+'；'+reference['note'])
@@ -436,13 +440,13 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   focus[:]=[iid,index];tree.selection_set(iid);track()
  from cell_references import ReferenceBadges
  reference_cache=[[]]
- badges=ReferenceBadges(tree,lambda:reference_cache[0],select_cell,lambda iid,n:(select_cell(iid,n),edit_row([n],iid)))
+ badges=ReferenceBadges(tree,lambda:reference_cache[0],select_cell,lambda iid,n:(select_cell(iid,n),edit_row([n],iid)),native=True)
  old_x=tree.xview;old_y=tree.yview
- def scroll_x(*args):old_x(*args);badges.schedule()
- def scroll_y(*args):old_y(*args);badges.schedule()
+ def scroll_x(*args):old_x(*args)
+ def scroll_y(*args):old_y(*args)
  sx.configure(command=scroll_x);sy.configure(command=scroll_y)
- def report_x(first,last):sx.set(first,last);badges.schedule()
- def report_y(first,last):sy.set(first,last);badges.schedule()
+ def report_x(first,last):sx.set(first,last)
+ def report_y(first,last):sy.set(first,last)
  tree.configure(xscrollcommand=report_x,yscrollcommand=report_y)
  def dictionary_editor(indices,key,field,expected):
   cached=lookup(dialog,('official_choices',tuple(str(paths[n].resolve()) for n in indices),key))
@@ -599,22 +603,27 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  previous_variant=ttk.Button(hero_row,text='‹',width=3);previous_variant.pack(side='left',padx=(0,8))
  next_variant=ttk.Button(hero_row,text='›',width=3);next_variant.pack(side='right',padx=(8,0))
  media_preview=tk.Canvas(hero_row,background='white',highlightthickness=0,height=160,cursor='hand2');media_preview.pack(side='left',fill='both',expand=True)
+ from preview_images import PreviewImages
+ preview_images=PreviewImages();image_request=[0];hero_timer=[None];hero_stamp=[None]
+ dialog.bind('<Destroy>',lambda e:preview_images.close() if e.widget is dialog else None,add='+')
  media_original=[None];hero_photo=[None];media_order=[0]
  def media_index():return next((i for i,b in enumerate(bundles) if b['sku']==media_variant.get()),0)
  def render_hero(event=None):
   from PIL import Image,ImageOps,ImageTk
-  media_preview.delete('all');width=max(50,media_preview.winfo_width());height=max(50,media_preview.winfo_height())
+  width=max(50,media_preview.winfo_width());height=max(50,media_preview.winfo_height());stamp=(id(media_original[0]),width,height)
+  if stamp==hero_stamp[0]:return
+  hero_stamp[0]=stamp;media_preview.delete('all')
   if media_original[0] is None:media_preview.create_text(width//2,height//2,text='暂无可预览图片',fill='#8796B0');return
   fitted=ImageOps.contain(media_original[0],(max(20,width-20),max(20,height-16)));hero_photo[0]=ImageTk.PhotoImage(fitted);media_preview.create_image(width//2,height//2,image=hero_photo[0])
  def select_image(order):
-  from PIL import Image,ImageOps
-  media_order[0]=order;media_original[0]=None
+  media_order[0]=order;media_original[0]=None;image_request[0]+=1;request=image_request[0]
   if bundles:
    index=media_index();images=bundles[index].get('images') or []
    if order<len(images):
-    try:
-     with Image.open(paths[index].parent/images[order]['local_file']) as image:media_original[0]=ImageOps.exif_transpose(image).convert('RGB').copy()
-    except (OSError,ValueError,KeyError):pass
+    def ready(image):
+     if image_request[0]!=request:return
+     media_original[0]=image;render_hero()
+    if images[order].get('local_file'):preview_images.request(media_preview,paths[index].parent/images[order]['local_file'],(1100,1400),ready)
   render_hero()
  def media_refresh():
   from PIL import Image,ImageOps,ImageTk
@@ -627,10 +636,11 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   photos.clear()
   for order,row in enumerate((bundle.get('images') or [])[:8]):
    cell=ttk.Frame(thumb_strip,style='Card.TFrame');cell.grid(row=0,column=order,padx=2);thumb_strip.columnconfigure(order,weight=1)
-   try:
-    with Image.open(paths[index].parent/row['local_file']) as image:photo=ImageTk.PhotoImage(ImageOps.contain(image.convert('RGB'),(44,58)))
-    photos.append(photo);thumb=ttk.Label(cell,image=photo,style='Card.TLabel',cursor='hand2');thumb.pack();thumb.bind('<Button-1>',lambda e,n=order:select_image(n))
-   except (OSError,ValueError,KeyError):ttk.Label(cell,text='—',style='CardMuted.TLabel').pack()
+   thumb=ttk.Label(cell,text='…',style='Card.TLabel',cursor='hand2');thumb.pack();thumb.bind('<Button-1>',lambda e,n=order:select_image(n))
+   def thumbnail_ready(image,thumb=thumb):
+    if image is None:thumb.configure(text='—');return
+    photo=ImageTk.PhotoImage(image);thumb._photo=photo;thumb.configure(image=photo,text='')
+   if row.get('local_file'):preview_images.request(thumb,paths[index].parent/row['local_file'],(44,58),thumbnail_ready)
    ttk.Label(cell,text=f'{order+1:02d}',style='CardMuted.TLabel').pack()
   select_image(min(media_order[0],max(0,len(bundle.get('images') or [])-1)))
  def variant_changed(event=None):
@@ -643,7 +653,10 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    variant_changed()
  previous_variant.configure(command=lambda:step_variant(-1))
  next_variant.configure(command=lambda:step_variant(1))
- media_choice.bind('<<ComboboxSelected>>',variant_changed);media_preview.bind('<Configure>',render_hero);media_preview.bind('<Button-1>',lambda e:show_image(media_index(),media_order[0]))
+ def schedule_hero(event=None):
+  if hero_timer[0] is not None:media_preview.after_cancel(hero_timer[0])
+  hero_timer[0]=media_preview.after(70,render_hero)
+ media_choice.bind('<<ComboboxSelected>>',variant_changed);media_preview.bind('<Configure>',schedule_hero);media_preview.bind('<Button-1>',lambda e:show_image(media_index(),media_order[0]))
  ttk.Button(media_actions,text='查看全套图片',command=lambda:gallery(media_index())).pack(side='left',fill='x',expand=True,padx=(0,4))
  ttk.Button(media_actions,text='播放视频',command=lambda:play_video(media_index())).pack(side='left',fill='x',expand=True,padx=(4,0))
  def show_image(index,start):
@@ -660,10 +673,11 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    images.clear()
    for i,row in enumerate(bundles[index].get('images') or []):
     cell=ttk.Frame(window);cell.grid(row=i//4,column=i%4,padx=5,pady=5)
-    try:
-     with Image.open(paths[index].parent/row['local_file']) as source:photo=ImageTk.PhotoImage(ImageOps.contain(source.convert('RGB'),(150,200)))
-     images.append(photo);thumbnail=ttk.Label(cell,image=photo,cursor='hand2');thumbnail.pack();thumbnail.bind('<Button-1>',lambda e,n=index,start=i:show_image(n,start))
-    except (OSError,ValueError,KeyError):ttk.Label(cell,text='图片不可读').pack()
+    thumbnail=ttk.Label(cell,text='正在加载…',cursor='hand2');thumbnail.pack();thumbnail.bind('<Button-1>',lambda e,n=index,start=i:show_image(n,start))
+    def ready(image,thumbnail=thumbnail):
+     if image is None:thumbnail.configure(text='图片不可读');return
+     photo=ImageTk.PhotoImage(image);thumbnail._photo=photo;thumbnail.configure(image=photo,text='')
+    preview_images.request(thumbnail,paths[index].parent/row.get('local_file',''),(150,200),ready)
     ttk.Label(cell,text=f'{i+1:02d} '+('本变体主图' if i==0 else '共用详情图')).pack()
   window._ozon_refresh=render_gallery;render_gallery()
   window._photos=images
@@ -714,7 +728,11 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  progress=ttk.Treeview(progress_holder,columns=('offer','warehouse','quantity','state','barcodes','errors'),show='headings',height=8)
  for key,label,width in [('offer','变体货号',150),('warehouse','仓库',160),('quantity','目标 / 可用库存',140),('state','上架阶段',180),('barcodes','条形码',160),('errors','平台反馈',260)]:progress.heading(key,text=label);progress.column(key,width=width,minwidth=80,anchor='w')
  progress.grid(row=0,column=0,sticky='nsew');py=ttk.Scrollbar(progress_holder,orient='vertical',command=progress.yview);py.grid(row=0,column=1,sticky='ns');px=ttk.Scrollbar(progress_holder,orient='horizontal',command=progress.xview);px.grid(row=1,column=0,sticky='ew');progress.configure(yscrollcommand=py.set,xscrollcommand=px.set)
+ progress_stamp=[None]
  def progress_refresh():
+  stamp=json.dumps([last_job,operation_error],ensure_ascii=False,sort_keys=True,default=str)
+  if progress_stamp[0]==stamp:return
+  progress_stamp[0]=stamp
   progress.delete(*progress.get_children())
   if not last_job:
    if not operation_error:progress_info.delete('1.0','end');progress_info.insert('1.0','本组暂无本地上架记录。')
@@ -832,12 +850,31 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   if notebook.select()==str(parameter_tab):bar.pack(fill='x',padx=16,pady=(0,4),before=notebook)
   else:bar.pack_forget()
  notebook.bind('<<NotebookTabChanged>>',page_changed,add='+');page_changed()
+ poll_loading=[False];last_interaction=[0.0]
+ def interacting(event=None):last_interaction[0]=time.monotonic()
+ for sequence in ('<MouseWheel>','<Button-4>','<Button-5>','<ButtonPress-1>','<B1-Motion>','<KeyPress>'):
+  dialog.bind(sequence,interacting,add='+')
  def poll():
   if not dialog.winfo_exists():return
   grabbed=dialog.grab_current()
-  if grabbed is not None and grabbed is not dialog:
+  focused=dialog.focus_get()
+  if (grabbed is not None and grabbed is not dialog) or (focused is not None and focused.winfo_toplevel() is not dialog) or time.monotonic()-last_interaction[0]<0.4:
    dialog.after(1500,poll);return
-  refresh();dialog.after(1500,poll)
+  if not busy and not poll_loading[0]:
+   poll_loading[0]=True;expected_render=rendered;expected_operation=busy_since
+   def loaded(snapshot):
+    poll_loading[0]=False
+    if dialog.winfo_exists() and not busy and snapshot is not None and rendered==expected_render and busy_since==expected_operation and time.monotonic()-last_interaction[0]>=0.4:refresh(snapshot)
+   def load_snapshot():
+    snapshot=None
+    try:
+     current=coordinator.try_load()
+     if current is not None:snapshot=(current,revision(current))
+    except (OSError,ValueError):pass
+    try:dialog.after(0,lambda:loaded(snapshot))
+    except (RuntimeError,tk.TclError):pass
+   threading.Thread(target=load_snapshot,daemon=True).start()
+  dialog.after(1500,poll)
  def initialize():
   coordinator.ensure_fixed_vat()
   if publication.initial_stock is not None and not publication.active([p.parent.name for p in paths]):coordinator.ensure_initial_stock(publication.initial_stock)

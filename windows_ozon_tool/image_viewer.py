@@ -6,6 +6,8 @@ def open_viewer(parent,folder,rows,start=0,title='商品图片',on_replace=None)
  import tkinter as tk
  from tkinter import ttk
  from PIL import Image,ImageOps,ImageTk
+ from preview_images import PreviewImages
+ loader=PreviewImages(limit=12)
  rows=list(rows)
  if not rows:return
  cached=lookup(parent,('image_viewer',str(Path(folder).resolve()),start,title))
@@ -16,7 +18,8 @@ def open_viewer(parent,folder,rows,start=0,title='商品图片',on_replace=None)
  window=remember(parent,('image_viewer',str(Path(folder).resolve()),start,title),tk.Toplevel(parent));window.title(title);window.geometry('900x820');window.minsize(400,350)
  toolbar=ttk.Frame(window);toolbar.pack(fill='x',padx=8,pady=6)
  position=tk.StringVar();canvas=tk.Canvas(window,background='#242424',highlightthickness=0);canvas.pack(fill='both',expand=True)
- state={'index':start%len(rows),'source':None,'photo':None,'timer':None}
+ state={'index':start%len(rows),'source':None,'photo':None,'timer':None,'request':0}
+ window.bind('<Destroy>',lambda e:loader.close() if e.widget is window else None,add='+')
  def render():
   state['timer']=None
   if not window.winfo_exists() or state['source'] is None:return
@@ -26,19 +29,21 @@ def open_viewer(parent,folder,rows,start=0,title='商品图片',on_replace=None)
   canvas.delete('all');canvas.create_image(canvas.winfo_width()//2,canvas.winfo_height()//2,image=state['photo'])
  def load(index):
   state['index']=index%len(rows)
-  if state['source'] is not None:state['source'].close();state['source']=None
+  state['source']=None;state['request']+=1;request=state['request']
   i=state['index'];position.set(f'{i+1:02d} / {len(rows):02d} · '+('原始参考图' if on_replace else '本变体主图' if i==0 else '共用详情图'))
-  try:
-   with Image.open(Path(folder)/rows[i]['local_file']) as source:state['source']=ImageOps.exif_transpose(source).convert('RGB')
-   render()
-  except (OSError,ValueError,KeyError):
-   canvas.delete('all');canvas.create_text(max(180,canvas.winfo_width()//2),max(100,canvas.winfo_height()//2),text='图片不可读，请检查本地素材',fill='white')
+  canvas.delete('all');canvas.create_text(220,100,text='正在加载图片…',fill='white')
+  def ready(image):
+   if state['request']!=request:return
+   state['source']=image
+   if image is not None:render()
+   else:
+    canvas.delete('all');canvas.create_text(220,100,text='图片不可读，请检查本地素材',fill='white')
+  loader.request(canvas,Path(folder)/rows[i].get('local_file',''),(1800,2200),ready)
  def resize(event):
   if state['timer']:window.after_cancel(state['timer'])
   state['timer']=window.after(80,render)
  def close(event=None):
   if state['timer']:window.after_cancel(state['timer'])
-  if state['source'] is not None:state['source'].close()
   window.destroy()
  if on_replace:
   def replace_current():

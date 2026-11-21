@@ -1,7 +1,10 @@
 """Place red reference badges over individual visible ttk Treeview cells."""
 class ReferenceBadges:
- def __init__(self,tree,get_cells,on_click,on_double):
+ def __init__(self,tree,get_cells,on_click,on_double,native=False):
+  self.native=native
   self.tree=tree;self.get_cells=get_cells;self.on_click=on_click;self.on_double=on_double;self.labels=[];self.pending=None;self.pool={}
+  if native:
+   tree.tag_configure('reference',foreground='#9b5e00');return
   tree.bind('<Configure>',lambda e:self.schedule(),add='+');tree.bind('<MouseWheel>',lambda e:self.schedule(),add='+');tree.bind('<Button-4>',lambda e:self.schedule(),add='+');tree.bind('<Button-5>',lambda e:self.schedule(),add='+');tree.bind('<KeyRelease>',lambda e:self.schedule(),add='+')
  def schedule(self):
   if self.pending is None:self.pending=self.tree.after(32,self.redraw)
@@ -9,6 +12,14 @@ class ReferenceBadges:
   import tkinter as tk
   self.pending=None
   if not self.tree.winfo_exists():return
+  if self.native:
+   referenced={iid for iid,column,text,index in self.get_cells()}
+   for parent in self.tree.get_children():
+    for iid in self.tree.get_children(parent):
+     tags=[t for t in self.tree.item(iid,'tags') if t!='reference']
+     if iid in referenced:tags.append('reference')
+     self.tree.item(iid,tags=tags)
+   return
   visible=set()
   for iid,column,text,index in self.get_cells():
    if not self.tree.exists(iid):continue
