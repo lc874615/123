@@ -234,11 +234,22 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   from ui_layout import dialog_footer
   footer=dialog_footer(window,760,420)
   original=list(indices);guard_rows=dict(zip(guard['indices'],guard['rows'])) if isinstance(guard,dict) and guard.get('edit_scope') else {};checks={n:tk.BooleanVar(value=True) for n in original}
-  targets=ttk.LabelFrame(window,text='勾选本次要修改的变体（未勾选的不修改）');targets.pack(fill='x',padx=8,pady=5)
+  targets=ttk.Frame(window);targets.pack(fill='x',padx=8,pady=5)
   controls=ttk.Frame(targets);controls.pack(fill='x')
-  ttk.Button(controls,text='全选',command=lambda:[v.set(True) for v in checks.values()]).pack(side='left')
-  ttk.Button(controls,text='清空勾选',command=lambda:[v.set(False) for v in checks.values()]).pack(side='left')
-  canvas=tk.Canvas(targets,height=92,highlightthickness=0);scroll=ttk.Scrollbar(targets,orient='vertical',command=canvas.yview);scroll.pack(side='right',fill='y');canvas.pack(fill='x',expand=True);canvas.configure(yscrollcommand=scroll.set)
+  count_label=ttk.Label(controls);count_label.pack(side='left')
+  def selection_count(*args):count_label.configure(text='本次修改：已选 '+str(sum(v.get() for v in checks.values()))+' / '+str(len(original))+' 个变体')
+  for variable in checks.values():variable.trace_add('write',selection_count)
+  selection_count()
+  panel=ttk.Frame(targets);expanded=[False]
+  def toggle_targets():
+   expanded[0]=not expanded[0]
+   if expanded[0]:panel.pack(fill='x',pady=(4,0))
+   else:panel.pack_forget()
+   expand_button.configure(text='收起 ▴' if expanded[0] else '选择变体 ▾')
+  expand_button=ttk.Button(controls,text='选择变体 ▾',command=toggle_targets);expand_button.pack(side='right')
+  ttk.Button(controls,text='清空',width=5,command=lambda:[v.set(False) for v in checks.values()]).pack(side='right',padx=3)
+  ttk.Button(controls,text='全选',width=5,command=lambda:[v.set(True) for v in checks.values()]).pack(side='right',padx=3)
+  canvas=tk.Canvas(panel,height=64,highlightthickness=0);scroll=ttk.Scrollbar(panel,orient='vertical',command=canvas.yview);scroll.pack(side='right',fill='y');canvas.pack(fill='x',expand=True);canvas.configure(yscrollcommand=scroll.set)
   options=ttk.Frame(canvas);canvas.create_window((0,0),window=options,anchor='nw');options.bind('<Configure>',lambda e:canvas.configure(scrollregion=canvas.bbox('all')))
   for pos,n in enumerate(original):ttk.Checkbutton(options,text=paths[n].parent.name,variable=checks[n]).grid(row=pos//4,column=pos%4,sticky='w',padx=6)
   text=ScrolledText(window,height=12);text.pack(fill='both',expand=True,padx=8);text.insert('1.0',initial)

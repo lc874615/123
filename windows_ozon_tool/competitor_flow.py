@@ -59,7 +59,8 @@ def copy_prompt(bundles):
 def describe(bundle,task=None):
  from competitor_reference import context,proposals,eligible
  from account_context import credentials
- url=(bundle.get('variant_parameters') or {}).get('competitor_url') or ((task or {}).get('variant_parameters') or {}).get('competitor_url')
+ parameters=bundle.get('variant_parameters') if 'variant_parameters' in bundle else (task or {}).get('variant_parameters')
+ url=str((parameters or {}).get('competitor_url') or '').strip()
  empty={'state':'none','label':'未填写链接','configured':False,'matched':0,'prefilled':0,'applied':0,'detail':'未填写竞品链接，不读取竞品参数。'}
  if not url:return empty
  # Images are intentionally not required for the creation-time schema fetch.
@@ -100,15 +101,16 @@ def before_copy(store,leader,now=None):
  """
  from competitor_reference import context
  from account_context import credentials
- now=time.time() if now is None else now;pending=[];configured=0;basis_rows=[];account=credentials()[0]
+ now=time.time() if now is None else now;pending=[];configured=0;basis_rows=[];account=None
  for t in store.tasks:
   if t.get('state')=='cancelled' or t.get('copy_leader',t['sku'])!=leader['sku']:continue
   path=store.folder/'products'/t['sku']/'listing_bundle.json'
   if not path.exists():
-   if t['sku']==leader['sku'] and (t.get('variant_parameters') or {}).get('competitor_url'):pending.append('等待首变体草稿')
+   if t['sku']==leader['sku'] and str((t.get('variant_parameters') or {}).get('competitor_url') or '').strip():pending.append('等待首变体草稿')
    continue
   b=read(path)
-  if not (b.get('variant_parameters') or {}).get('competitor_url'):continue
+  if not str((b.get('variant_parameters') or {}).get('competitor_url') or '').strip():continue
+  if account is None:account=credentials()[0]
   configured+=1;basis_rows.append([t['sku'],b['variant_parameters']['competitor_url'],b.get('category')])
   try:c=context(b,account)
   except ValueError:continue  # Invalid link is shown in the status column.

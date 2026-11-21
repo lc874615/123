@@ -7,6 +7,26 @@ from competitor_flow import describe,group_label,before_copy,accepted_records,co
 from pricing_service import read,write
 import test_competitor_reference as fixtures
 class CompetitorFlowTests(unittest.TestCase):
+ def test_blank_link_skips_gate_and_clears_old_wait_without_credentials(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   store,path=self.setup_store(tmp);owner=store.tasks[0]
+   owner['variant_parameters']={'competitor_url':fixtures.URL};owner['competitor_wait']={'state':'waiting'}
+   bundle=read(path);bundle['variant_parameters']['competitor_url']='  ';write(path,bundle)
+   with patch('account_context.credentials',side_effect=ValueError('not connected')):
+    self.assertTrue(before_copy(store,owner));self.assertEqual(describe(bundle,owner)['state'],'none')
+   self.assertNotIn('competitor_wait',owner);store.attributes.wake.set.assert_not_called()
+ def test_missing_bundle_without_link_does_not_wait(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   store,path=self.setup_store(tmp);path.unlink()
+   with patch('account_context.credentials',side_effect=ValueError('not connected')):self.assertTrue(before_copy(store,store.tasks[0]))
+ def test_mixed_group_only_waits_for_configured_variant(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   store,path=self.setup_store(tmp);owner=store.tasks[0]
+   store.tasks.append({'sku':'B','state':'saved','copy_leader':'A'})
+   blank=fixtures.bundle();blank['sku']='B';blank['variant_parameters']['competitor_url']=''
+   write(store.folder/'products'/'B'/'listing_bundle.json',blank)
+   self.assertFalse(before_copy(store,owner));self.collect(store)
+   self.assertTrue(before_copy(store,owner));self.assertNotIn('competitor_wait',owner)
  def setUp(self):
   p=patch('account_context.credentials',return_value=('synthetic-shop','fake'));p.start();self.addCleanup(p.stop)
  def setup_store(self,tmp):
