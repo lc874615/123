@@ -72,7 +72,8 @@ def retire_legacy_attribute_save_error(store):
  changed=False
  for task in store.tasks:
   if task.get('state')!='saved' or task.get('copy_mode')!='attributes' or task.get('copy_state')!='needs_attention':continue
-  if not any(e in str(task.get('message','')) for e in ("'list' object has no attribute 'get'","'str' object has no attribute 'get'")):continue
+  known_error=any(e in str(task.get('message','')) for e in ("'list' object has no attribute 'get'","'str' object has no attribute 'get'","kQuotaBytes"))
+  if not known_error and not task.get('quota_recovery_requested'):continue
   if task.get('recollection_requested') or task.get('pause_requested') or len(task.get('received_images') or [])!=8:continue
   members=[t['sku'] for t in store.tasks if t.get('copy_leader',t['sku'])==task.get('copy_leader',task['sku'])]
   if store.image_jobs.active(members):continue
