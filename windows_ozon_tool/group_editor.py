@@ -571,7 +571,10 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  media_meta=ttk.Label(media_left,style='CardMuted.TLabel');media_meta.pack(anchor='w',pady=(0,5))
  media_actions=ttk.Frame(media_left,style='Card.TFrame');media_actions.pack(side='bottom',fill='x',pady=(6,0))
  thumb_strip=ttk.Frame(media_left,style='Card.TFrame');thumb_strip.pack(side='bottom',fill='x',pady=(6,0))
- media_preview=tk.Canvas(media_left,background='white',highlightthickness=0,height=160,cursor='hand2');media_preview.pack(fill='both',expand=True)
+ hero_row=ttk.Frame(media_left,style='Card.TFrame');hero_row.pack(fill='both',expand=True)
+ previous_variant=ttk.Button(hero_row,text='‹',width=3);previous_variant.pack(side='left',padx=(0,8))
+ next_variant=ttk.Button(hero_row,text='›',width=3);next_variant.pack(side='right',padx=(8,0))
+ media_preview=tk.Canvas(hero_row,background='white',highlightthickness=0,height=160,cursor='hand2');media_preview.pack(side='left',fill='both',expand=True)
  media_original=[None];hero_photo=[None];media_order=[0]
  def media_index():return next((i for i,b in enumerate(bundles) if b['sku']==media_variant.get()),0)
  def render_hero(event=None):
@@ -593,6 +596,8 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   from PIL import Image,ImageOps,ImageTk
   if not bundles:return
   prior=media_variant.get();media_choice.configure(values=[b['sku'] for b in bundles]);media_variant.set(prior if prior in [b['sku'] for b in bundles] else bundles[0]['sku']);index=media_index();bundle=bundles[index]
+  previous_variant.configure(state='normal' if index>0 else 'disabled')
+  next_variant.configure(state='normal' if index<len(bundles)-1 else 'disabled')
   media_meta.configure(text=str(len(bundle.get('images') or []))+' 张图片 · 01 主图 / 02–08 详情 · 点击大图放大')
   for child in thumb_strip.winfo_children():child.destroy()
   photos.clear()
@@ -606,6 +611,14 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   select_image(min(media_order[0],max(0,len(bundle.get('images') or [])-1)))
  def variant_changed(event=None):
   media_order[0]=0;media_refresh();regen_ui['select_current'](media_variant.get())
+ def step_variant(direction):
+  if not bundles:return
+  index=media_index()+direction
+  if 0<=index<len(bundles):
+   media_variant.set(bundles[index]['sku'])
+   variant_changed()
+ previous_variant.configure(command=lambda:step_variant(-1))
+ next_variant.configure(command=lambda:step_variant(1))
  media_choice.bind('<<ComboboxSelected>>',variant_changed);media_preview.bind('<Configure>',render_hero);media_preview.bind('<Button-1>',lambda e:show_image(media_index(),media_order[0]))
  ttk.Button(media_actions,text='查看全套图片',command=lambda:gallery(media_index())).pack(side='left',fill='x',expand=True,padx=(0,4))
  ttk.Button(media_actions,text='播放视频',command=lambda:play_video(media_index())).pack(side='left',fill='x',expand=True,padx=(4,0))
