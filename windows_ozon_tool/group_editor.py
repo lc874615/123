@@ -156,6 +156,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    rows[iid]=(row,field);tree.insert(parent,'end',iid=iid,text=('* ' if required else '')+label,values=values,tags=('missing',) if required and empty else ('pending',) if any(str(v).startswith('待匹配') for v in values) else ())
   if selected_row and tree.exists(selected_row[0]):tree.selection_set(selected_row[0])
   headings();badges.schedule()
+ grid_stamp=[None]
  def refresh():
   nonlocal bundles,token,rendered,last_job,displayed_copy
   if not dialog.winfo_exists():return
@@ -165,7 +166,11 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    current_token=revision(current)
    if current_token!=rendered:
     media_changed=[[r.get('sha256') for r in b.get('images') or []] for b in bundles]!=[[r.get('sha256') for r in b.get('images') or []] for b in current]
-    bundles=current;token=current_token;rendered=current_token;grid_refresh();regen_ui['refresh']()
+    bundles=current;token=current_token;rendered=current_token
+    display_stamp=json.dumps([{k:v for k,v in b.items() if k not in ('images','video','hosting','video_hosting','asset_validation','updated_at','video_local_hash','copy','copy_competitor_request_marker')} for b in bundles],ensure_ascii=False,sort_keys=True,default=str)
+    if display_stamp!=grid_stamp[0]:
+     grid_refresh();grid_stamp[0]=display_stamp
+    regen_ui['refresh']()
     if media_changed:media_refresh()
    actual_copy=bundles[0].get('copy') or {}
    if not copy_dirty and actual_copy!=displayed_copy:
@@ -193,7 +198,8 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    else:accept_button.pack_forget()
    if copy_dirty:status.configure(text=status.cget('text')+' | 共用文案尚未保存')
    copy_save_button.configure(state='disabled' if busy or job else 'normal')
-   submit_button.configure(state='disabled' if busy else 'normal',text='查看当前提交进度' if job else '提交上架');update_button.configure(state='disabled' if busy or job else 'normal');progress_refresh()
+   submit_button.configure(state='disabled' if busy else 'normal',text='查看当前提交进度' if job else '提交上架');update_button.configure(state='disabled' if busy or job else 'normal')
+   if notebook.select()==str(progress_tab):progress_refresh()
    blocker.configure(text=('当前按钮暂不可用：'+coordinator.status+'，已用'+str(int(time.monotonic()-busy_since))+'秒' if busy else '共用文案尚未保存' if copy_dirty else '已有上架任务：点击右侧按钮查看进度，系统不会重复提交' if job else operation_error or ''))
    if busy:blocker.configure(text='')
    if blocker.cget('text'):
@@ -202,7 +208,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   except (OSError,ValueError):status.configure(text='正在等待草稿保存完成')
  def refilter(*args):
   nonlocal rendered
-  rendered=None;refresh()
+  rendered=None;grid_stamp[0]=None;refresh()
  filter_timer=None
  def schedule_filter(*args):
   nonlocal filter_timer
@@ -810,6 +816,9 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  notebook.bind('<<NotebookTabChanged>>',page_changed,add='+');page_changed()
  def poll():
   if not dialog.winfo_exists():return
+  grabbed=dialog.grab_current()
+  if grabbed is not None and grabbed is not dialog:
+   dialog.after(1500,poll);return
   refresh();dialog.after(1500,poll)
  def initialize():
   coordinator.ensure_fixed_vat()
