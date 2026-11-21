@@ -66,7 +66,7 @@
   return roots;
  }
  function auxiliary(node){
-  const panel=node.closest?.('aside,[role="complementary"],.summary-panel,.summary-card');
+  const panel=node.closest?.('aside,[role="complementary"],.summary-panel,.summary-card,[class~="group/summary-panel-item"],[class~="group/summary-panel"],[class~="group/summary-card"]');
   if(!panel)return false;
   const thread=node.closest('main,[role="main"]');
   // The application can mount the whole conversation inside an auxiliary shell.

@@ -71,6 +71,16 @@
   const anchor=globalThis.OzonConversation.requestAnchor(doc,marker);
   if(allowPartial&&marker&&!anchor)return null;
   const nextUser=anchor?globalThis.OzonConversation.nextUser(doc,anchor,{continuations}):null;
+  if(expected>1&&anchor&&!fileGroup){
+   // A final file list and older attempts may reuse numbers with different
+   // names. Never merge different assistant replies into one delivery set.
+   const replies=globalThis.OzonConversation.assistantNodes(doc).filter(node=>
+    !globalThis.OzonConversation.auxiliary(node)&&!!(anchor.compareDocumentPosition(node)&4)&&(!nextUser||!!(node.compareDocumentPosition(nextUser)&4)));
+   for(const reply of replies.reverse()){
+    const found=candidates(doc,{marker,expected,allowPartial,inventory:true,continuations,task,fileGroup:reply});
+    if(found?.present)return inventory?found:found.complete?{images:found.images}:null;
+   }
+  }
   if(expected===1&&anchor&&!fileGroup){
    const replies=globalThis.OzonConversation.assistantNodes(doc).filter(node=>
     !!(anchor.compareDocumentPosition(node)&4)&&(!nextUser||!!(node.compareDocumentPosition(nextUser)&4)));
