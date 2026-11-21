@@ -8,7 +8,7 @@
    section.scrollIntoView({block:'center'});
    const buttons=[...section.querySelectorAll('button,a,[role="button"]')].filter(el=>visible(el)&&/^(развернуть|показать все|все характеристики|показать полностью)(\s+\d+)?$/i.test(el.innerText.trim()));
    for(const button of buttons)button.click();
-   return;
+   if(section.querySelector('dt,table tr'))return;
   }
   const direct=document.querySelector('[data-widget="webShortCharacteristics"] [title="Перейти к характеристикам"]');
   if(direct&&visible(direct)){direct.click();return;}
@@ -18,14 +18,19 @@
  globalThis.__ozonCompetitorRead=(fields=[])=>{
   const url=new URL(location.href);
   if(url.protocol!=='https:'||!['ozon.ru','www.ozon.ru'].includes(url.hostname)||!/^\/product\/(?:[^/]+-)?\d+\/?$/.test(url.pathname))throw Error('竞品页已跳转，停止采集');
+  let collectingFull=false;
+  const fullSeen=new Set();
   const rows=[],seen=new Set();const add=(name,value,values=null)=>{
    name=String(name||'').replace(/\s+/g,' ').trim();value=String(value||'').replace(/\s+/g,' ').trim();
    if(!name||!value||name.length>180||value.length>800)return;
-   const key=name+'\0'+value;if(!seen.has(key)&&rows.length<400){seen.add(key);rows.push({name,value,...(Array.isArray(values)&&values.length>1?{values}: {})});}
+   const key=name+'\0'+value;
+   if(collectingFull)fullSeen.add(key);
+   if(!seen.has(key)&&rows.length<400){seen.add(key);rows.push({name,value,...(Array.isArray(values)&&values.length>1?{values}: {})});}
   };
   const visible=el=>!!el.getClientRects().length&&getComputedStyle(el).visibility!=='hidden';
   for(const section of document.querySelectorAll(selectors+', [data-widget="webShortCharacteristics"]')){
    if(!visible(section))continue;
+   collectingFull=section.matches(selectors)&&!section.matches('[data-widget="webShortCharacteristics"]')&&!section.closest('[data-widget="webShortCharacteristics"]');
    for(const dl of section.querySelectorAll('dl'))for(const dt of dl.querySelectorAll('dt')){
     const dd=dt.nextElementSibling?.tagName==='DD'?dt.nextElementSibling:dt.parentElement?.nextElementSibling?.querySelector('dd');if(dd?.tagName==='DD'&&visible(dt)&&visible(dd))add(dt.innerText,dd.innerText,[...dd.querySelectorAll('a')].map(a=>a.innerText.trim()).filter(Boolean));
    }
@@ -43,6 +48,7 @@
    }
    for(const tr of section.querySelectorAll('tr')){const cells=tr.querySelectorAll('th,td');if(cells.length===2&&visible(tr))add(cells[0].innerText,cells[1].innerText);}
   }
+  collectingFull=false;
   // JSON-LD Product.additionalProperty is publicly supplied product metadata.
   const products=[];
   for(const script of document.querySelectorAll('script[type="application/ld+json"]')){
@@ -66,7 +72,8 @@
   for(const obj of products.filter(owns))for(const p of [].concat(obj.additionalProperty||[]))if(p&&Array.isArray(p.value)&&p.value.every(v=>typeof v==='string'))add(p.name,p.value.join('；'),p.value);else if(p&&typeof p.value!=='object')add(p.name,p.unitText?String(p.value)+' '+p.unitText:p.value);
   const body=(document.body?.innerText||'').slice(0,12000);
   const blocked=/подтвердите.{0,40}(человек|робот)|доступ ограничен|проверка безопасности|captcha|access denied|verify.{0,30}(human|identity)|провер.{0,30}(робот|человек)/i.test(body);
-  const diagnostics={sections:document.querySelectorAll(selectors+', [data-widget="webShortCharacteristics"]').length,full_sections:[...document.querySelectorAll(selectors)].filter(visible).length,rows:rows.length,blocked};
+  const expandPending=[...document.querySelectorAll(selectors)].filter(visible).some(section=>[...section.querySelectorAll('button,a,[role="button"]')].some(el=>visible(el)&&/^(развернуть|показать все|все характеристики|показать полностью)(\s+\d+)?$/i.test(el.innerText.trim())));
+  const diagnostics={sections:document.querySelectorAll(selectors+', [data-widget="webShortCharacteristics"]').length,full_sections:fullSeen.size&&!expandPending?1:0,full_rows:fullSeen.size,expand_pending:expandPending,rows:rows.length,blocked};
   return {url:url.origin+url.pathname,rows,diagnostics,error_code:blocked&&!rows.length?'verification':null};
  };
 })();
