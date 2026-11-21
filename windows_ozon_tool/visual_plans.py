@@ -3,7 +3,7 @@ Rules select presentation, never product facts or technical specifications.
 """
 import copy,hashlib,json,re
 from pathlib import Path
-VERSION=4
+VERSION=5
 STYLES={
  'digital':('精密数码','精确轮廓、接口与材质分区；按商品对比选择浅色或深色摄影背景，不固定蓝色圆台。用柔和侧光分清塑料、金属、玻璃与屏幕；标题短、最多突出1—2个有依据的关键数字，避免顶部排满小标签。克制高光，不虚构电路、芯片、声波效果或内部剖面。'),
  'appliance':('生活电器','干净真实的厨房、浴室或操作空间；产品与实际任务同框，操作与配置清楚。主图可有序展示实际配置，使用页让产品与任务成为主体；文字直接说明用途，不夸大处理效果。'),
@@ -46,7 +46,7 @@ RULES=[
  ('clothing','wearable',('服装','衣服','t恤','衬衫','外套','长裤','短裤','裙子','футболк','рубашк','куртк','брюк','плать'))]
 # topic key, buyer question, evidence need (None is externally visible facts only).
 TOPICS={
- 'main':('商品主图',None),'wear':('实际佩戴或握持尺度',None),'controls':('已确认操作方式','operation'),'connection':('连接与适配范围','connection'),
+ 'main':('商品主图',None),'cushioning':('软包与靠背的已知细节',None),'wear':('实际佩戴或握持尺度',None),'controls':('已确认操作方式','operation'),'connection':('连接与适配范围','connection'),
  'charging':('充电或供电说明','charging'),'exterior':('真实外观细节',None),'dimensions':('商品尺寸与摆放','dimensions'),'contents':('实际收到内容',None),
  'use':('主要真实用途',None),'attachments':('已知附件对应用途','accessories'),'care':('已确认护理说明','care'),'structure':('可见外部结构',None),
  'capacity':('已确认容量与尺度','capacity'),'placement':('实际摆放效果',None),'material':('可见表面与已知材质',None),'second_use':('另一合理动作或已确认视角',None),
@@ -67,7 +67,7 @@ ORDERS={
  'haircare':('main','use','attachments','controls','structure','care','dimensions','contents'),
  'cleaner':('main','use','attachments','controls','structure','care','capacity','contents'),
  'kitchen_appliance':('main','use','attachments','controls','care','structure','capacity','contents'),
- 'chair':('main','use','dimensions','material','structure','second_use','options','contents'),
+ 'chair':('main','use','dimensions','material','structure','cushioning','exterior','options'),
  'furniture':('main','placement','dimensions','opening','material','structure','options','contents'),
  'lamp':('main','placement','controls','dimensions','installation','exterior','second_use','contents'),
  'bedding':('main','material','seams','set_sizes','placement','options','care','contents'),
@@ -135,10 +135,10 @@ def render(plan,facts='',group_facts='',scope='full'):
  if scope not in ('full','main','shared'):raise ValueError('未知作图范围')
  # Old saved plans are never trusted as product evidence; rebuild presentation
  # from their category/override rather than carrying parameter-based fallbacks.
- if plan.get('evidence_policy')!='original_references_only' or plan.get('selling_plan_version')!=2:
+ if plan.get('version')!=VERSION or plan.get('evidence_policy')!='original_references_only' or plan.get('selling_plan_version')!=2:
   category={**(plan.get('category') or {}),'confirmed':True};plan=build(category,override=plan.get('style') if plan.get('source')=='manual' else None)
  pages=plan['pages'] if scope=='full' else plan['pages'][:1] if scope=='main' else plan['pages'][1:]
- detail_direction='' if scope=='main' else '【共用详情成交表达】七页各回答不同购买问题，使用场景最多两页且动作与信息不同。每页一个具体购买理由、一幅占主导的证据画面、必要短佐证。材质/结构页用可辨识大特写与部位标注；尺寸页数字清楚且状态对应；选项页严格使用各变体原图，单独标明可选。避免连续同机位整件摆拍、泛泛标题、装饰图标和页页同色圆台。仅统一字体色系，近景、人物实用、尺寸示意和选项对照应有节奏变化。'
+ detail_direction='' if scope=='main' else '【共用详情成交表达】七页各回答不同购买问题，每页一个购买理由和占主导的实物证据。仅统一字体、色系和光线，不固定同一整件构图；使用场景最多两页，第二页须新增用途信息。近景、使用、尺寸、选项有景别节奏。共用文案只写全组共同事实；面料、尺寸或配置不同，逐项标明适用选项，不以代表款证明全组。选项只取本组实际原图，色卡不自动等于本组在售款；不把所有选项一起发货。信息不足先重分尚未展示的真实细节，不强凑主题或虚构背面。'
  if scope!='main' and plan.get('style')=='interior':
   detail_direction+='家具额外检查：框架、面料与填充分别核实，不能混写。未知填充密度、木材树种、承重和尺寸公差不宣传。人物图展示真实坐姿与接触位置；第二场景须增加适配信息，否则改真实结构细节。尺寸线、尺寸状态及每种花色均逐项核对原始参考。'
  rows=[]
@@ -148,7 +148,8 @@ def render(plan,facts='',group_facts='',scope='full'):
   fallback=page.get('fallback_if_unproven')
   alternative=('；证据不足改为'+fallback[1]+'或尚未覆盖的更强图证主题，文件编号与名称保持本清单不变') if fallback else ''
   composition=COMPOSITIONS.get(page['requested_topic'],'用当前原始视角组织大幅实物摄影，与其他编号区分。')
-  role=('主图卖点分析：读取本变体主图及适用详情原始参考，内部列出卖点、出处与购买价值，合并并排序。画面用自然俄语短句清楚罗列通常2—4条不同的有依据卖点，突出最重要一条；证据不足按实际条数。保留尺寸，卖点分层清晰。') if page['requested_topic']=='main' else '详情任务：先选本页专属视觉证据与景别，产品大合集主图构图不作为默认布局。'
+  if page['requested_topic']=='cushioning':composition='坐垫边缘与靠背软包一至两处大特写，清楚显示原始纹理、接缝与接触关系；填充类型、密度仅原图清晰写出且适用才标注，不推导人体工学、承重或回弹测试。不画虚构剖面，证据不足改真实边缘做工。'
+  role=('主图卖点分析：读取本变体主图及适用详情原始参考，内部列出卖点、出处与购买价值，合并并排序。商品优先，俄语品类标题克制；突出一个核心购买理由，通常2—4项不同的有依据佐证分层呈现，证据不足按实际条数。保留尺寸，不用一排等大胶囊或巨字替代商品细节。') if page['requested_topic']=='main' else '详情任务：先选本页专属视觉证据与景别，产品大合集主图构图不作为默认布局。'
   rows.append(name+'：建议'+page['title']+'。'+role+composition+rule+alternative+'。同一张只讲一个核心主题，详情按证据分配规则调整。')
  limits={'full':'只能交付8张独立成品，01为当前变体主图，02—08为全组共用详情。','main':'只能生成和交付1张本变体主图，文件名固定01_main.jpg；不制作其他变体主图与详情。','shared':'只重做7张共用详情；本次01—07分别对应商品详情位置02—08，不生成或修改任何主图。'}
  category=plan.get('category') or {};label=category.get('zh_path') or category.get('name') or '未明确识别的类目'

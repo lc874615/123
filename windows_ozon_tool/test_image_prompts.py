@@ -8,6 +8,24 @@ from original_image_policy import SOURCE_POLICY,DIMENSIONS,PRODUCT_LOCK,DELIVERY
 
 def cat(name):return {'description_category_id':10,'type_id':20,'name':name,'confirmed':True}
 class PromptStyleTests(unittest.TestCase):
+ def test_single_image_design_and_quality_rules_reach_every_style_and_scope(self):
+  from visual_plans import STYLES,render
+  for style in STYLES:
+   plan=build(override=style)
+   for scope in ('full','main','shared'):
+    with self.subTest(style=style,scope=scope):
+     text=render(plan,scope=scope)
+     for rule in ('单张设计稿','输入图编号及角色','用引号固定的准确俄语文字','约300像素宽','只针对当前错误局部修改','包装重量、毛重不作图片卖点'):
+      self.assertIn(rule,text)
+     if scope!='main':
+      self.assertIn('共用文案只写全组共同事实',text);self.assertIn('色卡不自动等于本组在售款',text)
+ def test_chair_plan_uses_detail_evidence_instead_of_second_full_chair_scene(self):
+  from visual_plans import render,VERSION
+  plan=build(cat('Кресло'));topics=[p['requested_topic'] for p in plan['pages']]
+  self.assertEqual(topics,['main','use','dimensions','material','structure','cushioning','exterior','options'])
+  self.assertIn('不画虚构剖面',render(plan))
+  old=copy.deepcopy(plan);old['version']=VERSION-1;old['pages'][5]['requested_topic']='second_use'
+  self.assertIn('06_cushioning.jpg',render(old))
  def test_all_entrypoints_ignore_product_parameters_and_history(self):
   sentinel='UNTRUSTED_BLUETOOTH_99_COST_999_FOAM_ABC'
   for text in (generation_prompt(sentinel,sentinel),generation_prompt(sentinel,sentinel,1),shared_prompt(sentinel),sheet_prompt(sentinel,sentinel)):
