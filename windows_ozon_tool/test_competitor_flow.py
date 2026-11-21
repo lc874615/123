@@ -43,19 +43,37 @@ class CompetitorFlowTests(unittest.TestCase):
   task={'variant_parameters':{'competitor_url':fixtures.URL},'category_selection':{'attribute_preload':{'fields':copy.deepcopy(fixtures.FIELDS),'category_key':[10,20],'schema_hash':'synthetic-schema'}}}
   result=describe({},task)
   self.assertEqual(result['state'],'preloaded');self.assertIn('官方字段已读',result['label']);self.assertIn('不会再次等待官方字段接口',result['detail'])
- def test_copy_waits_for_schema_and_capture_but_failed_or_empty_match_finishes(self):
+ def test_copy_waits_after_verification_failure_and_allows_successful_retry(self):
   with tempfile.TemporaryDirectory() as tmp:
    store,path=self.setup_store(tmp);owner=store.tasks[0];self.assertFalse(before_copy(store,owner,now=100));store.attributes.wake.set.assert_called();self.assertNotIn('copy_state',owner);self.collect(store);self.assertTrue(before_copy(store,owner,now=101));self.assertNotIn('competitor_wait',owner)
-   b=read(path);b.pop('competitor_reference');write(path,b);self.assertFalse(before_copy(store,owner,now=102));job=claim(store)['job'];receive(store,{'token':job['token'],'error':'需要验证码','error_code':'verification'});self.assertTrue(before_copy(store,owner,now=103));self.assertEqual(describe(read(path))['state'],'verification')
+   b=read(path);b.pop('competitor_reference');write(path,b)
+   self.assertFalse(before_copy(store,owner,now=102))
+   job=claim(store)['job'];receive(store,{'token':job['token'],'error':'需要验证码','error_code':'verification'})
+   self.assertFalse(before_copy(store,owner,now=103))
+   self.assertEqual(owner['competitor_wait']['state'],'waiting')
+   self.assertEqual(describe(read(path))['state'],'verification')
+   # Simulate restarting collection after the page verification is resolved.
+   b=read(path);b.pop('competitor_reference');write(path,b);self.collect(store)
+   self.assertTrue(before_copy(store,owner,now=104));self.assertNotIn('competitor_wait',owner)
  def test_copy_gate_keeps_waiting_during_transient_retry_then_allows_success(self):
   with tempfile.TemporaryDirectory() as tmp,patch('competitor_reference.time.time',return_value=100):
    store,path=self.setup_store(tmp);owner=store.tasks[0];job=claim(store)['job'];receive(store,{'token':job['token'],'error':'temporary'})
    self.assertFalse(before_copy(store,owner,now=100));self.assertEqual(describe(read(path))['state'],'retrying')
    with patch('competitor_reference.time.time',return_value=106):self.collect(store)
    self.assertTrue(before_copy(store,owner,now=107));self.assertEqual(describe(read(path))['matched'],1)
- def test_pre_copy_timeout_is_bounded_and_url_change_starts_new_wait(self):
+ def test_long_wait_does_not_bypass_capture_and_url_change_starts_new_wait(self):
   with tempfile.TemporaryDirectory() as tmp:
-   store,path=self.setup_store(tmp);owner=store.tasks[0];self.assertFalse(before_copy(store,owner,now=100));self.assertTrue(before_copy(store,owner,now=251));self.assertEqual(owner['competitor_wait']['state'],'timeout');self.assertEqual(describe(read(path),owner)['state'],'timeout');b=read(path);b['variant_parameters']['competitor_url']=fixtures.URL.replace('12345','67890');write(path,b);self.assertFalse(before_copy(store,owner,now=252))
+   store,path=self.setup_store(tmp);owner=store.tasks[0]
+   self.assertFalse(before_copy(store,owner,now=100));basis=owner['competitor_wait']['basis']
+   self.assertFalse(before_copy(store,owner,now=251))
+   self.assertEqual(owner['competitor_wait']['state'],'waiting')
+   self.assertEqual(owner['competitor_wait']['started_at'],100)
+   self.assertIn('等待竞品参数采集成功',owner['competitor_wait']['message'])
+   self.assertFalse(before_copy(store,owner,now=10000))
+   b=read(path);b['variant_parameters']['competitor_url']=fixtures.URL.replace('12345','67890');write(path,b)
+   self.assertFalse(before_copy(store,owner,now=10001))
+   self.assertNotEqual(owner['competitor_wait']['basis'],basis)
+   self.assertEqual(owner['competitor_wait']['started_at'],10001)
  def test_successful_page_with_zero_official_matches_does_not_fill_arbitrary_fields(self):
   with tempfile.TemporaryDirectory() as tmp:
    store,path=self.setup_store(tmp);self.collect(store,[{'name':'Unofficial invented field','value':'123'}]);b=read(path);self.assertEqual(b['competitor_reference']['state'],'ready');self.assertEqual(describe(b)['matched'],0);self.assertEqual(proposals(b),{});self.assertTrue(before_copy(store,store.tasks[0]))

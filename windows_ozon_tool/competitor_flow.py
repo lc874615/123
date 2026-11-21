@@ -96,8 +96,8 @@ def group_label(rows):
  return f"已读{sum(r['state']=='ready' for r in configured)}/{len(configured)} · 失败{sum(r['state'] in ('failed','verification') for r in configured)} · 预填{sum(r['prefilled'] for r in configured)} · 已采用{sum(r['applied'] for r in configured)}"
 
 def before_copy(store,leader,now=None):
- """Wait for configured links to finish, never hold a business lock over IO.
- Failure/timeouts are terminal for this copy attempt and leave references empty.
+ """Wait for configured links to succeed, never hold a business lock over IO.
+ Empty links are skipped; failures and long waits never bypass collection.
  """
  from competitor_reference import context
  from account_context import credentials
