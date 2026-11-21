@@ -9,6 +9,13 @@ from pricing_service import read,write
 from publication_service import TERMINAL,warehouse_label
 
 EXCLUDED={8229,21845}
+def parameter_cache(cache,bundle):
+ entry=cache.get(id(bundle))
+ if entry is None or entry.get('bundle') is not bundle:
+  entry={'bundle':bundle};cache[id(bundle)]=entry
+ if 'keys' not in entry:entry['keys']={field_key(f) for f in (bundle.get('attribute_draft') or {}).get('fields',[])}
+ return entry
+
 def open_editor(root,folder,service,group_folders,category_callback=None,price_callback=None,connection_callback=None,*,pricing,store,publication,hosting=None):
  import tkinter as tk
  from tkinter import ttk,messagebox
@@ -110,7 +117,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    if identifier==21841:return (b.get('video') or {}).get('https_url') or '8秒视频链接待托管'
    if identifier==21837:return (b.get('copy') or {}).get('title_ru','')
    state=b.get('attribute_draft') or {}
-   cached=value_cache.setdefault(id(b),{})
+   cached=parameter_cache(value_cache,b)
    keys=cached['keys']
    if key not in keys:return '— 此类目不适用'
    values=(state.get('values') or {}).get(key) or []
@@ -137,7 +144,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  def grid_refresh():
   nonlocal rows
   value_cache.clear()
-  for b in bundles:value_cache[id(b)]={'keys':{field_key(f) for f in (b.get('attribute_draft') or {}).get('fields',[])}}
+  for b in bundles:parameter_cache(value_cache,b)
   previous_rows=set(rows);rows={}
   for key,label in [('basic','基础事实、成本与库存'),('api','官方类目参数（* 必填；按API动态调整）'),('listing','类目、自动售价、税率与仓库')]:
    if not tree.exists(key):tree.insert('','end',iid=key,text=label,open=True)
@@ -171,7 +178,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    current_token=snapshot[1] if snapshot is not None else revision(current)
    if current_token!=rendered:
     media_changed=[[r.get('sha256') for r in b.get('images') or []] for b in bundles]!=[[r.get('sha256') for r in b.get('images') or []] for b in current]
-    bundles=current;token=current_token;rendered=current_token
+    value_cache.clear();bundles=current;token=current_token;rendered=current_token
     display_stamp=json.dumps([{k:v for k,v in b.items() if k not in ('images','video','hosting','video_hosting','asset_validation','updated_at','video_local_hash','copy','copy_competitor_request_marker')} for b in bundles],ensure_ascii=False,sort_keys=True,default=str)
     if display_stamp!=grid_stamp[0]:
      grid_refresh();grid_stamp[0]=display_stamp
@@ -286,7 +293,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   initial=value_for(bundles[indices[0]],row,indices[0])
   if kind=='a':
    from assisted_fields import inline_references
-   cached=value_cache.setdefault(id(bundles[indices[0]]),{})
+   cached=parameter_cache(value_cache,bundles[indices[0]])
    if 'references' not in cached:cached['references']=inline_references(bundles[indices[0]])
    reference=cached['references'].get(key)
    if reference:initial=reference['suggested']
@@ -321,7 +328,7 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    if row[0]=='a':
     from assisted_fields import inline_references
     n=focus[1] if isinstance(focus[1],int) else 0
-    cached=value_cache.setdefault(id(bundles[n]),{})
+    cached=parameter_cache(value_cache,bundles[n])
     if 'references' not in cached:cached['references']=inline_references(bundles[n])
     reference=((bundles[n].get('attribute_draft') or {}).get('auto_references') or {}).get(row[1]) or cached['references'].get(row[1])
     note=((bundles[n].get('attribute_draft') or {}).get('prefill_notes') or {}).get(row[1])

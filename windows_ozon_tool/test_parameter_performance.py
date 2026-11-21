@@ -4,6 +4,23 @@ from cell_references import ReferenceBadges
 from pricing_service import PricingService
 
 class ParameterPerformanceTests(unittest.TestCase):
+ def test_parameter_cache_initializes_new_snapshot_without_grid_rebuild(self):
+  import copy
+  from group_editor import parameter_cache
+  bundle={'attribute_draft':{'fields':[{'id':42}]}};cache={}
+  old=parameter_cache(cache,bundle);old['references']={'old':'reference'}
+  snapshot=copy.deepcopy(bundle)
+  current=parameter_cache(cache,snapshot)
+  self.assertEqual(current['keys'],{'0:42'});self.assertNotIn('references',current)
+  self.assertIs(parameter_cache(cache,snapshot),current)
+ def test_parameter_cache_repairs_missing_keys_and_rejects_wrong_owner(self):
+  from group_editor import parameter_cache
+  bundle={'attribute_draft':{'fields':[{'id':43}]}}
+  cache={id(bundle):{'bundle':bundle,'references':{}}}
+  self.assertEqual(parameter_cache(cache,bundle)['keys'],{'0:43'})
+  cache[id(bundle)]={'bundle':{},'keys':{'stale'},'references':{'stale':True}}
+  result=parameter_cache(cache,bundle)
+  self.assertEqual(result['keys'],{'0:43'});self.assertNotIn('references',result)
  def test_native_reference_markers_add_no_overlay_or_scroll_handlers(self):
   tree=Mock();tree.get_children.side_effect=lambda parent=None:['section'] if parent is None else ['row'];tree.item.return_value=('missing',)
   with patch('tkinter.Label') as label:
