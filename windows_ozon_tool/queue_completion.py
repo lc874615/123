@@ -38,17 +38,14 @@ def completed_skus(store):
 def optional_failure_skus(store):
  """Optional enrichment is not required production copy; keep its failure intact."""
  from listing_bundle import copy_complete
- from reference_prefill import recoverable_failure
  result=set()
  for task in store.tasks:
-  if recoverable_failure(task):continue
   if task.get('state')!='saved' or task.get('copy_mode')!='attributes' or task.get('copy_state')!='needs_attention':continue
   if task.get('recollection_requested') or len(task.get('received_images') or [])!=8:continue
   members=[t['sku'] for t in store.tasks if t.get('copy_leader',t['sku'])==task.get('copy_leader',task['sku'])]
-  if store.image_jobs.active(members):continue
   try:
    bundle=json.loads((store.folder/'products'/task['sku']/'listing_bundle.json').read_text(encoding='utf-8-sig'))
-   if copy_complete(bundle.get('copy')) and not pending(bundle) and not bundle.get('recollection_pending'):result.add(task['sku'])
+   if copy_complete(bundle.get('copy')) and not (bundle.get('asset_review') or {}).get('copy') and not bundle.get('copy_regeneration_requested') and not bundle.get('recollection_pending'):result.add(task['sku'])
   except (OSError,ValueError):continue
  return result
 
