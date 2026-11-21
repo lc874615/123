@@ -9,6 +9,24 @@ from pricing_service import read,write
 def picture(n,fmt='PNG'):
  s=io.BytesIO();Image.new('RGB',(600,800),(n*9%255,40+n%50,80)).save(s,format=fmt);return s.getvalue()
 class ImageRegenerationTests(unittest.TestCase):
+ def test_image_only_requests_preserve_copy_and_do_not_queue_attribute_or_copy_refresh(self):
+  from asset_reconcile import group_bundles,preserve_image_only_copy
+  from reference_prefill import needed
+  for kind in ('variant_main','shared_details'):
+   with self.subTest(kind=kind),tempfile.TemporaryDirectory() as tmp,patch('image_regeneration.threading.Thread'):
+    store=self.setup(tmp);before=[read(store.folder/'products'/t['sku']/'listing_bundle.json')['copy'] for t in store.tasks]
+    store.image_jobs.create('CHAIR(1)',kind,['CHAIR(1)'] if kind=='variant_main' else [],'')
+    job=store.claim();self.send(store,job)
+    bundles=group_bundles(store,'CHAIR(1)')
+    self.assertTrue(preserve_image_only_copy(bundles[0],bundles));self.assertFalse(needed(store,store.tasks[0]))
+    self.assertIsNone(store.next_copy())
+    self.assertEqual([b['copy'] for b in group_bundles(store,'CHAIR(1)')],before)
+    from asset_reconcile import repair_image_only_tasks
+    owner=store.tasks[0];owner.update(copy_mode='attributes',copy_state='needs_attention',copy_phase='generating',message='旧属性读取失败')
+    self.assertTrue(repair_image_only_tasks(store));self.assertEqual(owner['copy_state'],'done');self.assertNotIn('copy_mode',owner)
+    self.assertEqual(owner['image_only_attribute_history'][-1]['message'],'旧属性读取失败')
+    bundles[0]['copy_regeneration_requested']=True
+    self.assertFalse(preserve_image_only_copy(bundles[0],bundles))
  def test_main_prompt_uses_only_this_variant_and_locks_original_structure(self):
   from image_prompts import generation_prompt,shared_prompt
   prompt=generation_prompt('灰色椅子，数量1','OTHER_RED_VARIANT',1)

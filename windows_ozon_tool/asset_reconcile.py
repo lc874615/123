@@ -18,6 +18,32 @@ def copy_basis(bundles,legacy=False):
  from competitor_flow import copy_signature
  supplement=copy_signature(bundles) if not legacy else ''
  return hashlib.sha256(json.dumps(sorted([(b['sku'],{k:normalize(k,(b.get('variant_parameters') or {}).get(k)) for k in sorted(COPY)}) for b in bundles]),ensure_ascii=False,sort_keys=True).encode()+(supplement.encode() if supplement else b'')).hexdigest()
+def preserve_image_only_copy(bundle,bundles):
+ from listing_bundle import copy_hash
+ stamp=bundle.get('image_only_copy') or {}
+ return bool(stamp and not bundle.get('copy_regeneration_requested') and copy_complete(bundle.get('copy')) and stamp.get('hash')==copy_hash(bundle['copy']) and stamp.get('basis')==copy_basis(bundles))
+def repair_image_only_tasks(store):
+ """Recover old saved image-only jobs without cancelling dispatched text work."""
+ from listing_bundle import copy_hash
+ changed=False
+ for task in store.tasks:
+  if task.get('copy_leader',task['sku'])!=task['sku'] or task.get('state')!='saved':continue
+  bundles=group_bundles(store,task['sku']);owner=next((b for b in bundles if b['sku']==task['sku']),{})
+  if not owner or not copy_complete(owner.get('copy')) or owner.get('copy_regeneration_requested'):continue
+  if not owner.get('image_only_copy'):
+   skus={b['sku'] for b in bundles}
+   jobs=[j for j in getattr(store.image_jobs,'jobs',[]) if j.get('state')=='saved' and j.get('kind') in ('variant_main','shared_details') and any(t['sku'] in skus for t in j.get('targets',[]))]
+   if not jobs:continue
+   latest=max(jobs,key=lambda j:j.get('created_at',0));prior={r['sku']:r.get('variant_parameters') or {} for r in latest.get('variants',[])}
+   if set(prior)!=skus or any(differs(prior[b['sku']],b.get('variant_parameters') or {},COPY) for b in bundles):continue
+   owner['image_only_copy']={'hash':copy_hash(owner['copy']),'basis':copy_basis(bundles)}
+   write(store.folder/'products'/task['sku']/'listing_bundle.json',owner);changed=True
+  if preserve_image_only_copy(owner,bundles) and task.get('copy_mode')=='attributes' and task.get('copy_state')=='needs_attention':
+   task.setdefault('image_only_attribute_history',[]).append({k:copy.deepcopy(task.get(k)) for k in ('copy_state','copy_mode','copy_phase','message','copy_request_marker','attribute_context')})
+   for key in ('copy_mode','copy_phase','resume_mode','copy_request_marker','attribute_context'):task.pop(key,None)
+   task.update(copy_state='done',message='图片重做已完成；保留已有文案，已结束旧可选属性任务');changed=True
+ if changed:store.save()
+ return changed
 def checked(store,task):
  folder=store.folder/'products'/task['sku']
  try:

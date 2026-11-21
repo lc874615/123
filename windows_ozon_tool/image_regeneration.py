@@ -97,6 +97,14 @@ class ImageJobs:
      elif source.exists():shutil.copy2(source,backup/name)
     write(backup/'task.json',self.product(target['sku']))
   self.jobs.extend(planned);self.save()
+  # An image-only request does not authorize rewriting existing product text.
+  from asset_reconcile import group_bundles,copy_basis
+  from listing_bundle import copy_complete,copy_hash
+  copy_context=group_bundles(self.store,leader);text_basis=copy_basis(copy_context)
+  for member in group:
+   path=self.folder(member['sku'])/'listing_bundle.json';bundle=read(path)
+   if copy_complete(bundle.get('copy')) and not bundle.get('copy_regeneration_requested'):
+    bundle['image_only_copy']={'hash':copy_hash(bundle['copy']),'basis':text_basis};write(path,bundle)
   for job in planned:
    for target in job['targets']:
     path=self.folder(target['sku'])/'listing_bundle.json';b=read(path);b['image_regeneration_jobs']=list(dict.fromkeys((b.get('image_regeneration_jobs') or [])+[job['id']]));b.setdefault('image_regeneration_options',{})[kind]=addition;write(path,b)

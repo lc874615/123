@@ -29,6 +29,9 @@ def pending_task(store,task):
  return attempt.get('basis')!=basis(parameters(store,task)) or attempt.get('version')!=VERSION or attempt.get('schema_basis','')!=digest
 def needed(store,task):
  if task.get('copy_leader',task['sku'])!=task['sku'] or task.get('copy_state') in ('running','needs_attention'):return False
+ from asset_reconcile import group_bundles,preserve_image_only_copy
+ bundles=group_bundles(store,task['sku']);owner=next((b for b in bundles if b['sku']==task['sku']),{})
+ if preserve_image_only_copy(owner,bundles):return False
  return any(any(r.get('purpose') not in ('shared_gallery','shared_detail','shared_information') for r in original_references(store,t)) and pending_task(store,t) for t in group(store,task['sku']))
 def build(store,leader,inspect_only=False):
  tasks=group(store,leader);owner=next(t for t in tasks if t['sku']==leader)

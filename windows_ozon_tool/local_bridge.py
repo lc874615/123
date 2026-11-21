@@ -556,6 +556,8 @@ class Store:
   if complete==len(group):return f'{complete}个变体素材已完成：8图、视频、共用俄语文案；待上架审核'
   return f'素材处理中：已完成{complete}/{len(group)}个变体，等待图片、视频或文案完成'
  def repair_unsent_copy(self):
+  from asset_reconcile import repair_image_only_tasks
+  repair_image_only_tasks(self)
   stale_changed=False
   for task in self.tasks:
    if task.get('copy_state')=='needs_attention' and task.get('message','').startswith(('文案处理期间商品参数已变化','已有文案对应的商品参数已变化')):
@@ -632,7 +634,10 @@ class Store:
    if not path.exists():
     if not (folder/'image_manifest.json').exists():continue
     prepare(folder,task)
-   bundle=read(path);complete=copy_complete(bundle.get('copy'));fresh=complete and not (bundle.get('asset_review') or {}).get('copy') and not bundle.get('copy_regeneration_requested')
+   bundle=read(path);complete=copy_complete(bundle.get('copy'))
+   from asset_reconcile import preserve_image_only_copy,group_bundles
+   preserved=preserve_image_only_copy(bundle,group_bundles(self,task['sku']))
+   fresh=complete and (preserved or not (bundle.get('asset_review') or {}).get('copy')) and not bundle.get('copy_regeneration_requested')
    if fresh:
     if task.get('copy_state') not in ('running','needs_attention'):task['copy_state']='done'
     continue
@@ -660,7 +665,12 @@ class Store:
    output=make_video(files,self.folder/'products'/sku/'video'/'product_8s.mp4')
    with self.lock:
     for x in self.tasks:
-     if x['sku']==sku:x.update(video=output,message='8张图片及8秒视频已完成；'+('共用文案已保存' if x.get('copy_state')=='done' else '整组文案自动处理中' if x.get('copy_state')=='running' else '等待自动接续整组文案'))
+     if x['sku']==sku:
+      from listing_bundle import copy_complete
+      from pricing_service import read
+      path=self.folder/'products'/sku/'listing_bundle.json';existing=read(path) if path.exists() else {}
+      text_status='已有共用文案保留；未重做文案' if existing.get('image_only_copy') and copy_complete(existing.get('copy')) and not existing.get('copy_regeneration_requested') else '共用文案已保存' if x.get('copy_state')=='done' else '整组文案自动处理中' if x.get('copy_state')=='running' else '等待自动接续整组文案'
+      x.update(video=output,message='8张图片及8秒视频已完成；'+text_status)
     from listing_bundle import refresh_assets
     refresh_assets(self.folder/'products'/sku)
     self.sync_shared_copies()
