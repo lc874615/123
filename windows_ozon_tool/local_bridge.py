@@ -407,8 +407,8 @@ class Store:
  def claim(self):
   if self.control.get('paused'):raise ValueError('制作已暂停')
   if self.blockers():raise ValueError('请先审核上一任务或处理异常，不能继续发送')
-  if self.shared_copy_pending():raise ValueError('等待首变体竞品参数及共用文案完成，再制作后续变体')
   if hasattr(self,'image_jobs') and self.image_jobs.next():return self.image_jobs.claim()
+  if self.shared_copy_pending():raise ValueError('等待首变体竞品参数及共用文案完成，再制作后续变体')
   t=next((t for t in self.tasks if t['state']=='queued'),None)
   if not t:raise ValueError('没有排队任务，请在本地窗口创建商品')
   t['generation_parameters']=copy.deepcopy(t.get('variant_parameters') or {});t['generation_variants']=copy.deepcopy(t.get('group_variants') or []);t['state']='claimed'
@@ -556,6 +556,15 @@ class Store:
   if complete==len(group):return f'{complete}个变体素材已完成：8图、视频、共用俄语文案；待上架审核'
   return f'素材处理中：已完成{complete}/{len(group)}个变体，等待图片、视频或文案完成'
  def repair_unsent_copy(self):
+  stale_changed=False
+  for task in self.tasks:
+   if task.get('copy_state')=='needs_attention' and task.get('message','').startswith(('文案处理期间商品参数已变化','已有文案对应的商品参数已变化')):
+    task.setdefault('retired_copy_requests',[]).append({key:copy.deepcopy(task.get(key)) for key in ('copy_request_marker','copy_context_basis','message')})
+    for key in ('copy_state','copy_phase','copy_request_marker','copy_context_basis','resume_mode'):
+     task.pop(key,None)
+    task['message']='旧文案依据已变化，等待图片重做完成后按当前资料生成文案'
+    stale_changed=True
+  if stale_changed:self.save()
   quota_recovery=False
   for task in self.tasks:
    if task.get('copy_mode')=='attributes' and task.get('copy_state')=='needs_attention' and 'kQuotaBytes' in task.get('message','') and not task.get('quota_recovery_requested'):
@@ -606,7 +615,7 @@ class Store:
   shared_pending=self.shared_copy_pending()
   recovery=self.next_recollection()
   copy_waiting=next(((t.get('competitor_wait') or {}).get('message') for t in self.tasks if (t.get('competitor_wait') or {}).get('state')=='waiting'),None)
-  return {'copy_waiting':copy_waiting,'recovery_sku':recovery['sku'] if recovery else None,'ready':not active and not shared_pending and not copy_task and (image_pending or any(t['state']=='queued' and t.get('auto_batch') for t in self.tasks)),'copy_sku':copy_task['sku'] if copy_task else None,'blocked_reason':self.queue_reason() if active else '等待首变体竞品参数及共用文案' if shared_pending else None,'blockers':self.blockers(),'summary':self.queue_summary()}
+  return {'copy_waiting':copy_waiting,'recovery_sku':recovery['sku'] if recovery else None,'ready':not active and not copy_task and (image_pending or not shared_pending and any(t['state']=='queued' and t.get('auto_batch') for t in self.tasks)),'copy_sku':copy_task['sku'] if copy_task else None,'blocked_reason':self.queue_reason() if active else '等待首变体竞品参数及共用文案' if shared_pending and not image_pending else None,'blockers':self.blockers(),'summary':self.queue_summary()}
  def next_copy(self):
   from asset_reconcile import reconcile
   from listing_bundle import prepare,copy_complete
