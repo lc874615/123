@@ -99,7 +99,10 @@ class GroupService:
      self.status=self.paths[n].parent.name+'：同步官方属性与已填内容'
      key=category_key(read(self.paths[n]));self.attributes.refresh(self.paths[n],force=force and key not in forced);forced.add(key)
     except ValueError as exc:errors.append(self.paths[n].parent.name+'：'+str(exc))
-  self.status='正在重新计算售价';self.pricing.calculate_all();self.attributes.wake.set();self.reconcile_assets();self.status='部分属性未同步：'+'；'.join(errors) if errors else '参数和自动售价已同步'
+  self.status='正在重新计算售价'
+  if callable(getattr(type(self.pricing),'calculate_paths',None)):self.pricing.calculate_paths([self.paths[n] for n in indices])
+  else:self.pricing.calculate_all()
+  self.attributes.wake.set();self.status='部分属性未同步：'+'；'.join(errors) if errors else '参数和自动售价已同步'
  def refresh_preview(self):
   with self.mutex:
    self.after_edit(list(range(len(self.paths))),refresh=True,force=False)

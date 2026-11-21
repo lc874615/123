@@ -138,8 +138,9 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
   nonlocal rows
   value_cache.clear()
   for b in bundles:value_cache[id(b)]={'keys':{field_key(f) for f in (b.get('attribute_draft') or {}).get('fields',[])}}
-  selected_row=tree.selection();expanded={iid:tree.item(iid,'open') for iid in ('basic','api','listing') if tree.exists(iid)};tree.delete(*tree.get_children());rows={}
-  for key,label in [('basic','基础事实、成本与库存'),('api','官方类目参数（* 必填；按API动态调整）'),('listing','类目、自动售价、税率与仓库')]:tree.insert('','end',iid=key,text=label,open=expanded.get(key,True))
+  previous_rows=set(rows);rows={}
+  for key,label in [('basic','基础事实、成本与库存'),('api','官方类目参数（* 必填；按API动态调整）'),('listing','类目、自动售价、税率与仓库')]:
+   if not tree.exists(key):tree.insert('','end',iid=key,text=label,open=True)
   specs=[('basic','p:'+key,('p',key),('初始库存（固定1000）' if key=='stock' and publication.initial_stock==1000 else label),False,None) for key,label,_ in FIELDS]
   union={}
   for b in bundles:
@@ -153,8 +154,12 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
    if row[0]=='a':empty=any(not ((b.get('attribute_draft') or {}).get('values') or {}).get(row[1]) for b in bundles if row[1] in value_cache[id(b)]['keys'])
    if search.get().casefold() not in label.casefold():continue
    if missing.get() and (not required or not empty):continue
-   rows[iid]=(row,field);tree.insert(parent,'end',iid=iid,text=('* ' if required else '')+label,values=values,tags=('missing',) if required and empty else ('pending',) if any(str(v).startswith('待匹配') for v in values) else ())
-  if selected_row and tree.exists(selected_row[0]):tree.selection_set(selected_row[0])
+   rows[iid]=(row,field);options=dict(text=('* ' if required else '')+label,values=values,tags=('missing',) if required and empty else ('pending',) if any(str(v).startswith('待匹配') for v in values) else ())
+   if tree.exists(iid):tree.item(iid,**options)
+   else:tree.insert(parent,'end',iid=iid,**options)
+  for iid in previous_rows-set(rows):
+   if tree.exists(iid):tree.delete(iid)
+  reference_cache[0]=list(reference_cells())
   headings();badges.schedule()
  grid_stamp=[None]
  def refresh():
@@ -418,7 +423,8 @@ def open_editor(root,folder,service,group_folders,category_callback=None,price_c
  def select_cell(iid,index):
   focus[:]=[iid,index];tree.selection_set(iid);track()
  from cell_references import ReferenceBadges
- badges=ReferenceBadges(tree,reference_cells,select_cell,lambda iid,n:(select_cell(iid,n),edit_row([n],iid)))
+ reference_cache=[[]]
+ badges=ReferenceBadges(tree,lambda:reference_cache[0],select_cell,lambda iid,n:(select_cell(iid,n),edit_row([n],iid)))
  old_x=tree.xview;old_y=tree.yview
  def scroll_x(*args):old_x(*args);badges.schedule()
  def scroll_y(*args):old_y(*args);badges.schedule()

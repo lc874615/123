@@ -168,11 +168,13 @@ class PricingService:
   return json.loads(json.dumps({**result,'currency':'CNY','fulfillment':'RFBS','target_margin':str(D(params['margin'])/100),'fx':configs['fx'],'boundary_policy_note':configs['ogl'].get('boundary_policy_note',''),'ogl_sha256':configs['ogl']['workbook_sha256'],'commission_sha256':configs['commissions']['sha256'],'commission_version':configs['commissions']['effective_note'],'type_name':name,'category_confirmed':bool(category.get('confirmed')),'estimated':True},default=str))
  def calculate_all(self):
   with self.calculation_lock:self._calculate_all()
- def _calculate_all(self):
+ def calculate_paths(self,paths):
+  with self.calculation_lock:self._calculate_all(paths)
+ def _calculate_all(self,paths=None):
   try:configs,mapping=self.sources();source_error=None
   except Exception as exc:configs=None;mapping={};source_error=str(exc)
   done=0;pending=0;failures=[]
-  for path in (self.data/'products').glob('*/listing_bundle.json'):
+  for path in (paths if paths is not None else (self.data/'products').glob('*/listing_bundle.json')):
    try:
     with self.lock:
      bundle=read(path)
