@@ -39,6 +39,15 @@ def build(store,leader,inspect_only=False):
  if inspect_only and owner.get('attribute_context'):return owner['attribute_context'],[]
  selected=[];hashes={}
  candidates=[]
+ # Reserve room for shared specifications before a large variant group fills
+ # the eight-reference attachment budget with individual appearance shots.
+ shared=[r for t in tasks for r in t.get('detail_references') or []]
+ seen_shared=set()
+ for r in shared:
+  identity=str(Path(r['path']).resolve())
+  if identity in seen_shared:continue
+  candidates.append((r,[x['sku'] for x in tasks]));seen_shared.add(identity)
+  if len(seen_shared)>=3:break
  for t in tasks:
   own=[r for r in original_references(store,t) if r.get('purpose') not in ('shared_gallery','shared_detail')]
   if own:candidates.append((own[0],[t['sku']]))
