@@ -138,6 +138,9 @@ def render(plan,facts='',group_facts='',scope='full'):
  if plan.get('evidence_policy')!='original_references_only' or plan.get('selling_plan_version')!=2:
   category={**(plan.get('category') or {}),'confirmed':True};plan=build(category,override=plan.get('style') if plan.get('source')=='manual' else None)
  pages=plan['pages'] if scope=='full' else plan['pages'][:1] if scope=='main' else plan['pages'][1:]
+ detail_direction='' if scope=='main' else '【共用详情成交表达】七页各回答不同购买问题，使用场景最多两页且动作与信息不同。每页一个具体购买理由、一幅占主导的证据画面、必要短佐证。材质/结构页用可辨识大特写与部位标注；尺寸页数字清楚且状态对应；选项页严格使用各变体原图，单独标明可选。避免连续同机位整件摆拍、泛泛标题、装饰图标和页页同色圆台。仅统一字体色系，近景、人物实用、尺寸示意和选项对照应有节奏变化。'
+ if scope!='main' and plan.get('style')=='interior':
+  detail_direction+='家具额外检查：框架、面料与填充分别核实，不能混写。未知填充密度、木材树种、承重和尺寸公差不宣传。人物图展示真实坐姿与接触位置；第二场景须增加适配信息，否则改真实结构细节。尺寸线、尺寸状态及每种花色均逐项核对原始参考。'
  rows=[]
  for i,page in enumerate(pages,1):
   name=page['filename'] if scope!='shared' else f"{i:02d}_{page['key']}.jpg"
@@ -154,7 +157,7 @@ def render(plan,facts='',group_facts='',scope='full'):
   EXTRACTION,selection_for_scope(scope),render_profile(plan['style'],scope),storyboard_for_scope(scope),PRODUCT_LOCK,'【本类摄影方向】'+STYLES[plan['style']][1]+(DIGITAL_DIRECTION if plan['style']=='digital' else ''),ART_DIRECTION,VISUAL_PROOF,
   DIMENSIONS,
   '【范围隔离】当前主图只用当前变体的原始外观；共用原始详情只补能核实适用的信息。重做不以旧AI成图为外观或参数依据。只保留本次范围内的编号，重做与首次执行同一证据和质量规则。',
-  '【任务清单，不是一张图的分区】',*rows,FINAL_CHECK])
+  detail_direction,'【任务清单，不是一张图的分区】',*rows,FINAL_CHECK])
 
 def shared_compatible(store,task):
  """A shared image set cannot silently mix independently selected product types."""

@@ -37,7 +37,7 @@ class PromptStyleTests(unittest.TestCase):
   for text in (generation_prompt(),shared_prompt()):
    for phrase in ('1500×2000','750×1000','不编造链接','不提供ZIP','Python/PIL/SVG','65%—85%','手机','俄语','不是小商品配大空板','失败时准确说明','不要求插件逐张请求','件数不明确不写1 шт.'):
     self.assertIn(phrase,text)
-   self.assertEqual(text.count(SOURCE_POLICY),1);self.assertEqual(text.count(DELIVERY),1);self.assertLess(len(text),6500)
+   self.assertEqual(text.count(SOURCE_POLICY),1);self.assertEqual(text.count(DELIVERY),1);self.assertLess(len(text),7200)
  def test_old_saved_visual_plan_rebuilds_without_legacy_fact_fallback(self):
   from visual_plans import render
   legacy={'version':1,'category':cat('Наушники'),'pages':[{'title':'UNTRUSTED_OLD_FACT'}],'style':'digital','source':'official_category'}
